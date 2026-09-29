@@ -237,66 +237,442 @@ class Oversampler4x {
 }
 
 // ============================================================================
-const DRIVE_TYPES = ["Overdrive", "Distortion", "Fuzz"];
+// Distortion: the POD HD500X's 15 distortion models (Source/DSP/Distortion.h)
+const shape = {
+  taper: (x01, k) => (Math.exp(k * x01) - 1) / (Math.exp(k) - 1),
+  diode: (x) => x / Math.pow(1 + Math.pow(Math.abs(x), 2.5), 0.4),
+  asym: (x, bias) => Math.tanh(x + bias) - Math.tanh(bias),
+  tube: (x) => (x >= 0 ? Math.tanh(x) : 0.7 * Math.tanh(x / 0.7)),
+  eqDb: (percent, range) => (percent - 50) * (range / 50),
+};
+const NO_TRIM = [0, 0, 0, 0, 0];
 
-class Drive {
+class DriveModel {
+  prepare(baseRate, overRate) {
+    this.fs = baseRate; this.os = overRate;
+    this.gain = this.gain || new Smoothed(1, true);
+    this.level = this.level || new Smoothed(1);
+    this.gain.reset(this.os, 0.05);
+    this.level.reset(this.fs, 0.05);
+    this.dc = new DcBlocker(); this.dc.prepare(this.fs);
+    this.eqBass = new Biquad(); this.eqMid = new Biquad(); this.eqTreble = new Biquad();
+    this.loudnessTrim = this.loudnessTrim || NO_TRIM;
+  }
+  reset() {
+    this.gain.setCurrentAndTarget(this.gain.target);
+    this.level.setCurrentAndTarget(this.level.target);
+    this.dc.reset(); this.eqBass.reset(); this.eqMid.reset(); this.eqTreble.reset();
+  }
+  static drive01(k) { return f32(k[0] / 100); }
+  setEqAndOutput(drivePercent, bassPercent, midPercent, treblePercent, outputDb, makeup) {
+    this.eqBass.setLowShelf(this.fs, 120, shape.eqDb(bassPercent, 12));
+    this.eqMid.setPeak(this.fs, 800, 0.8, shape.eqDb(midPercent, 12));
+    this.eqTreble.setHighShelf(this.fs, 3000, shape.eqDb(treblePercent, 12));
+    const d = clamp(drivePercent / 25, 0, 4), i = Math.min(Math.floor(d), 3), t = this.loudnessTrim;
+    const trimDb = t[i] + (t[i + 1] - t[i]) * (d - i);
+    this.level.setTarget(f32(f32(dbToGain(outputDb + trimDb)) * makeup));
+  }
+  finish(x, n) {
+    const dc = this.dc, b = this.eqBass, m = this.eqMid, t = this.eqTreble, level = this.level;
+    for (let i = 0; i < n; ++i) x[i] = t.process(m.process(b.process(dc.process(x[i])))) * level.next();
+  }
+}
+const onePoles = (count) => Array.from({ length: count }, () => new OnePole());
+
+class TubeDriveModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.coupling, this.bandLimit, this.post] = this.f ||= onePoles(4);
+    this.gain.setTarget(f32(2 + 90 * shape.taper(DriveModel.drive01(k), 3)));
+    this.inputHp.setCutoff(this.os, 110); this.coupling.setCutoff(this.os, 40);
+    this.bandLimit.setCutoff(this.os, 7000); this.post.setCutoff(this.fs, 6500);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.16);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, c = this.coupling, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) {
+      const s1 = shape.tube(g.next() * hp.highPass(x[i]));
+      x[i] = bl.lowPass(shape.tube(2.2 * c.highPass(s1)));
+    }
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.post.lowPass(x[i]); this.finish(x, n); }
+}
+
+class ScreamerModel extends DriveModel {
+  setParameters(k) {
+    [this.clipHp, this.feedbackCap, this.toneLp] = this.f ||= onePoles(3);
+    const rd = 500e3 * f32(shape.taper(DriveModel.drive01(k), 3));
+    this.gain.setTarget(f32(1 + (51e3 + rd) / 4.7e3));
+    this.clipHp.setCutoff(this.os, 720);
+    this.feedbackCap.setCutoff(this.os, 1 / (2 * PI * (51e3 + rd) * 51e-12));
+    this.toneLp.setCutoff(this.fs, 723);
+    const t = f32(k[2] / 100);
+    this.treble = f32(0.05 + 1.6 * t * t);
+    this.setEqAndOutput(k[0], k[1], 50, k[3], k[4], 0.32);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.clipHp, cap = this.feedbackCap;
+    for (let i = 0; i < n; ++i) {
+      const v = cap.lowPass(g.next() * hp.highPass(x[i]));
+      x[i] += 0.6 * Math.tanh(v * (1 / 0.6));
+    }
+  }
+  processBase(x, n) {
+    const lp = this.toneLp, treble = this.treble;
+    for (let i = 0; i < n; ++i) { const low = lp.lowPass(x[i]); x[i] = low + treble * (x[i] - low); }
+    this.finish(x, n);
+  }
+}
+
+class OverdriveModel extends DriveModel {
+  setParameters(k) {
+    [this.gainHp, this.opAmp, this.bandLimit, this.post] = this.f ||= onePoles(4);
+    const g = f32(1 + (1e6 * f32(shape.taper(DriveModel.drive01(k), 3.5))) / 4.7e3);
+    this.gain.setTarget(g);
+    this.gainHp.setCutoff(this.os, 720);
+    this.opAmp.setCutoff(this.os, Math.min(20000, 1e6 / g));
+    this.bandLimit.setCutoff(this.os, 12000);
+    this.post.setCutoff(this.fs, 7000);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.23);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.gainHp, op = this.opAmp, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) {
+      const v = op.lowPass(x[i] + (g.next() - 1) * hp.highPass(x[i]));
+      x[i] = bl.lowPass(0.55 * shape.diode(v * (1 / 0.55)));
+    }
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.post.lowPass(x[i]); this.finish(x, n); }
+}
+
+class ClassicDistModel extends DriveModel {
+  setParameters(k) {
+    [this.leg1, this.leg2, this.opAmp, this.filter] = this.f ||= onePoles(4);
+    const rd = f32(100e3 * f32(shape.taper(DriveModel.drive01(k), 4)));
+    this.gain.setTarget(f32(rd / 1000 + 0.001));
+    this.leg1.setCutoff(this.os, 60.5);
+    this.leg2.setCutoff(this.os, 1539);
+    this.opAmp.setCutoff(this.os, Math.min(20000, 1e6 / (1 + rd / 43.4)));
+    const rf = 100e3 * f32(shape.taper(f32(k[2] / 100), 3));
+    this.filter.setCutoff(this.fs, 1 / (2 * PI * (1.5e3 + rf) * 3.3e-9));
+    this.setEqAndOutput(k[0], k[1], 50, k[3], k[4], 0.19);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, l1 = this.leg1, l2 = this.leg2, op = this.opAmp;
+    for (let i = 0; i < n; ++i) {
+      const rd = 1000 * (g.next() - 0.001);
+      const v = x[i] + rd * (l1.highPass(x[i]) * (1 / 560) + l2.highPass(x[i]) * (1 / 47));
+      x[i] = 0.55 * shape.diode(op.lowPass(v) * (1 / 0.55));
+    }
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.filter.lowPass(x[i]); this.finish(x, n); }
+}
+
+class HeavyDistModel extends DriveModel {
+  setParameters(k) {
+    [this.tight, this.interHp, this.interLp, this.bandLimit] = this.f ||= onePoles(4);
+    [this.preMid, this.fizz, this.scoop] = this.b ||= [new Biquad(), new Biquad(), new Biquad()];
+    this.gain.setTarget(f32(15 + 600 * shape.taper(DriveModel.drive01(k), 3)));
+    this.tight.setCutoff(this.os, 140);
+    this.preMid.setPeak(this.os, 900, 0.8, 8);
+    this.interHp.setCutoff(this.os, 220);
+    this.interLp.setCutoff(this.os, 6000);
+    this.bandLimit.setCutoff(this.os, 9000);
+    this.fizz.setLowPass(this.fs, 7000, 0.707);
+    this.scoop.setPeak(this.fs, 650, 0.9, -5);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.1);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); for (const b of this.b) b.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, tight = this.tight, pre = this.preMid, ih = this.interHp, il = this.interLp, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) {
+      const s1 = Math.tanh(g.next() * pre.process(tight.highPass(x[i])));
+      x[i] = bl.lowPass(shape.diode(4 * il.lowPass(ih.highPass(s1))));
+    }
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.scoop.process(this.fizz.process(x[i])); this.finish(x, n); }
+}
+
+class ColorDriveModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.bandLimit, this.post] = this.f ||= onePoles(3);
+    this.gain.setTarget(f32(2 + 300 * shape.taper(DriveModel.drive01(k), 3.5)));
+    this.inputHp.setCutoff(this.os, 45); this.bandLimit.setCutoff(this.os, 8000); this.post.setCutoff(this.fs, 7500);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.12);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) x[i] = bl.lowPass(Math.tanh(1.8 * shape.asym(g.next() * hp.highPass(x[i]), 0.35)));
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.post.lowPass(x[i]); this.finish(x, n); }
+}
+
+class BuzzSawModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.bandLimit, this.post] = this.f ||= onePoles(3);
+    this.horn ||= new Biquad();
+    this.gain.setTarget(f32(20 + 500 * shape.taper(DriveModel.drive01(k), 3)));
+    this.inputHp.setCutoff(this.os, 300); this.bandLimit.setCutoff(this.os, 6000);
+    this.horn.setPeak(this.fs, 1300, 1.5, 6); this.post.setCutoff(this.fs, 4500);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.092);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); this.horn.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) {
+      const v = g.next() * hp.highPass(x[i]);
+      const gated = v > 0.25 ? v - 0.25 : v < -0.25 ? v + 0.25 : 0;
+      const y = gated >= 0 ? Math.tanh(2.5 * gated) : 0.6 * Math.tanh(gated * (2.5 / 0.6));
+      x[i] = bl.lowPass(y);
+    }
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.post.lowPass(this.horn.process(x[i])); this.finish(x, n); }
+}
+
+class FacialFuzzModel extends DriveModel {
+  setParameters(k) {
+    [this.pickupLoad, this.inputHp, this.bandLimit, this.post] = this.f ||= onePoles(4);
+    this.gain.setTarget(f32(3 + 250 * shape.taper(DriveModel.drive01(k), 2.5)));
+    this.pickupLoad.setCutoff(this.os, 4500); this.inputHp.setCutoff(this.os, 70); this.bandLimit.setCutoff(this.os, 7000);
+    this.attack = f32(Math.exp(-1 / (0.002 * this.os)));
+    this.release = f32(Math.exp(-1 / (0.1 * this.os)));
+    this.post.setCutoff(this.fs, 5000);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.12);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); this.env = 0; }
+  processOversampled(x, n) {
+    const g = this.gain, load = this.pickupLoad, hp = this.inputHp, bl = this.bandLimit, attack = this.attack, release = this.release;
+    let env = this.env;
+    for (let i = 0; i < n; ++i) {
+      const v = g.next() * hp.highPass(load.lowPass(x[i]));
+      const a = Math.abs(v);
+      env = f32(a + (a > env ? attack : release) * (env - a));
+      const bias = 0.15 + (0.25 * env) / (1 + env);
+      x[i] = bl.lowPass(Math.tanh(1.6 * shape.asym(v, bias)));
+    }
+    this.env = env;
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.post.lowPass(x[i]); this.finish(x, n); }
+}
+
+class JumboFuzzModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.bandLimit, this.dark, this.bright] = this.f ||= onePoles(4);
+    this.gain.setTarget(f32(10 + 900 * shape.taper(DriveModel.drive01(k), 3)));
+    this.inputHp.setCutoff(this.os, 120); this.bandLimit.setCutoff(this.os, 8000);
+    this.dark.setCutoff(this.fs, 700); this.bright.setCutoff(this.fs, 1100);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.17);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) x[i] = bl.lowPass(Math.tanh(3 * shape.asym(g.next() * hp.highPass(x[i]), 0.3)));
+  }
+  processBase(x, n) {
+    for (let i = 0; i < n; ++i) x[i] = 0.45 * this.dark.lowPass(x[i]) + 0.55 * 1.3 * this.bright.highPass(x[i]);
+    this.finish(x, n);
+  }
+}
+
+class FuzzPiModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.stage1Lp, this.interHp, this.stage2Lp, this.toneLp, this.toneHp] = this.f ||= onePoles(6);
+    this.gain.setTarget(f32(1 + 80 * shape.taper(DriveModel.drive01(k), 3)));
+    this.inputHp.setCutoff(this.os, 90); this.stage1Lp.setCutoff(this.os, 2800);
+    this.interHp.setCutoff(this.os, 120); this.stage2Lp.setCutoff(this.os, 3200);
+    this.toneLp.setCutoff(this.fs, 723); this.toneHp.setCutoff(this.fs, 1850);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.25);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, l1 = this.stage1Lp, ih = this.interHp, l2 = this.stage2Lp;
+    for (let i = 0; i < n; ++i) {
+      const s1 = Math.tanh(g.next() * 4 * hp.highPass(x[i]));
+      x[i] = l2.lowPass(Math.tanh(18 * ih.highPass(l1.lowPass(s1))));
+    }
+  }
+  processBase(x, n) {
+    for (let i = 0; i < n; ++i) x[i] = 0.5 * this.toneLp.lowPass(x[i]) + 0.5 * this.toneHp.highPass(x[i]);
+    this.finish(x, n);
+  }
+}
+
+class JetFuzzModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.bandLimit, this.tone] = this.f ||= onePoles(3);
+    this.stages ||= new Float32Array(6);
+    this.gain.setTarget(f32(10 + 500 * shape.taper(DriveModel.drive01(k), 3)));
+    this.inputHp.setCutoff(this.os, 100); this.bandLimit.setCutoff(this.os, 6000);
+    this.feedback = f32((0.85 * k[1]) / 100);
+    this.tone.setCutoff(this.fs, 800 * Math.pow(12, k[2] / 100));
+    this.rate = k[3];
+    this.setEqAndOutput(k[0], 50, 50, 50, k[4], 0.15);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); this.stages.fill(0); this.last = 0; this.phase = 0; }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) x[i] = bl.lowPass(shape.diode(g.next() * hp.highPass(x[i])));
+  }
+  processBase(x, n) {
+    const increment = this.rate / this.fs, st = this.stages, fb = this.feedback, tone = this.tone;
+    for (let i = 0; i < n; ++i) {
+      const lfo = Math.sin(2 * PI * this.phase);
+      this.phase += increment;
+      if (this.phase >= 1) this.phase -= 1;
+      const fc = 1000 * Math.pow(4, 0.8 * lfo), t = Math.tan((PI * fc) / this.fs), a = f32((t - 1) / (t + 1));
+      let v = f32(x[i] + fb * this.last);
+      for (let s = 0; s < 6; ++s) { const y = f32(a * v + st[s]); st[s] = v - a * y; v = y; }
+      this.last = v;
+      x[i] = tone.lowPass(0.5 * (x[i] + v));
+    }
+    this.finish(x, n);
+  }
+}
+
+class Line6DriveModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.midPush, this.bandLimit] = this.f ||= onePoles(3);
+    this.gain.setTarget(f32(3 + 250 * shape.taper(DriveModel.drive01(k), 3)));
+    const m = f32(k[2] / 100);
+    this.fuzzWeight = f32(Math.max(0, 1 - 2 * m));
+    this.modernWeight = f32(1 - Math.abs(2 * m - 1));
+    this.gritWeight = f32(Math.max(0, 2 * m - 1));
+    this.inputHp.setCutoff(this.os, 80); this.midPush.setCutoff(this.os, 600); this.bandLimit.setCutoff(this.os, 7500);
+    this.setEqAndOutput(k[0], k[1], 50, k[3], k[4], 0.12);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const gs = this.gain, hp = this.inputHp, mp = this.midPush, bl = this.bandLimit;
+    const wf = this.fuzzWeight, wm = this.modernWeight, wg = this.gritWeight, d25 = shape.diode(0.25);
+    for (let i = 0; i < n; ++i) {
+      const g = gs.next();
+      const v = hp.highPass(x[i]) + wm * 1.5 * mp.highPass(x[i]);
+      const fuzz = Math.tanh(2.5 * shape.asym(4 * g * v, 0.3));
+      const modern = shape.diode(1.5 * g * v);
+      const grit = shape.diode(2 * g * v + 0.25) - d25;
+      x[i] = bl.lowPass(0.9 * wf * fuzz + wm * modern + wg * grit);
+    }
+  }
+  processBase(x, n) { this.finish(x, n); }
+}
+
+class Line6DistModel extends DriveModel {
+  setParameters(k) {
+    [this.tight, this.interLp, this.bandLimit] = this.f ||= onePoles(3);
+    [this.body, this.fizz] = this.b ||= [new Biquad(), new Biquad()];
+    this.gain.setTarget(f32(20 + 1200 * shape.taper(DriveModel.drive01(k), 3)));
+    this.tight.setCutoff(this.os, 250); this.interLp.setCutoff(this.os, 7000); this.bandLimit.setCutoff(this.os, 10000);
+    this.body.setLowShelf(this.fs, 110, 6); this.fizz.setLowPass(this.fs, 6500, 0.707);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.094);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); for (const b of this.b) b.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, tight = this.tight, il = this.interLp, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) {
+      const s1 = shape.asym(g.next() * tight.highPass(x[i]), 0.2);
+      x[i] = bl.lowPass(shape.diode(3 * il.lowPass(s1)));
+    }
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.fizz.process(this.body.process(x[i])); this.finish(x, n); }
+}
+
+class SubOctaveFuzzModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.track1, this.track2, this.subLp, this.bandLimit, this.post] = this.f ||= onePoles(6);
+    this.gain.setTarget(f32(5 + 200 * shape.taper(DriveModel.drive01(k), 3)));
+    this.inputHp.setCutoff(this.os, 90); this.track1.setCutoff(this.os, 700); this.track2.setCutoff(this.os, 700);
+    this.subLp.setCutoff(this.os, 2500); this.bandLimit.setCutoff(this.os, 7000);
+    this.envAttack = f32(Math.exp(-1 / (0.003 * this.os)));
+    this.envRelease = f32(Math.exp(-1 / (0.06 * this.os)));
+    this.sub = f32(k[2] / 100);
+    this.post.setCutoff(this.fs, 6000);
+    this.setEqAndOutput(k[0], k[1], 50, k[3], k[4], 0.17);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); this.env = 0; this.high = false; this.flip1 = this.flip2 = 1; }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, t1 = this.track1, t2 = this.track2, sl = this.subLp, bl = this.bandLimit;
+    const attack = this.envAttack, release = this.envRelease, sub = this.sub;
+    let env = this.env;
+    for (let i = 0; i < n; ++i) {
+      const inp = hp.highPass(x[i]);
+      const a = Math.abs(inp);
+      env = f32(a + (a > env ? attack : release) * (env - a));
+      const tracked = t2.lowPass(t1.lowPass(inp));
+      const threshold = f32(0.1 * env);
+      if (!this.high && tracked > threshold) {
+        this.high = true;
+        this.flip1 = -this.flip1;
+        if (this.flip1 > 0) this.flip2 = -this.flip2;
+      } else if (this.high && tracked < -threshold) this.high = false;
+      const octaves = sl.lowPass(2 * env * (0.7 * this.flip1 + 0.5 * this.flip2));
+      const fuzz = Math.tanh(g.next() * inp);
+      x[i] = bl.lowPass(fuzz + sub * octaves);
+    }
+    this.env = env;
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.post.lowPass(x[i]); this.finish(x, n); }
+}
+
+class OctaveFuzzModel extends DriveModel {
+  setParameters(k) {
+    [this.inputHp, this.transformer, this.bandLimit, this.post] = this.f ||= onePoles(4);
+    this.gain.setTarget(f32(2 + 40 * shape.taper(DriveModel.drive01(k), 2.5)));
+    this.inputHp.setCutoff(this.os, 150); this.transformer.setCutoff(this.os, 30);
+    this.bandLimit.setCutoff(this.os, 6000); this.post.setCutoff(this.fs, 5000);
+    this.setEqAndOutput(k[0], k[1], k[2], k[3], k[4], 0.14);
+  }
+  reset() { super.reset(); for (const f of this.f) f.reset(); }
+  processOversampled(x, n) {
+    const g = this.gain, hp = this.inputHp, tr = this.transformer, bl = this.bandLimit;
+    for (let i = 0; i < n; ++i) {
+      const v = Math.tanh(g.next() * hp.highPass(x[i]));
+      x[i] = bl.lowPass(Math.tanh(6 * tr.highPass(Math.abs(v))));
+    }
+  }
+  processBase(x, n) { for (let i = 0; i < n; ++i) x[i] = this.post.lowPass(x[i]); this.finish(x, n); }
+}
+
+/** dB added at 0, 25, 50, 75, 100 % drive, per model (same table as the C++). */
+const LOUDNESS_TRIMS = [
+  [8.1, 2.4, 0.0, -1.2, -1.8], [2.5, 1.2, -0.1, -1.1, -2.0], [14.1, 3.2, 0.1, -1.2, -1.9], [16.1, 1.4, 0.1, -0.3, -0.4],
+  [2.2, 1.3, 1.0, 0.9, 0.9], [11.3, 2.4, 0.2, -0.7, -1.1], [3.3, 1.2, 0.3, -0.2, -0.3], [9.9, 2.0, 0.4, -0.3, -0.6],
+  [3.0, 0.3, -0.2, -0.3, -0.4], [2.0, 0.5, 0.2, 0.1, 0.1], [7.4, 2.9, 1.4, 0.6, 0.4], [4.6, -0.5, -1.7, -2.3, -2.5],
+  [1.6, -0.1, -0.4, -0.5, -0.5], [5.9, 0.6, -1.9, -3.2, -3.9], [7.0, 3.0, 0.8, -0.4, -0.8],
+].map((row) => row.map(f32));
+const DRIVE_MODEL_CLASSES = [TubeDriveModel, ScreamerModel, OverdriveModel, ClassicDistModel, HeavyDistModel, ColorDriveModel,
+  BuzzSawModel, FacialFuzzModel, JumboFuzzModel, FuzzPiModel, JetFuzzModel, Line6DriveModel, Line6DistModel,
+  SubOctaveFuzzModel, OctaveFuzzModel];
+
+/** A slot's distortion engine: every model plus the 4x oversampler they share. */
+class Distortion {
   prepare(sampleRate, maxBlock) {
     this.fs = sampleRate;
     this.oversampler = new Oversampler4x(maxBlock);
-    this.osRate = this.fs * 4;
-    this.gain = new Smoothed(1, true);
-    this.level = new Smoothed(1);
-    this.gain.reset(this.osRate, 0.05);
-    this.level.reset(this.fs, 0.05);
-    this.preHp = new OnePole(); this.bandLimit = new OnePole(); this.tone = new Biquad(); this.dc = new DcBlocker();
-    this.dc.prepare(this.fs);
-    this.currentType = -1;
-    this.setParameters(0, 0.5, 0.5, 0);
+    const defaults = [50, 50, 50, 50, 0, 0, 0, 0];
+    this.models = DRIVE_MODEL_CLASSES.map((Model, i) => {
+      const m = new Model();
+      m.loudnessTrim = LOUDNESS_TRIMS[i];
+      m.prepare(this.fs, this.fs * 4);
+      m.setParameters(defaults);
+      m.reset();
+      return m;
+    });
+    this.current = 0;
     this.reset();
   }
-  reset() {
-    this.oversampler.reset();
-    this.preHp.reset(); this.bandLimit.reset(); this.tone.reset(); this.dc.reset();
-    this.gain.setCurrentAndTarget(this.gain.target);
-    this.level.setCurrentAndTarget(this.level.target);
-  }
-  setParameters(type, drive01, tone01, levelDb) {
-    type = clamp(type | 0, 0, 2);
-    if (type !== this.currentType) {
-      this.currentType = type;
-      if (type === 0)      { this.preHp.setCutoff(this.osRate, 720); this.bandLimit.setCutoff(this.osRate, 7000); }
-      else if (type === 1) { this.preHp.setCutoff(this.osRate, 160); this.bandLimit.setCutoff(this.osRate, 5500); }
-      else                 { this.preHp.setCutoff(this.osRate, 90);  this.bandLimit.setCutoff(this.osRate, 8000); }
-    }
-    const g = type === 0 ? 3 * Math.pow(40, drive01) : type === 1 ? 6 * Math.pow(120, drive01) : 25 * Math.pow(60, drive01);
-    this.gain.setTarget(f32(g));
-    this.tone.setLowPass(this.fs, 500 * Math.pow(24, tone01), 0.707);
-    const makeup = [0.22, 0.13, 0.11][type];
-    this.level.setTarget(f32(dbToGain(levelDb) * makeup));
-  }
+  reset() { this.oversampler.reset(); this.models[this.current].reset(); }
+  setModel(variant) { this.current = clamp(variant | 0, 0, this.models.length - 1); }
+  setParameters(knobs) { this.models[this.current].setParameters(knobs); }
   process(data, n) {
-    const x = this.oversampler.up(data, n), osN = n * 4;
-    const gain = this.gain, preHp = this.preHp, band = this.bandLimit;
-    if (this.currentType === 0) {
-      for (let i = 0; i < osN; ++i) {
-        const inp = band.lowPass(x[i]);
-        x[i] = inp + Math.tanh(gain.next() * preHp.highPass(inp));
-      }
-    } else if (this.currentType === 1) {
-      for (let i = 0; i < osN; ++i) {
-        const v = gain.next() * preHp.highPass(band.lowPass(x[i]));
-        x[i] = v / Math.pow(1 + Math.pow(Math.abs(v), 2.5), 0.4);
-      }
-    } else {
-      const bias = 0.25, tb = Math.tanh(bias);
-      for (let i = 0; i < osN; ++i) {
-        const v = gain.next() * preHp.highPass(x[i]);
-        const s1 = Math.tanh(v + bias) - tb;
-        x[i] = band.lowPass(Math.tanh(2.5 * s1));
-      }
-    }
+    const model = this.models[this.current];
+    const up = this.oversampler.up(data, n);
+    model.processOversampled(up, n * 4);
     this.oversampler.down(data, n);
-    for (let i = 0; i < n; ++i) data[i] = this.tone.process(this.dc.process(data[i])) * this.level.next();
+    model.processBase(data, n);
   }
 }
 
@@ -380,7 +756,8 @@ class Modulation {
   prepare(sampleRate) {
     this.fs = sampleRate;
     this.lines = [new DelayLine(), new DelayLine()];
-    for (const l of this.lines) l.prepare(Math.floor(0.03 * this.fs) + 8);
+    this.flangerLines = [new DelayLine(), new DelayLine()];
+    for (const l of [...this.lines, ...this.flangerLines]) l.prepare(Math.floor(0.03 * this.fs) + 8);
     this.depth = new Smoothed(0.5); this.mix = new Smoothed(0.5);
     this.depth.reset(this.fs, 0.05); this.mix.reset(this.fs, 0.05);
     this.allpass = [new Float64Array(6), new Float64Array(6)];
@@ -389,14 +766,21 @@ class Modulation {
     this.reset();
   }
   reset() {
-    for (const l of this.lines) l.reset();
+    for (const l of [...this.lines, ...this.flangerLines]) l.reset();
+    this.restart();
+  }
+  /** LFO and phaser start over, the delay lines (kept fed) stay. */
+  restart() {
     this.resetPhaser();
     this.phase = 0;
     this.depth.setCurrentAndTarget(this.depth.target);
     this.mix.setCurrentAndTarget(this.mix.target);
   }
   resetPhaser() { this.allpass[0].fill(0); this.allpass[1].fill(0); this.phaserFb[0] = this.phaserFb[1] = 0; }
-  feed(left, right, n) { for (let i = 0; i < n; ++i) { this.lines[0].push(left[i]); this.lines[1].push(right[i]); } }
+  feed(left, right, n) {
+    const [l0, l1] = this.lines, [f0, f1] = this.flangerLines;
+    for (let i = 0; i < n; ++i) { l0.push(left[i]); l1.push(right[i]); f0.push(left[i]); f1.push(right[i]); }
+  }
   setParameters(type, rateHz, depth01, mix01) {
     type = clamp(type | 0, 0, 3);
     if (type !== this.type) { this.type = type; this.resetPhaser(); }
@@ -417,12 +801,14 @@ class Modulation {
           case 0: {
             const wet = this.lines[ch].read((12 + 6 * d * lfo) * 0.001 * fs);
             this.lines[ch].push(x);
+            this.flangerLines[ch].push(x);
             io[ch][i] = x * (1 - m) + wet * m;
             break;
           }
           case 1: {
-            const wet = this.lines[ch].read((0.25 + 4 * d * 0.5 * (lfo + 1)) * 0.001 * fs);
-            this.lines[ch].push(x + 0.7 * wet);
+            const wet = this.flangerLines[ch].read((0.25 + 4 * d * 0.5 * (lfo + 1)) * 0.001 * fs);
+            this.flangerLines[ch].push(x + 0.7 * wet);
+            this.lines[ch].push(x);
             io[ch][i] = x * (1 - m) + wet * m;
             break;
           }
@@ -433,10 +819,14 @@ class Modulation {
             let v = x + 0.4 * this.phaserFb[ch];
             for (let k = 0; k < 6; ++k) { const y = a * v + st[k]; st[k] = v - a * y; v = y; }
             this.phaserFb[ch] = v;
+            this.lines[ch].push(x);
+            this.flangerLines[ch].push(x);
             io[ch][i] = x * (1 - m) + v * m;
             break;
           }
           default: {
+            this.lines[ch].push(x);
+            this.flangerLines[ch].push(x);
             const k = 0.5 + 9 * m;
             const shaped = Math.tanh(k * lfo0) / Math.tanh(k);
             io[ch][i] = x * (1 - d * 0.5 * (shaped + 1));
@@ -625,49 +1015,253 @@ class ReverbFx {
 }
 
 // ============================================================================
-const defaultParams = () => ({
-  inputGainDb: 0, outputGainDb: 0, mute: false, cabOn: true,
-  gateOn: true, gateThresholdDb: -65, gateReleaseMs: 60,
-  driveOn: true, driveType: 0, driveGain: 0.5, driveTone: 0.5, driveLevelDb: 0,
-  eqOn: true, eq: defaultEq(),
-  modOn: false, modType: 0, modRateHz: 0.8, modDepth: 0.5, modMix: 0.5,
-  delayOn: false, delayTimeMs: 380, delayFeedback: 0.35, delayMix: 0.35, delayTone: 0.6,
-  reverbOn: true, reverbSize: 0.55, reverbDamping: 0.45, reverbMix: 0.25, reverbPreDelayMs: 0,
-});
+// Models (Source/DSP/Models.h): the board is an HD500X-style chain of eight FX slots plus the amp/cab block
+const NUM_SLOTS = 8;
+const MAX_KNOBS = 8;
+const CATEGORY = { none: 0, dynamics: 1, distortion: 2, modulation: 3, delay: 4, reverb: 5 };
+const CATEGORY_NAMES = ["Empty", "Dynamics", "Distortion", "Modulation", "Delay", "Reverb"];
+const ENGINE = { none: 0, gate: 1, distortion: 2, modulation: 3, delay: 4, reverb: 5 };
+const UNIT = { knob: 0, percent: 1, db: 2, ms: 3, hz: 4, choice: 5 };
 
-class Switch {
-  constructor(fs) { this.amount = new Smoothed(0); this.amount.reset(fs, 0.03); this.needsReset = true; this.resetOnEnable = true; }
+const knobSpec = (name, min, max, def, centre, step, unit, choices) => ({ name, min, max, def, centre, step, unit, choices: choices || [] });
+const percent = (name, def, max = 100) => knobSpec(name, 0, max, def, 0, 1, UNIT.percent);
+const decibels = (name, min, max, def, step = 0.1) => knobSpec(name, min, max, def, 0, step, UNIT.db);
+const millis = (name, min, max, def, centre) => knobSpec(name, min, max, def, centre, 1, UNIT.ms);
+const hertz = (name, min, max, def, centre) => knobSpec(name, min, max, def, centre, 0.01, UNIT.hz);
+const choice = (name, choices, def) => knobSpec(name, 0, choices.length - 1, def, 0, 1, UNIT.choice, choices);
+
+const DELAY_NOTE_NAMES = ["ms", "1/4", "1/8.", "1/8", "1/8T", "1/16"];
+const DELAY_NOTE_BEATS = [0, 1, 0.75, 0.5, 1 / 3, 0.25];
+const REVERB_NOTE_NAMES = ["ms", "1/32", "1/16", "1/8", "1/4"];
+const REVERB_NOTE_BEATS = [0, 0.125, 0.25, 0.5, 1];
+
+/** Every model, in a fixed order (append only). Same list as the plugin; compare.mjs checks it. */
+const MODELS = (() => {
+  const m = [];
+  const add = (key, name, category, engine, variant, basedOn, knobs, extra = {}) =>
+    m.push({ key, name, category, engine, variant, basedOn, knobs, timeKnob: -1, noteKnob: -1, noteBeats: null, stereo: false, trails: false, ...extra });
+  add("empty", "Empty", CATEGORY.none, ENGINE.none, 0, "", []);
+  add("noise_gate", "Noise Gate", CATEGORY.dynamics, ENGINE.gate, 0, "Noise suppressor with hysteresis",
+    [decibels("Threshold", -90, -20, -65, 0.5), millis("Decay", 5, 500, 60, 80)]);
+
+  const drive = (key, name, variant, basedOn, third, driveDefault) =>
+    add(key, name, CATEGORY.distortion, ENGINE.distortion, variant, basedOn,
+      [percent("Drive", driveDefault), percent("Bass", 50), percent(third, 50), percent("Treble", 50), decibels("Output", -30, 12, 0)]);
+  drive("tube_drive", "Tube Drive", 0, "Chandler Tube Driver", "Mid", 50);
+  drive("screamer", "Screamer", 1, "Ibanez TS808 Tube Screamer", "Tone", 50);
+  drive("overdrive", "Overdrive", 2, "DOD Overdrive/Preamp 250", "Mid", 50);
+  drive("classic_dist", "Classic Dist", 3, "Pro Co RAT", "Filter", 50);
+  drive("heavy_dist", "Heavy Dist", 4, "BOSS MT-2 Metal Zone", "Mid", 60);
+  drive("color_drive", "Color Drive", 5, "Colorsound Overdriver", "Mid", 50);
+  drive("buzz_saw", "Buzz Saw", 6, "Maestro Fuzz-Tone FZ-1", "Mid", 60);
+  drive("facial_fuzz", "Facial Fuzz", 7, "Arbiter Fuzz Face", "Mid", 60);
+  drive("jumbo_fuzz", "Jumbo Fuzz", 8, "Vox Tone Bender", "Mid", 60);
+  drive("fuzz_pi", "Fuzz Pi", 9, "Electro-Harmonix Big Muff Pi", "Mid", 60);
+  add("jet_fuzz", "Jet Fuzz", CATEGORY.distortion, ENGINE.distortion, 10, "Roland AP-7 Jet Phaser",
+    [percent("Drive", 60), percent("Fdbk", 50), percent("Tone", 50), hertz("Speed", 0.05, 8, 0.4, 1), decibels("Output", -30, 12, 0)]);
+  drive("line6_drive", "Line 6 Drive", 11, "Line 6 original: Mid morphs '70s fuzz > modern high gain > Tone Bender grit", "Mid", 50);
+  drive("line6_dist", "Line 6 Distortion", 12, "Line 6 original: massive, over-the-top gain", "Mid", 60);
+  drive("sub_oct_fuzz", "Sub Octave Fuzz", 13, "PAiA Roctave Divider", "Sub", 60);
+  drive("octave_fuzz", "Octave Fuzz", 14, "Tycobrahe Octavia", "Mid", 60);
+
+  const mod = (key, name, variant, basedOn, third) =>
+    add(key, name, CATEGORY.modulation, ENGINE.modulation, variant, basedOn,
+      [hertz("Speed", 0.05, 10, 0.8, 1), percent("Depth", 50), percent(third, 50)], { stereo: true });
+  mod("chorus", "Chorus", 0, "Stereo chorus", "Mix");
+  mod("flanger", "Flanger", 1, "Stereo flanger", "Mix");
+  mod("phaser", "Phaser", 2, "6-stage phaser", "Mix");
+  mod("tremolo", "Tremolo", 3, "Tremolo, sine to square", "Shape");
+
+  add("analog_delay", "Analog Delay", CATEGORY.delay, ENGINE.delay, 0, "Stereo delay, darker repeats",
+    [millis("Time", 20, 2000, 500, 400), choice("Note", DELAY_NOTE_NAMES, 1), percent("Feedback", 35, 95), percent("Mix", 35),
+     knobSpec("Tone", 0, 10, 6, 0, 0.1, UNIT.knob)],
+    { timeKnob: 0, noteKnob: 1, noteBeats: DELAY_NOTE_BEATS, stereo: true, trails: true });
+  add("room_reverb", "Room Reverb", CATEGORY.reverb, ENGINE.reverb, 0, "Freeverb room / hall",
+    [percent("Size", 55), percent("Damp", 45), percent("Mix", 25), millis("Pre-Delay", 0, 500, 0, 120), choice("Note", REVERB_NOTE_NAMES, 0)],
+    { timeKnob: 3, noteKnob: 4, noteBeats: REVERB_NOTE_BEATS, stereo: true, trails: true });
+  return m;
+})();
+const MODEL_INDEX = new Map(MODELS.map((m, i) => [m.key, i]));
+const modelIndex = (key) => (typeof key === "number" ? clamp(key | 0, 0, MODELS.length - 1) : MODEL_INDEX.get(key) ?? 0);
+const modelInfo = (key) => MODELS[modelIndex(key)];
+
+// knob travel (0..1) <-> value, juce::NormalisableRange style
+function knobSkew(spec) { return spec.centre > 0 ? Math.log(0.5) / Math.log((spec.centre - spec.min) / (spec.max - spec.min)) : 1; }
+function knobFromNorm(spec, n) {
+  let p = clamp(n, 0, 1);
+  if (spec.centre > 0 && p > 0) p = Math.exp(Math.log(p) / knobSkew(spec));
+  let v = spec.min + (spec.max - spec.min) * p;
+  if (spec.step > 0) v = spec.min + spec.step * Math.round((v - spec.min) / spec.step);
+  return clamp(v, spec.min, spec.max);
+}
+function knobToNorm(spec, v) {
+  const p = clamp((v - spec.min) / (spec.max - spec.min), 0, 1);
+  return spec.centre > 0 ? Math.pow(p, knobSkew(spec)) : p;
+}
+function knobText(spec, v) {
+  switch (spec.unit) {
+    case UNIT.percent: return `${Math.round(v)} %`;
+    case UNIT.db: return `${v.toFixed(1)} dB`;
+    case UNIT.ms: return `${Math.round(v)} ms`;
+    case UNIT.hz: return `${v.toFixed(2)} Hz`;
+    case UNIT.choice: return spec.choices[clamp(Math.round(v), 0, spec.choices.length - 1)];
+    default: return v.toFixed(1);
+  }
+}
+
+/** A slot holding `key` with every knob at its default. */
+function makeSlot(key, on) {
+  const knobs = new Array(MAX_KNOBS).fill(0);
+  modelInfo(key).knobs.forEach((k, i) => (knobs[i] = k.def));
+  return { on, model: MODELS[modelIndex(key)].key, knobs };
+}
+/** Tempo sync: when the note knob is not "ms", the time knob follows the tempo. */
+function resolveTempo(slot, bpm) {
+  const m = modelInfo(slot.model);
+  if (m.timeKnob < 0 || m.noteKnob < 0 || !(bpm > 0)) return slot;
+  const note = Math.round(slot.knobs[m.noteKnob]);
+  if (note > 0) {
+    const spec = m.knobs[m.timeKnob];
+    slot.knobs[m.timeKnob] = f32(clamp((60000 / bpm) * m.noteBeats[note], spec.min, spec.max));
+  }
+  return slot;
+}
+
+/** The board as it first opens: Noise Gate > Screamer > cab > Chorus (off) > Analog Delay (off) > Room Reverb. */
+function defaultBoard() {
+  const slots = [makeSlot("noise_gate", true), makeSlot("screamer", true), makeSlot("chorus", false),
+                 makeSlot("analog_delay", false), makeSlot("room_reverb", true), makeSlot("empty", false),
+                 makeSlot("empty", false), makeSlot("empty", false)];
+  return { inputGainDb: 0, outputGainDb: 0, mute: false, cabOn: true, ampPosition: 2, eqOn: true, eq: defaultEq(), slots };
+}
+const defaultParams = defaultBoard;
+
+class Fade {
+  constructor(fs) { this.amount = new Smoothed(0); this.amount.reset(fs, 0.03); }
   set(on) { this.amount.setTarget(on ? 1 : 0); }
   isOff() { return !this.amount.isSmoothing() && this.amount.current <= 0; }
   isFullyOn() { return !this.amount.isSmoothing() && this.amount.current >= 1; }
 }
 
-/** input -> gate -> drive -> cab -> EQ -> (mono to stereo) -> modulation -> delay -> reverb -> output */
+/** One FX slot: an instance of every engine; picking another model fades the old one out, then the new one in. */
+class Slot {
+  prepare(sampleRate, maxBlock) {
+    this.gate = new NoiseGate(); this.gate.prepare(sampleRate);
+    this.distortion = new Distortion(); this.distortion.prepare(sampleRate, maxBlock);
+    this.modulation = new Modulation(); this.modulation.prepare(sampleRate);
+    this.delay = new Delay(); this.delay.prepare(sampleRate);
+    this.reverb = new ReverbFx(); this.reverb.prepare(sampleRate, maxBlock);
+    this.fade = new Fade(sampleRate);
+    this.active = this.requested = 0;
+    this.on = false; this.needsReset = false;
+    this.knobs = new Float32Array(MAX_KNOBS); this.pendingKnobs = new Float32Array(MAX_KNOBS);
+    this.reset();
+  }
+  reset() {
+    for (const e of [this.gate, this.distortion, this.modulation, this.delay, this.reverb]) e.reset();
+    if (this.active !== this.requested) this.knobs.set(this.pendingKnobs);
+    this.active = this.requested;
+    this.needsReset = false;
+    this.configure(); this.resetEngine(); this.configure();
+    const info = MODELS[this.active];
+    this.fade.amount.setCurrentAndTarget(info.engine !== ENGINE.none && (this.on || info.trails) ? 1 : 0);
+  }
+  setParameters(p) {
+    this.requested = modelIndex(p.model);
+    this.on = !!p.on;
+    if (this.requested === this.active) this.knobs.set(p.knobs); else this.pendingKnobs.set(p.knobs);
+    if (MODELS[this.active].engine === ENGINE.none) this.fade.amount.setCurrentAndTarget(0);
+    if (this.requested !== this.active && this.fade.isOff()) this.start();
+    this.configure();
+    const info = MODELS[this.active];
+    this.fade.set(this.requested === this.active && info.engine !== ENGINE.none && (this.on || info.trails));
+  }
+  start() {
+    this.active = this.requested;
+    this.knobs.set(this.pendingKnobs);
+    this.needsReset = false;
+    this.configure(); this.resetEngine(); this.configure();
+  }
+  configure() {
+    const info = MODELS[this.active], k = this.knobs, enabled = this.on && this.active === this.requested;
+    switch (info.engine) {
+      case ENGINE.gate: this.gate.setParameters(k[0], k[1]); break;
+      case ENGINE.distortion: this.distortion.setModel(info.variant); this.distortion.setParameters(k); break;
+      case ENGINE.modulation: this.modulation.setParameters(info.variant, k[0], f32(k[1] / 100), f32(k[2] / 100)); break;
+      case ENGINE.delay: this.delay.setParameters(enabled, k[0], f32(k[2] / 100), f32(k[3] / 100), f32(k[4] / 10)); break;
+      case ENGINE.reverb: this.reverb.setParameters(enabled, f32(k[0] / 100), f32(k[1] / 100), f32(k[2] / 100), k[3]); break;
+      default: break;
+    }
+  }
+  resetEngine() {
+    switch (MODELS[this.active].engine) {
+      case ENGINE.gate: this.gate.reset(); break;
+      case ENGINE.distortion: this.distortion.reset(); break;
+      case ENGINE.modulation: this.modulation.restart(); break;
+      case ENGINE.delay: this.delay.reset(); break;
+      case ENGINE.reverb: this.reverb.reset(); break;
+      default: break;
+    }
+  }
+  process(left, right, n, scratch) {
+    const info = MODELS[this.active];
+    // the chorus / flanger lines always hold the slot's recent input (see the C++)
+    if (info.engine !== ENGINE.modulation || this.fade.isOff()) this.modulation.feed(left, right, n);
+    if (info.engine === ENGINE.none) return;
+    if (this.fade.isOff()) { this.needsReset = true; return; }
+    if (this.needsReset) { if (info.engine !== ENGINE.modulation) this.resetEngine(); this.needsReset = false; }
+
+    const full = this.fade.isFullyOn(), dl = scratch.dryLeft, dr = scratch.dryRight;
+    if (!full) { dl.set(left.subarray(0, n)); dr.set(right.subarray(0, n)); }
+    if (info.stereo) {
+      if (info.engine === ENGINE.modulation) this.modulation.process(left, right, n);
+      else if (info.engine === ENGINE.delay) this.delay.process(left, right, n);
+      else this.reverb.process(left, right, n);
+    } else {
+      const m = scratch.mid;
+      for (let i = 0; i < n; ++i) m[i] = 0.5 * (left[i] + right[i]);
+      if (info.engine === ENGINE.gate) this.gate.process(m, n); else this.distortion.process(m, n);
+      for (let i = 0; i < n; ++i) left[i] = right[i] = m[i];
+    }
+    if (!full) {
+      const a = this.fade.amount;
+      for (let i = 0; i < n; ++i) {
+        const g = a.next();
+        left[i] = dl[i] + g * (left[i] - dl[i]);
+        right[i] = dr[i] + g * (right[i] - dr[i]);
+      }
+    }
+  }
+}
+
+/** input -> 8 slots, with the amp/cab block between them -> global EQ -> output. Mono in, stereo out. */
 class FxChain {
   prepare(sampleRate, maxBlock) {
     this.fs = sampleRate;
     this.maxBlock = Math.max(1, maxBlock);
-    this.gate = new NoiseGate(); this.gate.prepare(sampleRate);
-    this.drive = new Drive(); this.drive.prepare(sampleRate, this.maxBlock);
+    this.slots = Array.from({ length: NUM_SLOTS }, () => { const s = new Slot(); s.prepare(sampleRate, this.maxBlock); return s; });
+    this.ampPosition = this.requestedAmpPosition = 2;
+    this.cabWanted = true;
     this.cab = new CabSim(); this.cab.prepare(sampleRate);
-    this.eq = new Equalizer(); this.eq.prepare(sampleRate);
-    this.modulation = new Modulation(); this.modulation.prepare(sampleRate);
-    this.delay = new Delay(); this.delay.prepare(sampleRate);
-    this.reverb = new ReverbFx(); this.reverb.prepare(sampleRate, this.maxBlock);
-    this.gateSwitch = new Switch(sampleRate); this.driveSwitch = new Switch(sampleRate);
-    this.cabSwitch = new Switch(sampleRate); this.eqSwitch = new Switch(sampleRate); this.modSwitch = new Switch(sampleRate);
-    this.modSwitch.resetOnEnable = false;
+    this.eqLeft = new Equalizer(); this.eqLeft.prepare(sampleRate);
+    this.eqRight = new Equalizer(); this.eqRight.prepare(sampleRate);
+    this.cabFade = new Fade(sampleRate); this.eqFade = new Fade(sampleRate);
+    this.cabNeedsReset = this.eqNeedsReset = true;
     this.inputGain = new Smoothed(1); this.outputGain = new Smoothed(1);
     this.inputGain.reset(sampleRate, 0.05); this.outputGain.reset(sampleRate, 0.05);
     this.mono = new Float32Array(this.maxBlock);
-    this.dryL = new Float32Array(this.maxBlock); this.dryR = new Float32Array(this.maxBlock);
+    this.scratch = { dryLeft: new Float32Array(this.maxBlock), dryRight: new Float32Array(this.maxBlock), mid: new Float32Array(this.maxBlock) };
     this.spareR = new Float32Array(this.maxBlock);
     this.analyzerTap = null;
     this.reset();
   }
   reset() {
-    for (const m of [this.gate, this.drive, this.cab, this.eq, this.modulation, this.delay, this.reverb]) m.reset();
-    for (const s of [this.gateSwitch, this.driveSwitch, this.cabSwitch, this.eqSwitch, this.modSwitch]) s.amount.setCurrentAndTarget(s.amount.target);
+    for (const s of this.slots) s.reset();
+    this.cab.reset(); this.eqLeft.reset(); this.eqRight.reset();
+    this.cabNeedsReset = this.eqNeedsReset = false;
+    this.ampPosition = this.requestedAmpPosition;
+    this.cabFade.amount.setCurrentAndTarget(this.cabWanted ? 1 : 0);
+    this.eqFade.amount.setCurrentAndTarget(this.eqFade.amount.target);
     this.inputGain.setCurrentAndTarget(this.inputGain.target);
     this.outputGain.setCurrentAndTarget(this.outputGain.target);
     this.inputPeak = this.outputPeak = 0;
@@ -675,14 +1269,16 @@ class FxChain {
   setParameters(p) {
     this.inputGain.setTarget(f32(dbToGain(p.inputGainDb)));
     this.outputGain.setTarget(p.mute ? 0 : f32(dbToGain(p.outputGainDb)));
-    this.gateSwitch.set(p.gateOn); this.gate.setParameters(p.gateThresholdDb, p.gateReleaseMs);
-    this.driveSwitch.set(p.driveOn); this.drive.setParameters(p.driveType, p.driveGain, p.driveTone, p.driveLevelDb);
-    this.cabSwitch.set(p.cabOn);
-    this.eqSwitch.set(p.eqOn); this.eq.setParameters(p.eq);
-    this.modSwitch.set(p.modOn); this.modulation.setParameters(p.modType, p.modRateHz, p.modDepth, p.modMix);
-    this.delay.setParameters(p.delayOn, p.delayTimeMs, p.delayFeedback, p.delayMix, p.delayTone);
-    this.reverb.setParameters(p.reverbOn, p.reverbSize, p.reverbDamping, p.reverbMix, p.reverbPreDelayMs || 0);
+    for (let s = 0; s < NUM_SLOTS; ++s) this.slots[s].setParameters(p.slots[s]);
+    this.requestedAmpPosition = clamp(p.ampPosition | 0, 0, NUM_SLOTS);
+    this.cabWanted = !!p.cabOn;
+    if (this.requestedAmpPosition !== this.ampPosition && this.cabFade.isOff()) this.ampPosition = this.requestedAmpPosition;
+    this.cabFade.set(this.cabWanted && this.requestedAmpPosition === this.ampPosition);
+    this.eqFade.set(p.eqOn);
+    this.eqLeft.setParameters(p.eq);
+    this.eqRight.setParameters(p.eq);
   }
+  getActiveModel(slot) { return MODELS[this.slots[slot].active].key; }
   /** Mono in, stereo out. outRight may be null for a mono mix. */
   process(input, outLeft, outRight, n) {
     this.inputPeak = this.outputPeak = 0;
@@ -700,16 +1296,18 @@ class FxChain {
       m[i] = input[i] * this.inputGain.next();
       this.inputPeak = Math.max(this.inputPeak, Math.abs(m[i]));
     }
-    this.runMono(this.gateSwitch, this.gate, m, n);
-    this.runMono(this.driveSwitch, this.drive, m, n);
-    this.runMono(this.cabSwitch, this.cab, m, n);
-    this.runMono(this.eqSwitch, this.eq, m, n);
-    if (this.analyzerTap) this.analyzerTap(m, n);
     for (let i = 0; i < n; ++i) left[i] = right[i] = m[i];
-    if (this.modSwitch.isOff()) this.modulation.feed(left, right, n);
-    this.runStereo(this.modSwitch, this.modulation, left, right, n);
-    this.delay.process(left, right, n);
-    this.reverb.process(left, right, n);
+    for (let s = 0; s < NUM_SLOTS; ++s) {
+      if (s === this.ampPosition) this.runCab(left, right, n);
+      this.slots[s].process(left, right, n, this.scratch);
+    }
+    if (this.ampPosition >= NUM_SLOTS) this.runCab(left, right, n);
+    this.runEq(left, right, n);
+    if (this.analyzerTap) {
+      const mid = this.scratch.mid;
+      for (let i = 0; i < n; ++i) mid[i] = 0.5 * (left[i] + right[i]);
+      this.analyzerTap(mid, n);
+    }
     for (let i = 0; i < n; ++i) {
       const g = this.outputGain.next();
       left[i] = clamp(left[i] * g, -2, 2);
@@ -717,24 +1315,28 @@ class FxChain {
       this.outputPeak = Math.max(this.outputPeak, Math.abs(left[i]), Math.abs(right[i]));
     }
   }
-  runMono(sw, fx, data, n) {
-    if (sw.isOff()) { sw.needsReset = true; return; }
-    if (sw.needsReset) { if (sw.resetOnEnable) fx.reset(); sw.needsReset = false; }
-    if (sw.isFullyOn()) { fx.process(data, n); return; }
-    const dry = this.dryL;
-    dry.set(data.subarray(0, n));
-    fx.process(data, n);
-    for (let i = 0; i < n; ++i) { const a = sw.amount.next(); data[i] = dry[i] + a * (data[i] - dry[i]); }
-  }
-  runStereo(sw, fx, left, right, n) {
-    if (sw.isOff()) { sw.needsReset = true; return; }
-    if (sw.needsReset) { if (sw.resetOnEnable) fx.reset(); sw.needsReset = false; }
-    if (sw.isFullyOn()) { fx.process(left, right, n); return; }
-    const dl = this.dryL, dr = this.dryR;
-    dl.set(left.subarray(0, n)); dr.set(right.subarray(0, n));
-    fx.process(left, right, n);
+  runCab(left, right, n) {
+    if (this.cabFade.isOff()) { this.cabNeedsReset = true; return; }
+    if (this.cabNeedsReset) { this.cab.reset(); this.cabNeedsReset = false; }
+    const m = this.scratch.mid;
+    for (let i = 0; i < n; ++i) m[i] = 0.5 * (left[i] + right[i]);
+    this.cab.process(m, n);
+    if (this.cabFade.isFullyOn()) { for (let i = 0; i < n; ++i) left[i] = right[i] = m[i]; return; }
     for (let i = 0; i < n; ++i) {
-      const a = sw.amount.next();
+      const a = this.cabFade.amount.next();
+      left[i] += a * (m[i] - left[i]);
+      right[i] += a * (m[i] - right[i]);
+    }
+  }
+  runEq(left, right, n) {
+    if (this.eqFade.isOff()) { this.eqNeedsReset = true; return; }
+    if (this.eqNeedsReset) { this.eqLeft.reset(); this.eqRight.reset(); this.eqNeedsReset = false; }
+    if (this.eqFade.isFullyOn()) { this.eqLeft.process(left, n); this.eqRight.process(right, n); return; }
+    const dl = this.scratch.dryLeft, dr = this.scratch.dryRight;
+    dl.set(left.subarray(0, n)); dr.set(right.subarray(0, n));
+    this.eqLeft.process(left, n); this.eqRight.process(right, n);
+    for (let i = 0; i < n; ++i) {
+      const a = this.eqFade.amount.next();
       left[i] = dl[i] + a * (left[i] - dl[i]);
       right[i] = dr[i] + a * (right[i] - dr[i]);
     }
@@ -870,8 +1472,6 @@ class SpectrumAnalyzer {
 
 // ============================================================================
 // Tap tempo
-const DELAY_DIVISIONS = [["1/4", 1], ["1/8.", 0.75], ["1/8", 0.5], ["1/8T", 1 / 3], ["1/16", 0.25]];
-const REVERB_DIVISIONS = [["1/32", 0.125], ["1/16", 0.25], ["1/8", 0.5], ["1/4", 1]];
 
 class TapTempo {
   constructor() { this.intervals = [0, 0, 0, 0]; this.count = 0; this.next = 0; this.lastTap = 0; this.hasLastTap = false; }
@@ -1158,7 +1758,7 @@ class TestSignalPlayer {
   }
 }
 
-return { PI, dbToGain, gainToDb, Smoothed, Biquad, OnePole, DcBlocker, DelayLine, NoiseGate, OVERSAMPLER_COEFFS, Oversampler4x, DRIVE_TYPES, Drive, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, defaultParams, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, DELAY_DIVISIONS, REVERB_DIVISIONS, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
+return { PI, dbToGain, gainToDb, Smoothed, Biquad, OnePole, DcBlocker, DelayLine, NoiseGate, OVERSAMPLER_COEFFS, Oversampler4x, Distortion, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, NUM_SLOTS, MAX_KNOBS, CATEGORY, CATEGORY_NAMES, ENGINE, UNIT, DELAY_NOTE_NAMES, DELAY_NOTE_BEATS, REVERB_NOTE_NAMES, REVERB_NOTE_BEATS, MODELS, modelIndex, modelInfo, knobSkew, knobFromNorm, knobToNorm, knobText, makeSlot, resolveTempo, defaultBoard, defaultParams, Slot, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
 })();
 
 // AudioWorklet processor: runs the whole pedalboard on the audio thread.

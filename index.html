@@ -365,6 +365,7 @@ button { cursor: pointer; }
 .notes { color: var(--dim); font-size: 13px; line-height: 1.6; max-width: 72ch; }
 .notes p { margin: 0 0 6px; }
 .notes strong { color: var(--text); font-weight: 600; }
+.notes a { color: var(--led-blue); overflow-wrap: anywhere; }
 .engine-info { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 
 /* ---------- narrower screens ---------- */
@@ -473,7 +474,7 @@ button { cursor: pointer; }
   <footer class="notes">
     <p class="engine-info" id="engine-info">音訊狀態：尚未啟動（按 POWER）</p>
     <p><strong>沒有吉他：</strong>選 DEMO RIFF 聽內建樂句，或 LOAD FILE 載入自己的音檔（吉他 DI 乾聲最適合）；按 PLUCK 撥空弦試調音器，按 CHORD 刷基本和弦（會自動停止樂句）。</p>
-    <p><strong>接吉他：</strong>吉他接 USB 錄音介面，選 LIVE INPUT 並允許使用麥克風；請戴耳機避免回授。延遲取決於瀏覽器和裝置，通常 10–40 ms。</p>
+    <p><strong>接吉他：</strong>吉他接 USB 錄音介面，選 LIVE INPUT 並允許使用麥克風；請戴耳機避免回授。延遲取決於瀏覽器和裝置，通常 10–40 ms。嵌在其他網站裡的頁面（例如 claude.ai）不能使用麥克風，請開 <a href="https://anyouhuang.github.io/guitar-pedalboard/" target="_blank" rel="noopener">anyouhuang.github.io/guitar-pedalboard</a>。</p>
     <p><strong>操作：</strong>旋鈕上下拖曳（按住 Shift 微調），雙擊回預設值，點一下後也可用滾輪或方向鍵；點腳踏開關開關效果；TAP 跟著拍子點 3–4 下；EQ 拖曳彩色點，游標在點上時滾輪調 Q。</p>
   </footer>
 </div>
@@ -1798,6 +1799,8 @@ tunerDetector.prepare(48000);
 const levels = { in: 0, out: 0, progress: 0 };
 let fileData = null; // { samples, rate, name }
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+/** The copy on its own HTTPS address, where the microphone / audio interface can be used. */
+const SELF_HOSTED_URL = "https://anyouhuang.github.io/guitar-pedalboard/";
 // On iPhone/iPad, Web Audio obeys the ring/silent switch, and a page embedded in another page (like the
 // claude.ai viewer) can't switch its audio session to "playback". There, the sound is sent through an
 // <audio> element instead, which plays like a video does. On a page of its own, the output stays direct.
@@ -2010,9 +2013,13 @@ async function enableMic() {
     engine.mic = { stream, src };
     return true;
   } catch (err) {
-    setStatus(err && err.name === "NotAllowedError"
-      ? "麥克風權限被拒絕或這個頁面不允許使用音訊輸入。要接吉他請用自架的網址開啟；也可以用 DEMO RIFF 或載入音檔。"
-      : "找不到音訊輸入裝置。請接上錄音介面後再試，或改用 DEMO RIFF。");
+    const denied = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
+    let message;
+    if (!denied) message = "找不到音訊輸入裝置。請接上錄音介面後再試，或改用 DEMO RIFF。";
+    else if (window.top !== window.self) message = `這個頁面被嵌在其他網站裡（例如 claude.ai），不能使用麥克風。要接吉他請開 ${SELF_HOSTED_URL}`;
+    else if (isIOS) message = "麥克風權限被拒絕。請點網址列左邊的「大小」圖示 →「網站設定」→「麥克風」改成「允許」，重新整理後再選 LIVE INPUT。";
+    else message = "麥克風權限被拒絕。請點網址列左邊的鎖頭／設定圖示，把「麥克風」改成「允許」，重新整理後再選 LIVE INPUT。";
+    setStatus(message, 20000);
     return false;
   }
 }
@@ -2249,10 +2256,10 @@ onChange("modType", (v) => knobRefs.modMix.setLabel(v === 3 ? "Shape" : "Mix"));
 // Input source strip
 const statusText = $("#status-text"), progressBar = $("#progress-bar");
 let statusOverride = "", statusTimer = 0;
-function setStatus(text) {
+function setStatus(text, ms = 9000) {
   statusOverride = text;
   clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => { statusOverride = ""; renderSource(); }, 9000);
+  statusTimer = setTimeout(() => { statusOverride = ""; renderSource(); }, ms);
   renderSource();
 }
 function setPlaying(on) {

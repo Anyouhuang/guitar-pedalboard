@@ -2006,11 +2006,12 @@ async function enableMic() {
   try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch { /* not supported */ }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+      // no voice processing, and ask for the smallest input buffer the device allows
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1, latency: 0 },
     });
     const src = engine.ctx.createMediaStreamSource(stream);
     src.connect(engine.node);
-    engine.mic = { stream, src };
+    engine.mic = { stream, src, track: stream.getAudioTracks()[0] };
     return true;
   } catch (err) {
     const denied = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
@@ -2684,6 +2685,12 @@ function renderEngineInfo(t) {
     : "輸出：直接";
   const parts = [`音訊狀態：${STATE_NAMES[ctx.state] || ctx.state}`, engine.kind, route, `${(ctx.sampleRate / 1000).toFixed(1)} kHz`];
   if (latency > 0) parts.push(`輸出延遲約 ${latency} ms`);
+  // input side, when the browser reports it (Chrome / Edge do; Safari may not)
+  const inputLatency = source === "live" && engine.mic && engine.mic.track.getSettings ? engine.mic.track.getSettings().latency : 0;
+  if (inputLatency > 0) {
+    parts.push(`輸入延遲約 ${Math.round(inputLatency * 1000)} ms`);
+    if (latency > 0) parts.push(`合計約 ${latency + Math.round(inputLatency * 1000)} ms`);
+  }
   const text = parts.filter(Boolean).join(" · ");
   if (engineInfo.textContent !== text) engineInfo.textContent = text;
 }

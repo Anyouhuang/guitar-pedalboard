@@ -1,0 +1,2711 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#131316">
+<title>Guitar Pedalboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20x%3D%228%22%20y%3D%223%22%20width%3D%2248%22%20height%3D%2258%22%20rx%3D%229%22%20fill%3D%22%23e0702a%22%2F%3E%3Ccircle%20cx%3D%2222%22%20cy%3D%2217%22%20r%3D%227%22%20fill%3D%22%23161618%22%2F%3E%3Ccircle%20cx%3D%2242%22%20cy%3D%2217%22%20r%3D%227%22%20fill%3D%22%23161618%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%223%22%20fill%3D%22%23ff3b30%22%2F%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2248%22%20r%3D%229%22%20fill%3D%22%23cfcfd4%22%2F%3E%3C%2Fsvg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600&family=Barlow+Condensed:wght@700;800&family=IBM+Plex+Mono&display=swap">
+<style>
+/* Layout: a pedalboard seen from above - rack header, input strip, a row of stomp boxes, EQ rack unit.
+   One deliberate dark look (a stage floor), like the desktop plugin. */
+:root {
+  color-scheme: dark;
+  --board: #131316;
+  --rack-top: #2b2b31;
+  --rack-bottom: #17171b;
+  --well: #0b0b0d;
+  --text: #ededed;
+  --dim: #8f8f98;
+  --line: rgba(255, 255, 255, 0.08);
+  --shadow: rgba(0, 0, 0, 0.55);
+  --lcd: #0a1310;
+  --lcd-text: #7dffb0;
+  --led-red: #ff3b30;
+  --led-green: #35e07a;
+  --led-blue: #34c3ff;
+  --amber: #ffb020;
+  --gate: #5d6b75;
+  --drive: #e0702a;
+  --mod: #8157d0;
+  --delay: #2f9a66;
+  --reverb: #2f7fc0;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { background: var(--board); color: var(--text); }
+body {
+  font-family: var(--body);
+  font-size: 14px;
+  background-image: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.014) 0 1px, transparent 1px 3px);
+}
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+.board {
+  max-width: 1040px;
+  margin-inline: auto;
+  padding-inline: 16px;
+  padding-block: 16px 28px;
+  display: grid;
+  gap: 12px;
+}
+
+.eyebrow {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* ---------- rack panels (header, input strip, EQ) ---------- */
+.rack, .source, .eq {
+  background: linear-gradient(var(--rack-top), var(--rack-bottom));
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 1px 0 var(--line);
+  border-radius: 12px;
+}
+
+.rack {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.2fr) auto auto minmax(240px, 2fr) auto auto;
+  grid-template-areas: "brand power in tuner out toggles";
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+}
+.brand { grid-area: brand; min-width: 0; }
+.brand h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 28px;
+  line-height: 0.95;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+.brand h1 span { display: block; }
+.brand h1 .brand-bottom { color: var(--drive); }
+.chain { margin: 6px 0 0; color: var(--dim); font-size: 12px; letter-spacing: 0.02em; }
+
+.power {
+  grid-area: power;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  width: 64px;
+  padding: 8px 0 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.7);
+  background: linear-gradient(#35353c, #1b1b20);
+  box-shadow: inset 0 1px 0 var(--line), 0 2px 6px var(--shadow);
+}
+.power-led { width: 12px; height: 12px; border-radius: 50%; background: #3a1210; box-shadow: inset 0 1px 2px #000; }
+.power[aria-pressed="true"] .power-led { background: var(--led-red); box-shadow: 0 0 10px var(--led-red), inset 0 -1px 2px rgba(0,0,0,.4); }
+.power-label { font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.08em; }
+.power-sub { font-family: var(--mono); font-size: 9px; color: var(--dim); }
+
+.io { display: flex; align-items: center; gap: 6px; }
+#io-in { grid-area: in; }
+#io-out { grid-area: out; }
+.tuner-wrap { grid-area: tuner; min-width: 0; }
+#tuner { display: block; width: 100%; height: 92px; border-radius: 8px; background: var(--well); }
+.toggles { grid-area: toggles; display: grid; gap: 8px; }
+
+.meter {
+  position: relative;
+  width: 12px;
+  height: 86px;
+  border-radius: 3px;
+  background: var(--well);
+  overflow: hidden;
+}
+.meter .fill {
+  position: absolute; inset: auto 1.5px 0 1.5px;
+  height: 0%;
+  background: linear-gradient(to top, var(--led-green) 0 80%, var(--amber) 80% 95%, var(--led-red) 95%);
+  background-size: 100% 86px;
+  background-position: bottom;
+}
+.meter .hold { position: absolute; left: 1.5px; right: 1.5px; height: 2px; bottom: 0; background: rgba(255,255,255,.8); }
+.meter .clip { position: absolute; left: 0; right: 0; top: 0; height: 5px; background: #3a1210; }
+.meter .clip.on { background: var(--led-red); }
+
+/* LED buttons */
+.led-btn, .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 12px 0 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  background: #1c1c20;
+  color: var(--dim);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.btn { color: var(--text); padding-inline: 14px; justify-content: center; }
+.led-btn:hover, .btn:hover { background: #26262c; }
+.led-btn i { width: 9px; height: 9px; border-radius: 50%; background: color-mix(in srgb, var(--led, var(--led-green)) 25%, #000); flex: none; }
+.led-btn[aria-pressed="true"] { color: var(--text); }
+.led-btn[aria-pressed="true"] i { background: var(--led, var(--led-green)); box-shadow: 0 0 8px var(--led, var(--led-green)); }
+.led-btn[data-led="red"] { --led: var(--led-red); }
+.led-btn[data-led="blue"] { --led: var(--led-blue); }
+
+/* ---------- knobs ---------- */
+.knob { display: grid; justify-items: center; gap: 2px; min-width: 0; }
+.knob label {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.dial { width: 64px; height: 64px; touch-action: none; cursor: ns-resize; border-radius: 50%; }
+.dial svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.knob output {
+  min-width: 64px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: rgba(237, 237, 237, 0.88);
+  white-space: nowrap;
+}
+.io .knob label { color: var(--dim); }
+
+/* ---------- input strip ---------- */
+.source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 14px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 12px 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  background: #1c1c20;
+  color: var(--dim);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--chip); }
+.chip[aria-checked="true"] { color: var(--text); border-color: var(--chip); background: color-mix(in srgb, var(--chip) 22%, #1c1c20); }
+.transport { min-width: 84px; gap: 8px; }
+.transport .icon { width: 10px; height: 10px; background: currentColor; }
+.transport[data-state="stopped"] .icon { clip-path: polygon(0 0, 100% 50%, 0 100%); }
+.transport[data-state="stopped"] { color: var(--amber); }
+.status { flex: 1 1 180px; min-width: 0; display: grid; gap: 4px; }
+#status-text { font-size: 13px; color: rgba(237, 237, 237, 0.85); overflow-wrap: anywhere; }
+.progress { height: 3px; border-radius: 2px; background: rgba(0, 0, 0, 0.5); overflow: hidden; }
+.progress div { height: 100%; width: 0%; background: var(--amber); }
+.pluck { display: flex; align-items: center; gap: 4px; }
+.pluck .eyebrow { margin-right: 4px; }
+.pluck button {
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  background: #1c1c20;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 15px;
+}
+.pluck button:active { background: #33333a; }
+.chords { align-items: flex-start; }
+.chords .eyebrow { line-height: 32px; }
+/* label on the left; chord buttons and loop controls wrap together on the right */
+.chord-body { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.chord-buttons { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.chord-buttons button[aria-pressed="true"] { border-color: var(--amber); background: color-mix(in srgb, var(--amber) 28%, #1c1c20); }
+.chord-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chord-controls select {
+  min-height: 32px; padding: 0 8px; border-radius: 6px; border: 1px solid rgba(0, 0, 0, 0.6); background: #1c1c20;
+  font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.03em;
+}
+.bpm { display: inline-flex; align-items: center; gap: 6px; font-family: var(--display); font-weight: 700; font-size: 13px; color: var(--dim); letter-spacing: 0.06em; }
+.bpm input {
+  width: 58px; min-height: 32px; padding: 0 6px; border-radius: 6px; border: 1px solid rgba(0, 0, 0, 0.6); background: #1c1c20;
+  font-family: var(--mono); font-size: 14px; text-align: center; font-variant-numeric: tabular-nums; color: var(--text);
+}
+.chord-controls .btn { min-height: 32px; padding-inline: 12px; }
+.chords button { width: auto; min-width: 36px; padding-inline: 6px; }
+
+/* ---------- pedals ---------- */
+/* rows wrap and centre, so a short last row sits in the middle instead of leaving a hole */
+.pedals { --per-row: 5; --gap: 12px; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--gap); }
+.pedals .pedal { flex: 0 0 calc((100% - (var(--per-row) - 1) * var(--gap)) / var(--per-row)); }
+.pedal {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 8px;
+  padding: 14px 12px 12px;
+  border-radius: 14px;
+  background: linear-gradient(color-mix(in srgb, var(--body) 82%, #fff), color-mix(in srgb, var(--body) 58%, #000));
+  border: 1.5px solid rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 5px 0 rgba(0, 0, 0, 0.45);
+  min-width: 0;
+}
+.screw { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #d8d8dc, #55555a); }
+.screw::after { content: ""; position: absolute; left: 1px; right: 1px; top: 3.4px; height: 1.2px; background: rgba(0, 0, 0, 0.55); }
+.screw.tl { top: 8px; left: 8px; } .screw.tr { top: 8px; right: 8px; }
+.screw.bl { bottom: 8px; left: 8px; } .screw.br { bottom: 8px; right: 8px; }
+.pedal h2 {
+  margin: 0;
+  text-align: center;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 24px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 1.5px 0 rgba(0, 0, 0, 0.35);
+}
+.pedal-row { display: flex; justify-content: center; gap: 4px; min-height: 28px; align-items: center; }
+.pedal-row .sub { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+.pedal select, .eq select {
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  background: rgba(14, 14, 17, 0.8);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  text-align: center;
+  min-width: 0;
+}
+.pedal .type-select { width: 100%; }
+.tap {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 28px; padding: 0 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  background: rgba(14, 14, 17, 0.8);
+  font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+.pedal-row select:not(.type-select) { padding-inline: 4px; }
+.tap i { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--amber) 22%, #000); }
+.tap.beat i { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.knobs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 4px; align-content: center; justify-items: center; }
+.knobs .knob:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.pedal .dial { --arc: rgba(255, 255, 255, 0.9); }
+.switch-plate {
+  display: grid; justify-items: center; gap: 8px;
+  padding: 8px 0 10px;
+  margin-inline: 6px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.16);
+}
+.pedal-led { width: 11px; height: 11px; border-radius: 50%; background: #4a1512; box-shadow: inset 0 1px 2px #000; }
+.pedal-led.on { background: var(--led-red); box-shadow: 0 0 10px var(--led-red); }
+.stomp {
+  width: 58px; height: 58px;
+  border: 0;
+  clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%);
+  background: linear-gradient(135deg, #e0e0e4, #6c6c72);
+  display: grid; place-items: center;
+  touch-action: manipulation;
+}
+.stomp::after { content: ""; width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #f2f2f4, #77777e); box-shadow: 0 0 0 1px rgba(0,0,0,.35); }
+.stomp:active::after { transform: scale(0.94); }
+
+/* ---------- EQ ---------- */
+.eq {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) 272px;
+  grid-template-areas: "side graph bands";
+  gap: 14px;
+  padding: 12px 16px;
+  align-items: center;
+}
+.eq-side { grid-area: side; display: grid; gap: 8px; align-content: start; }
+.eq-side h2 { margin: 0; font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: 0.04em; }
+.eq-side p { margin: -6px 0 4px; font-size: 12px; color: var(--dim); }
+.eq-graph { grid-area: graph; min-width: 0; }
+#eq-canvas { display: block; width: 100%; height: 214px; border-radius: 8px; background: var(--well); touch-action: none; }
+.eq-bands { grid-area: bands; display: grid; gap: 10px; }
+.band-chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.band-chips .chip { justify-content: center; padding-inline: 6px; font-size: 13px; }
+.band-knobs { display: flex; justify-content: center; gap: 10px; }
+.band-knobs .dial { --arc: var(--band); }
+
+.notes { color: var(--dim); font-size: 13px; line-height: 1.6; max-width: 72ch; }
+.notes p { margin: 0 0 6px; }
+.notes strong { color: var(--text); font-weight: 600; }
+.engine-info { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+
+/* ---------- narrower screens ---------- */
+@media (max-width: 980px) {
+  .rack {
+    grid-template-columns: 1fr 1fr auto;
+    grid-template-areas: "brand brand power" "tuner tuner tuner" "in out toggles";
+  }
+  #io-in, #io-out { justify-content: center; }
+  .toggles { grid-template-columns: 1fr; }
+  .pedals { --per-row: 3; }
+  .eq { grid-template-columns: minmax(0, 1fr) 272px; grid-template-areas: "side side" "graph bands"; }
+  .eq-side { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+  .eq-side p { margin: 0 auto 0 0; }
+}
+@media (max-width: 640px) {
+  .pedals { --per-row: 2; --gap: 10px; }
+  .dial { width: 56px; height: 56px; }
+  .knob output { min-width: 56px; font-size: 11px; }
+  .eq { grid-template-columns: minmax(0, 1fr); grid-template-areas: "side" "graph" "bands"; }
+  .eq-side p { flex-basis: 100%; order: 1; margin-top: -6px; }
+  .eq-side h2 { order: 0; }
+  .eq-side .led-btn, .eq-side .btn { order: 2; }
+  #eq-canvas { height: 200px; }
+  .rack { gap: 10px; }
+  .brand h1 { font-size: 24px; }
+  .source { padding: 10px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="board">
+  <header class="rack">
+    <div class="brand">
+      <h1><span>Guitar</span> <span class="brand-bottom">Pedalboard</span></h1>
+      <p class="chain">gate › drive › cab › eq › mod › delay › reverb</p>
+    </div>
+    <button class="power" id="power" type="button" aria-pressed="false" title="Start / stop the sound">
+      <span class="power-led"></span><span class="power-label">POWER</span><span class="power-sub">9V DC</span>
+    </button>
+    <div class="io" id="io-in"></div>
+    <div class="tuner-wrap"><canvas id="tuner" aria-label="Chromatic tuner"></canvas></div>
+    <div class="io" id="io-out"></div>
+    <div class="toggles">
+      <button class="led-btn" id="cab" type="button" aria-pressed="true" title="Speaker-cabinet simulation: on for headphones, off into a guitar amp"><i></i>Cab sim</button>
+      <button class="led-btn" id="mute" type="button" data-led="red" aria-pressed="false" title="Silence the output, e.g. while tuning"><i></i>Mute</button>
+    </div>
+  </header>
+
+  <section class="source" aria-label="Input source">
+    <span class="eyebrow">Input</span>
+    <div class="chips" role="radiogroup" aria-label="Input source">
+      <button class="chip" type="button" role="radio" data-source="live" style="--chip: var(--led-green)" aria-checked="false">Live input</button>
+      <button class="chip" type="button" role="radio" data-source="demo" style="--chip: var(--amber)" aria-checked="true">Demo riff</button>
+      <button class="chip" type="button" role="radio" data-source="file" style="--chip: var(--led-blue)" aria-checked="false">Audio file</button>
+    </div>
+    <button class="btn transport" id="transport" type="button" title="Stop / play the demo riff or audio file (plucked strings still sound)"><span class="icon" aria-hidden="true"></span><span class="label">Stop</span></button>
+    <label class="btn" for="file">Load file…</label>
+    <input type="file" id="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aif,.aiff" hidden>
+    <div class="status">
+      <span id="status-text">按 POWER 開始播放內建的吉他樂句</span>
+      <div class="progress"><div id="progress-bar"></div></div>
+    </div>
+    <div class="pluck" aria-label="Pluck an open string">
+      <span class="eyebrow">Pluck</span>
+      <button type="button" data-string="0" title="Low E (82.41 Hz)">E</button>
+      <button type="button" data-string="1" title="A (110.00 Hz)">A</button>
+      <button type="button" data-string="2" title="D (146.83 Hz)">D</button>
+      <button type="button" data-string="3" title="G (196.00 Hz)">G</button>
+      <button type="button" data-string="4" title="B (246.94 Hz)">B</button>
+      <button type="button" data-string="5" title="High E (329.63 Hz)">e</button>
+    </div>
+    <div class="pluck chords" id="chords" aria-label="Strum a chord">
+      <span class="eyebrow">Chord</span>
+      <div class="chord-body">
+        <div class="chord-buttons" id="chord-buttons"></div>
+        <div class="chord-controls">
+          <select id="chord-pattern" aria-label="How the chord buttons play"></select>
+          <label class="bpm"><input id="chord-bpm" type="number" inputmode="numeric" min="40" max="240" step="1" value="90" aria-label="Chord loop tempo in BPM"> BPM</label>
+          <button class="btn" id="chord-stop" type="button" title="Stop the chord loop">Stop</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="pedals" id="pedals" aria-label="Effects"></section>
+
+  <section class="eq" aria-label="Equalizer">
+    <div class="eq-side">
+      <h2>EQ</h2>
+      <p>6-band, after drive &amp; cab</p>
+      <button class="led-btn" id="eq-on" type="button" aria-pressed="true"><i></i>EQ on</button>
+      <button class="led-btn" id="analyzer" type="button" data-led="blue" aria-pressed="true" title="Live spectrum of the sound coming out of the EQ"><i></i>Analyzer</button>
+      <button class="btn" id="eq-flat" type="button" title="Reset every band">Flat</button>
+    </div>
+    <div class="eq-graph"><canvas id="eq-canvas" aria-label="EQ curve: drag the coloured points"></canvas></div>
+    <div class="eq-bands">
+      <div class="band-chips" id="band-chips" role="radiogroup" aria-label="EQ band"></div>
+      <div class="band-knobs" id="band-knobs"></div>
+    </div>
+  </section>
+
+  <footer class="notes">
+    <p class="engine-info" id="engine-info">音訊狀態：尚未啟動（按 POWER）</p>
+    <p><strong>沒有吉他：</strong>選 DEMO RIFF 聽內建樂句，或 LOAD FILE 載入自己的音檔（吉他 DI 乾聲最適合）；按 PLUCK 撥空弦試調音器，按 CHORD 刷基本和弦（會自動停止樂句）。</p>
+    <p><strong>接吉他：</strong>吉他接 USB 錄音介面，選 LIVE INPUT 並允許使用麥克風；請戴耳機避免回授。延遲取決於瀏覽器和裝置，通常 10–40 ms。</p>
+    <p><strong>操作：</strong>旋鈕上下拖曳（按住 Shift 微調），雙擊回預設值，點一下後也可用滾輪或方向鍵；點腳踏開關開關效果；TAP 跟著拍子點 3–4 下；EQ 拖曳彩色點，游標在點上時滾輪調 Q。</p>
+  </footer>
+</div>
+
+<script>
+const DSP = (() => {
+// Guitar Pedalboard DSP, ported line for line from the C++ plugin (Source/DSP/*.h).
+// Runs inside the AudioWorklet (effects) and on the page (tuner, analyser, EQ curve).
+// web/test/compare.mjs checks it against reference renders from the C++ build.
+
+const PI = Math.PI;
+const FLT_EPS = 1.1920929e-7, FLT_MIN = 1.17549435e-38;
+
+const dbToGain = (db) => Math.pow(10, db * 0.05);
+const gainToDb = (g) => (g > 1e-9 ? 20 * Math.log10(g) : -180);
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+// ============================================================================
+// juce::SmoothedValue (linear or multiplicative), same stepping rules
+class Smoothed {
+  constructor(initial = 0, multiplicative = false) {
+    this.current = this.target = initial;
+    this.countdown = 0;
+    this.stepsToTarget = 0;
+    this.step = 0;
+    this.multiplicative = multiplicative;
+  }
+  reset(sampleRate, seconds) { this.stepsToTarget = Math.floor(seconds * sampleRate); this.setCurrentAndTarget(this.target); }
+  setCurrentAndTarget(v) { this.target = this.current = v; this.countdown = 0; }
+  setTarget(v) {
+    const d = Math.abs(v - this.target);
+    if (d <= FLT_MIN || d <= FLT_EPS * Math.max(Math.abs(v), Math.abs(this.target))) return;
+    if (this.stepsToTarget <= 0) { this.setCurrentAndTarget(v); return; }
+    this.target = v;
+    this.countdown = this.stepsToTarget;
+    this.step = this.multiplicative
+      ? Math.exp((Math.log(Math.abs(this.target)) - Math.log(Math.abs(this.current))) / this.countdown)
+      : (this.target - this.current) / this.countdown;
+  }
+  isSmoothing() { return this.countdown > 0; }
+  next() {
+    if (this.countdown <= 0) return this.target;
+    if (--this.countdown > 0) {
+      if (this.multiplicative) this.current *= this.step; else this.current += this.step;
+    } else this.current = this.target;
+    return this.current;
+  }
+  skip(n) {
+    if (n >= this.countdown) { this.setCurrentAndTarget(this.target); return this.target; }
+    if (this.multiplicative) this.current *= Math.pow(this.step, n); else this.current += this.step * n;
+    this.countdown -= n;
+    return this.current;
+  }
+}
+
+// ============================================================================
+// RBJ biquad, transposed direct form II (coefficients rounded to float like the C++)
+const f32 = Math.fround;
+class Biquad {
+  constructor() { this.b0 = 1; this.b1 = 0; this.b2 = 0; this.a1 = 0; this.a2 = 0; this.z1 = 0; this.z2 = 0; }
+  reset() { this.z1 = this.z2 = 0; }
+  process(x) {
+    const y = this.b0 * x + this.z1;
+    this.z1 = this.b1 * x - this.a1 * y + this.z2;
+    this.z2 = this.b2 * x - this.a2 * y;
+    return y;
+  }
+  static prewarp(fs, fc, q) {
+    const w0 = (2 * PI * clamp(fc, 1, 0.49 * fs)) / fs;
+    return [Math.cos(w0), Math.sin(w0) / (2 * q)];
+  }
+  set(b0, b1, b2, a0, a1, a2) {
+    this.b0 = f32(b0 / a0); this.b1 = f32(b1 / a0); this.b2 = f32(b2 / a0);
+    this.a1 = f32(a1 / a0); this.a2 = f32(a2 / a0);
+  }
+  setLowPass(fs, fc, q) {
+    const [c, a] = Biquad.prewarp(fs, fc, q);
+    this.set((1 - c) * 0.5, 1 - c, (1 - c) * 0.5, 1 + a, -2 * c, 1 - a);
+  }
+  setHighPass(fs, fc, q) {
+    const [c, a] = Biquad.prewarp(fs, fc, q);
+    this.set((1 + c) * 0.5, -(1 + c), (1 + c) * 0.5, 1 + a, -2 * c, 1 - a);
+  }
+  setPeak(fs, fc, q, gainDb) {
+    const [c, a] = Biquad.prewarp(fs, fc, q);
+    const A = Math.pow(10, gainDb / 40);
+    this.set(1 + a * A, -2 * c, 1 - a * A, 1 + a / A, -2 * c, 1 - a / A);
+  }
+  setLowShelf(fs, fc, gainDb) {
+    const [c, a] = Biquad.prewarp(fs, fc, 0.70710678);
+    const A = Math.pow(10, gainDb / 40), k = 2 * Math.sqrt(A) * a;
+    this.set(A * ((A + 1) - (A - 1) * c + k), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - k),
+             (A + 1) + (A - 1) * c + k, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - k);
+  }
+  setHighShelf(fs, fc, gainDb) {
+    const [c, a] = Biquad.prewarp(fs, fc, 0.70710678);
+    const A = Math.pow(10, gainDb / 40), k = 2 * Math.sqrt(A) * a;
+    this.set(A * ((A + 1) + (A - 1) * c + k), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - k),
+             (A + 1) - (A - 1) * c + k, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - k);
+  }
+  /** Linear magnitude at `freq` (for drawing EQ curves). */
+  getMagnitude(freq, fs) {
+    const w = (-2 * PI * freq) / fs;
+    const c1 = Math.cos(w), s1 = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);
+    const nr = this.b0 + this.b1 * c1 + this.b2 * c2, ni = this.b1 * s1 + this.b2 * s2;
+    const dr = 1 + this.a1 * c1 + this.a2 * c2, di = this.a1 * s1 + this.a2 * s2;
+    return Math.sqrt((nr * nr + ni * ni) / (dr * dr + di * di));
+  }
+}
+
+// Topology-preserving one-pole filter
+class OnePole {
+  constructor() { this.G = 0; this.s = 0; }
+  setCutoff(fs, fc) { const g = Math.tan((PI * clamp(fc, 1, 0.49 * fs)) / fs); this.G = f32(g / (1 + g)); }
+  reset() { this.s = 0; }
+  lowPass(x) { const v = (x - this.s) * this.G; const lp = v + this.s; this.s = lp + v; return lp; }
+  highPass(x) { return x - this.lowPass(x); }
+}
+
+class DcBlocker {
+  constructor() { this.r = 0.999; this.x1 = 0; this.y1 = 0; }
+  prepare(fs) { this.r = f32(1 - (2 * PI * 10) / fs); this.reset(); }
+  reset() { this.x1 = this.y1 = 0; }
+  process(x) { const y = x - this.x1 + this.r * this.y1; this.x1 = x; this.y1 = y; return y; }
+}
+
+// Circular buffer with 4-point Hermite interpolation; read(d) = sample pushed d samples ago (d >= 1)
+class DelayLine {
+  constructor() { this.buffer = new Float32Array(8); this.writePos = 0; }
+  prepare(maxDelaySamples) { this.buffer = new Float32Array(maxDelaySamples + 4); this.writePos = 0; }
+  reset() { this.buffer.fill(0); this.writePos = 0; }
+  getMaxDelay() { return this.buffer.length - 4; }
+  push(x) { this.buffer[this.writePos] = x; if (++this.writePos === this.buffer.length) this.writePos = 0; }
+  read(delay) {
+    delay = clamp(delay, 1, this.getMaxDelay());
+    const b = this.buffer, size = b.length, di = Math.floor(delay), frac = delay - di;
+    const at = (d) => { let i = this.writePos - d; while (i < 0) i += size; return b[i]; };
+    const xm1 = at(di - 1 < 1 ? 1 : di - 1), x0 = at(di), x1 = at(di + 1), x2 = at(di + 2);
+    const c1 = 0.5 * (x1 - xm1);
+    const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;
+    const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+    return ((c3 * frac + c2) * frac + c1) * frac + x0;
+  }
+}
+
+// ============================================================================
+class NoiseGate {
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    this.envDecay = Math.exp(-1 / (0.03 * this.fs));
+    this.attackCoef = Math.exp(-1 / (0.0005 * this.fs));
+    this.holdSamples = Math.floor(0.04 * this.fs);
+    this.setParameters(-65, 60);
+    this.reset();
+  }
+  reset() { this.env = 0; this.gain = 0; this.holdCounter = 0; this.isOpen = false; }
+  setParameters(thresholdDb, releaseMs) {
+    this.openThreshold = dbToGain(thresholdDb);
+    this.closeThreshold = this.openThreshold * 0.5;
+    this.releaseCoef = Math.exp(-1 / (Math.max(1, releaseMs) * 0.001 * this.fs));
+  }
+  process(data, n) {
+    for (let i = 0; i < n; ++i) {
+      const x = data[i], a = Math.abs(x);
+      this.env = a > this.env ? a : this.env * this.envDecay;
+      if (this.env >= this.openThreshold) { this.isOpen = true; this.holdCounter = this.holdSamples; }
+      else if (this.isOpen) {
+        if (this.env >= this.closeThreshold) this.holdCounter = this.holdSamples;
+        else if (this.holdCounter > 0) --this.holdCounter;
+        else this.isOpen = false;
+      }
+      const target = this.isOpen ? 1 : 0;
+      const coef = target > this.gain ? this.attackCoef : this.releaseCoef;
+      this.gain = target + coef * (this.gain - target);
+      data[i] = x * this.gain;
+    }
+  }
+}
+
+// ============================================================================
+// juce::dsp::Oversampling (2 stages of polyphase IIR half-band = 4x), same structure.
+// Coefficients come from JUCE's FilterDesign (exported by the C++ test).
+const OVERSAMPLER_COEFFS = {
+  up: [[0.0457281470, 0.332501113, 0.663202047, 0.933855832, 0.168087542, 0.504485726, 0.803780854],
+       [0.0542307794, 0.398796976, 0.862917840, 0.199699581, 0.621096849]],
+  down: [[0.0542175248, 0.383087337, 0.748720944, 0.196797967, 0.573136389, 0.914293706],
+         [0.0707659498, 0.513167560, 0.257853091, 0.817317367]],
+};
+
+class PolyphaseStage {
+  constructor(up, down) {
+    this.up = Float32Array.from(up); this.down = Float32Array.from(down);
+    this.v1Up = new Float32Array(this.up.length); this.v1Down = new Float32Array(this.down.length);
+    this.delayDown = 0;
+  }
+  reset() { this.v1Up.fill(0); this.v1Down.fill(0); this.delayDown = 0; }
+  processUp(input, n, out) {
+    const c = this.up, v = this.v1Up, stages = c.length, direct = stages - (stages >> 1);
+    for (let i = 0; i < n; ++i) {
+      let x = input[i];
+      for (let k = 0; k < direct; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }
+      out[i << 1] = x;
+      x = input[i];
+      for (let k = direct; k < stages; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }
+      out[(i << 1) + 1] = x;
+    }
+  }
+  processDown(buffer, n, out) {
+    const c = this.down, v = this.v1Down, stages = c.length, direct = stages - (stages >> 1);
+    let delay = this.delayDown;
+    for (let i = 0; i < n; ++i) {
+      let x = buffer[i << 1];
+      for (let k = 0; k < direct; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }
+      const directOut = x;
+      x = buffer[(i << 1) + 1];
+      for (let k = direct; k < stages; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }
+      out[i] = (delay + directOut) * 0.5;
+      delay = x;
+    }
+    this.delayDown = delay;
+  }
+}
+
+class Oversampler4x {
+  constructor(maxBlock) {
+    const k = OVERSAMPLER_COEFFS;
+    this.stages = [new PolyphaseStage(k.up[0], k.down[0]), new PolyphaseStage(k.up[1], k.down[1])];
+    this.buf2 = new Float32Array(maxBlock * 2);
+    this.buf4 = new Float32Array(maxBlock * 4);
+  }
+  reset() { for (const s of this.stages) s.reset(); }
+  /** Returns the 4x buffer (process it in place, then call down()). */
+  up(input, n) {
+    this.stages[0].processUp(input, n, this.buf2);
+    this.stages[1].processUp(this.buf2, n * 2, this.buf4);
+    return this.buf4;
+  }
+  down(output, n) {
+    this.stages[1].processDown(this.buf4, n * 2, this.buf2);
+    this.stages[0].processDown(this.buf2, n, output);
+  }
+}
+
+// ============================================================================
+const DRIVE_TYPES = ["Overdrive", "Distortion", "Fuzz"];
+
+class Drive {
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    this.oversampler = new Oversampler4x(maxBlock);
+    this.osRate = this.fs * 4;
+    this.gain = new Smoothed(1, true);
+    this.level = new Smoothed(1);
+    this.gain.reset(this.osRate, 0.05);
+    this.level.reset(this.fs, 0.05);
+    this.preHp = new OnePole(); this.bandLimit = new OnePole(); this.tone = new Biquad(); this.dc = new DcBlocker();
+    this.dc.prepare(this.fs);
+    this.currentType = -1;
+    this.setParameters(0, 0.5, 0.5, 0);
+    this.reset();
+  }
+  reset() {
+    this.oversampler.reset();
+    this.preHp.reset(); this.bandLimit.reset(); this.tone.reset(); this.dc.reset();
+    this.gain.setCurrentAndTarget(this.gain.target);
+    this.level.setCurrentAndTarget(this.level.target);
+  }
+  setParameters(type, drive01, tone01, levelDb) {
+    type = clamp(type | 0, 0, 2);
+    if (type !== this.currentType) {
+      this.currentType = type;
+      if (type === 0)      { this.preHp.setCutoff(this.osRate, 720); this.bandLimit.setCutoff(this.osRate, 7000); }
+      else if (type === 1) { this.preHp.setCutoff(this.osRate, 160); this.bandLimit.setCutoff(this.osRate, 5500); }
+      else                 { this.preHp.setCutoff(this.osRate, 90);  this.bandLimit.setCutoff(this.osRate, 8000); }
+    }
+    const g = type === 0 ? 3 * Math.pow(40, drive01) : type === 1 ? 6 * Math.pow(120, drive01) : 25 * Math.pow(60, drive01);
+    this.gain.setTarget(f32(g));
+    this.tone.setLowPass(this.fs, 500 * Math.pow(24, tone01), 0.707);
+    const makeup = [0.22, 0.13, 0.11][type];
+    this.level.setTarget(f32(dbToGain(levelDb) * makeup));
+  }
+  process(data, n) {
+    const x = this.oversampler.up(data, n), osN = n * 4;
+    const gain = this.gain, preHp = this.preHp, band = this.bandLimit;
+    if (this.currentType === 0) {
+      for (let i = 0; i < osN; ++i) {
+        const inp = band.lowPass(x[i]);
+        x[i] = inp + Math.tanh(gain.next() * preHp.highPass(inp));
+      }
+    } else if (this.currentType === 1) {
+      for (let i = 0; i < osN; ++i) {
+        const v = gain.next() * preHp.highPass(band.lowPass(x[i]));
+        x[i] = v / Math.pow(1 + Math.pow(Math.abs(v), 2.5), 0.4);
+      }
+    } else {
+      const bias = 0.25, tb = Math.tanh(bias);
+      for (let i = 0; i < osN; ++i) {
+        const v = gain.next() * preHp.highPass(x[i]);
+        const s1 = Math.tanh(v + bias) - tb;
+        x[i] = band.lowPass(Math.tanh(2.5 * s1));
+      }
+    }
+    this.oversampler.down(data, n);
+    for (let i = 0; i < n; ++i) data[i] = this.tone.process(this.dc.process(data[i])) * this.level.next();
+  }
+}
+
+// ============================================================================
+class CabSim {
+  prepare(fs) {
+    this.f = [new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad()];
+    this.f[0].setHighPass(fs, 75, 0.707);
+    this.f[1].setPeak(fs, 120, 1.4, 3);
+    this.f[2].setPeak(fs, 450, 1.0, -3.5);
+    this.f[3].setPeak(fs, 2300, 1.3, 4);
+    this.f[4].setLowPass(fs, 5000, 0.6);
+    this.f[5].setLowPass(fs, 6500, 0.9);
+  }
+  reset() { for (const f of this.f) f.reset(); }
+  process(data, n) {
+    const [a, b, c, d, e, g] = this.f;
+    for (let i = 0; i < n; ++i) data[i] = g.process(e.process(d.process(c.process(b.process(a.process(data[i]))))));
+  }
+}
+
+// ============================================================================
+const EQ_BANDS = ["lowCut", "bass", "lowMid", "highMid", "treble", "highCut"];
+const defaultEq = () => ({
+  lowCutHz: 20, bassHz: 100, bassDb: 0, lowMidHz: 400, lowMidDb: 0, lowMidQ: 1,
+  highMidHz: 2000, highMidDb: 0, highMidQ: 1, trebleHz: 5000, trebleDb: 0, highCutHz: 20000,
+});
+
+class Equalizer {
+  /** Shared by the audio path and the on-screen curve. */
+  static design(s, fs, filters) {
+    filters[0].setHighPass(fs, s.lowCutHz, 0.707);
+    filters[1].setLowShelf(fs, s.bassHz, s.bassDb);
+    filters[2].setPeak(fs, s.lowMidHz, s.lowMidQ, s.lowMidDb);
+    filters[3].setPeak(fs, s.highMidHz, s.highMidQ, s.highMidDb);
+    filters[4].setHighShelf(fs, s.trebleHz, s.trebleDb);
+    filters[5].setLowPass(fs, s.highCutHz, 0.707);
+  }
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    this.filters = Array.from({ length: 6 }, () => new Biquad());
+    this.smoothed = Array.from({ length: 12 }, () => new Smoothed(0));
+    const d = defaultEq();
+    this.setParameters(d);
+    for (const v of this.smoothed) v.reset(this.fs, 0.04);
+    this.reset();
+  }
+  reset() {
+    for (const f of this.filters) f.reset();
+    for (const v of this.smoothed) v.setCurrentAndTarget(v.target);
+    Equalizer.design(this.currentSettings(), this.fs, this.filters);
+  }
+  setParameters(s) {
+    const t = [Math.log2(s.lowCutHz), Math.log2(s.bassHz), s.bassDb, Math.log2(s.lowMidHz), s.lowMidDb, Math.log2(s.lowMidQ),
+               Math.log2(s.highMidHz), s.highMidDb, Math.log2(s.highMidQ), Math.log2(s.trebleHz), s.trebleDb, Math.log2(s.highCutHz)];
+    for (let i = 0; i < 12; ++i) this.smoothed[i].setTarget(f32(t[i]));
+  }
+  currentSettings() {
+    const v = (i) => this.smoothed[i].current, hz = (i) => Math.pow(2, v(i));
+    return { lowCutHz: hz(0), bassHz: hz(1), bassDb: v(2), lowMidHz: hz(3), lowMidDb: v(4), lowMidQ: hz(5),
+             highMidHz: hz(6), highMidDb: v(7), highMidQ: hz(8), trebleHz: hz(9), trebleDb: v(10), highCutHz: hz(11) };
+  }
+  process(data, n) {
+    const f = this.filters;
+    for (let start = 0; start < n; start += 16) {
+      const len = Math.min(16, n - start);
+      if (this.smoothed.some((v) => v.isSmoothing())) {
+        for (const v of this.smoothed) v.skip(len);
+        Equalizer.design(this.currentSettings(), this.fs, f);
+      }
+      for (let i = start; i < start + len; ++i)
+        data[i] = f[5].process(f[4].process(f[3].process(f[2].process(f[1].process(f[0].process(data[i]))))));
+    }
+  }
+}
+
+// ============================================================================
+const MOD_TYPES = ["Chorus", "Flanger", "Phaser", "Tremolo"];
+
+class Modulation {
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    this.lines = [new DelayLine(), new DelayLine()];
+    for (const l of this.lines) l.prepare(Math.floor(0.03 * this.fs) + 8);
+    this.depth = new Smoothed(0.5); this.mix = new Smoothed(0.5);
+    this.depth.reset(this.fs, 0.05); this.mix.reset(this.fs, 0.05);
+    this.allpass = [new Float64Array(6), new Float64Array(6)];
+    this.phaserFb = [0, 0];
+    this.type = 0; this.rate = 1; this.phase = 0;
+    this.reset();
+  }
+  reset() {
+    for (const l of this.lines) l.reset();
+    this.resetPhaser();
+    this.phase = 0;
+    this.depth.setCurrentAndTarget(this.depth.target);
+    this.mix.setCurrentAndTarget(this.mix.target);
+  }
+  resetPhaser() { this.allpass[0].fill(0); this.allpass[1].fill(0); this.phaserFb[0] = this.phaserFb[1] = 0; }
+  feed(left, right, n) { for (let i = 0; i < n; ++i) { this.lines[0].push(left[i]); this.lines[1].push(right[i]); } }
+  setParameters(type, rateHz, depth01, mix01) {
+    type = clamp(type | 0, 0, 3);
+    if (type !== this.type) { this.type = type; this.resetPhaser(); }
+    this.rate = rateHz;
+    this.depth.setTarget(f32(depth01));
+    this.mix.setTarget(f32(mix01));
+  }
+  process(left, right, n) {
+    const io = [left, right], inc = this.rate / this.fs, fs = this.fs;
+    for (let i = 0; i < n; ++i) {
+      const d = this.depth.next(), m = this.mix.next();
+      const lfo0 = Math.sin(2 * PI * this.phase), lfo1 = Math.sin(2 * PI * (this.phase + 0.25));
+      this.phase += inc;
+      if (this.phase >= 1) this.phase -= 1;
+      for (let ch = 0; ch < 2; ++ch) {
+        const x = io[ch][i], lfo = ch === 0 ? lfo0 : lfo1;
+        switch (this.type) {
+          case 0: {
+            const wet = this.lines[ch].read((12 + 6 * d * lfo) * 0.001 * fs);
+            this.lines[ch].push(x);
+            io[ch][i] = x * (1 - m) + wet * m;
+            break;
+          }
+          case 1: {
+            const wet = this.lines[ch].read((0.25 + 4 * d * 0.5 * (lfo + 1)) * 0.001 * fs);
+            this.lines[ch].push(x + 0.7 * wet);
+            io[ch][i] = x * (1 - m) + wet * m;
+            break;
+          }
+          case 2: {
+            const fc = 1000 * Math.pow(2, 2.3 * d * lfo);
+            const t = Math.tan((PI * fc) / fs), a = (t - 1) / (t + 1);
+            const st = this.allpass[ch];
+            let v = x + 0.4 * this.phaserFb[ch];
+            for (let k = 0; k < 6; ++k) { const y = a * v + st[k]; st[k] = v - a * y; v = y; }
+            this.phaserFb[ch] = v;
+            io[ch][i] = x * (1 - m) + v * m;
+            break;
+          }
+          default: {
+            const k = 0.5 + 9 * m;
+            const shaped = Math.tanh(k * lfo0) / Math.tanh(k);
+            io[ch][i] = x * (1 - d * 0.5 * (shaped + 1));
+          }
+        }
+      }
+    }
+  }
+}
+
+// ============================================================================
+class Delay {
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    this.lines = [new DelayLine(), new DelayLine()];
+    for (const l of this.lines) l.prepare(Math.floor(2 * this.fs) + 8);
+    this.lowPass = [new OnePole(), new OnePole()];
+    this.highPass = [new OnePole(), new OnePole()];
+    for (const f of this.highPass) f.setCutoff(this.fs, 70);
+    this.time = new Smoothed(1); this.feedback = new Smoothed(0); this.mix = new Smoothed(0); this.send = new Smoothed(0);
+    this.time.reset(this.fs, 0.3); this.feedback.reset(this.fs, 0.05); this.mix.reset(this.fs, 0.05); this.send.reset(this.fs, 0.03);
+    this.reset();
+  }
+  reset() {
+    for (const l of this.lines) l.reset();
+    for (const f of this.lowPass) f.reset();
+    for (const f of this.highPass) f.reset();
+    this.active = false;
+    this.silentSamples = 0;
+  }
+  setParameters(enabled, timeMs, feedback01, mix01, tone01) {
+    const delaySamples = f32(clamp(timeMs * 0.001 * this.fs, 1, this.lines[0].getMaxDelay()));
+    if (enabled && !this.active) { this.reset(); this.active = true; this.time.setCurrentAndTarget(delaySamples); }
+    this.send.setTarget(enabled ? 1 : 0);
+    this.time.setTarget(delaySamples);
+    this.feedback.setTarget(f32(feedback01));
+    this.mix.setTarget(f32(mix01));
+    for (const f of this.lowPass) f.setCutoff(this.fs, 1000 * Math.pow(12, tone01));
+  }
+  process(left, right, n) {
+    if (!this.active) return;
+    const io = [left, right];
+    let peak = 0;
+    for (let i = 0; i < n; ++i) {
+      const d = this.time.next(), fb = this.feedback.next(), m = this.mix.next(), s = this.send.next();
+      for (let ch = 0; ch < 2; ++ch) {
+        let wet = this.lines[ch].read(d);
+        wet = this.highPass[ch].highPass(this.lowPass[ch].lowPass(wet));
+        this.lines[ch].push(1.5 * Math.tanh((io[ch][i] * s + fb * wet) / 1.5));
+        io[ch][i] += m * wet;
+        peak = Math.max(peak, Math.abs(wet));
+      }
+    }
+    if (this.send.target === 0 && !this.send.isSmoothing()) {
+      this.silentSamples = peak < 1e-5 ? this.silentSamples + n : 0;
+      if (this.silentSamples > Math.floor(this.time.target) + Math.floor(0.1 * this.fs)) this.reset();
+    } else this.silentSamples = 0;
+  }
+}
+
+// ============================================================================
+// juce::Reverb (Freeverb) port
+const UNDENORM = f32(0.1);
+const undenormalise = (x) => f32(f32(f32(x) + UNDENORM) - UNDENORM); // JUCE_UNDENORMALISE on x86
+
+class Comb {
+  setSize(size) { this.buffer = new Float32Array(size); this.index = 0; this.last = 0; }
+  clear() { this.buffer.fill(0); this.last = 0; }
+  process(input, damp, feedback) {
+    const out = this.buffer[this.index];
+    this.last = undenormalise(out * (1 - damp) + this.last * damp);
+    this.buffer[this.index] = undenormalise(input + this.last * feedback);
+    if (++this.index === this.buffer.length) this.index = 0;
+    return out;
+  }
+}
+class AllPass {
+  setSize(size) { this.buffer = new Float32Array(size); this.index = 0; }
+  clear() { this.buffer.fill(0); }
+  process(input) {
+    const buffered = this.buffer[this.index];
+    this.buffer[this.index] = undenormalise(input + buffered * 0.5);
+    if (++this.index === this.buffer.length) this.index = 0;
+    return buffered - input;
+  }
+}
+
+class Freeverb {
+  constructor() {
+    this.comb = [Array.from({ length: 8 }, () => new Comb()), Array.from({ length: 8 }, () => new Comb())];
+    this.allPass = [Array.from({ length: 4 }, () => new AllPass()), Array.from({ length: 4 }, () => new AllPass())];
+    this.damping = new Smoothed(0); this.feedback = new Smoothed(0);
+    this.dryGain = new Smoothed(0); this.wetGain1 = new Smoothed(0); this.wetGain2 = new Smoothed(0);
+    this.setParameters({ roomSize: 0.5, damping: 0.5, wetLevel: 0.33, dryLevel: 0.4, width: 1 });
+    this.setSampleRate(44100);
+  }
+  setParameters(p) {
+    const wet = f32(p.wetLevel * 3);
+    this.dryGain.setTarget(f32(p.dryLevel * 2));
+    this.wetGain1.setTarget(f32(0.5 * wet * (1 + p.width)));
+    this.wetGain2.setTarget(f32(0.5 * wet * (1 - p.width)));
+    this.gain = f32(0.015);
+    this.damping.setTarget(f32(p.damping * 0.4));
+    this.feedback.setTarget(f32(p.roomSize * 0.28 + 0.7));
+  }
+  setSampleRate(sampleRate) {
+    const combTunings = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617], allPassTunings = [556, 441, 341, 225];
+    const sr = sampleRate | 0, spread = 23;
+    for (let i = 0; i < 8; ++i) {
+      this.comb[0][i].setSize(Math.floor((sr * combTunings[i]) / 44100));
+      this.comb[1][i].setSize(Math.floor((sr * (combTunings[i] + spread)) / 44100));
+    }
+    for (let i = 0; i < 4; ++i) {
+      this.allPass[0][i].setSize(Math.floor((sr * allPassTunings[i]) / 44100));
+      this.allPass[1][i].setSize(Math.floor((sr * (allPassTunings[i] + spread)) / 44100));
+    }
+    for (const s of [this.damping, this.feedback, this.dryGain, this.wetGain1, this.wetGain2]) s.reset(sampleRate, 0.01);
+  }
+  reset() {
+    for (const ch of this.comb) for (const c of ch) c.clear();
+    for (const ch of this.allPass) for (const a of ch) a.clear();
+  }
+  processStereo(left, right, n) {
+    const [cL, cR] = this.comb, [aL, aR] = this.allPass;
+    for (let i = 0; i < n; ++i) {
+      const input = (left[i] + right[i]) * this.gain;
+      const damp = this.damping.next(), fb = this.feedback.next();
+      let outL = 0, outR = 0;
+      for (let j = 0; j < 8; ++j) { outL += cL[j].process(input, damp, fb); outR += cR[j].process(input, damp, fb); }
+      for (let j = 0; j < 4; ++j) { outL = aL[j].process(outL); outR = aR[j].process(outR); }
+      const dry = this.dryGain.next(), wet1 = this.wetGain1.next(), wet2 = this.wetGain2.next();
+      const l = left[i], r = right[i];
+      left[i] = outL * wet1 + outR * wet2 + l * dry;
+      right[i] = outR * wet1 + outL * wet2 + r * dry;
+    }
+  }
+}
+
+class ReverbFx {
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    this.reverb = new Freeverb();
+    this.reverb.setSampleRate(this.fs);
+    this.wetL = new Float32Array(maxBlock); this.wetR = new Float32Array(maxBlock);
+    this.pre = [new DelayLine(), new DelayLine()];
+    for (const l of this.pre) l.prepare(Math.floor(0.5 * this.fs) + 8);
+    this.send = new Smoothed(0); this.preDelay = new Smoothed(0);
+    this.send.reset(this.fs, 0.03); this.preDelay.reset(this.fs, 0.2);
+    this.reset();
+  }
+  reset() {
+    this.reverb.reset();
+    for (const l of this.pre) l.reset();
+    this.preDelay.setCurrentAndTarget(this.preDelay.target);
+    this.active = false;
+    this.silentSamples = 0;
+  }
+  setParameters(enabled, size01, damping01, mix01, preDelayMs = 0) {
+    const preSamples = f32(clamp(preDelayMs * 0.001 * this.fs, 0, 0.5 * this.fs));
+    const starting = enabled && !this.active;
+    if (starting) { for (const l of this.pre) l.reset(); this.preDelay.setCurrentAndTarget(preSamples); this.active = true; }
+    this.send.setTarget(enabled ? 1 : 0);
+    this.preDelay.setTarget(preSamples);
+    this.reverb.setParameters({ roomSize: f32(0.3 + 0.68 * size01), damping: damping01, wetLevel: f32(0.35 * mix01), dryLevel: 0, width: 1 });
+    if (starting) this.reverb.setSampleRate(this.fs);
+  }
+  process(left, right, n) {
+    if (!this.active) return;
+    const wl = this.wetL, wr = this.wetR;
+    for (let i = 0; i < n; ++i) {
+      const s = this.send.next(), d = this.preDelay.next() + 1;
+      this.pre[0].push(left[i] * s); this.pre[1].push(right[i] * s);
+      wl[i] = this.pre[0].read(d); wr[i] = this.pre[1].read(d);
+    }
+    this.reverb.processStereo(wl, wr, n);
+    let peak = 0;
+    for (let i = 0; i < n; ++i) {
+      left[i] += wl[i]; right[i] += wr[i];
+      peak = Math.max(peak, Math.abs(wl[i]), Math.abs(wr[i]));
+    }
+    if (this.send.target === 0 && !this.send.isSmoothing()) {
+      this.silentSamples = peak < 1e-5 ? this.silentSamples + n : 0;
+      if (this.silentSamples > Math.floor(0.8 * this.fs)) this.reset();
+    } else this.silentSamples = 0;
+  }
+}
+
+// ============================================================================
+const defaultParams = () => ({
+  inputGainDb: 0, outputGainDb: 0, mute: false, cabOn: true,
+  gateOn: true, gateThresholdDb: -65, gateReleaseMs: 60,
+  driveOn: true, driveType: 0, driveGain: 0.5, driveTone: 0.5, driveLevelDb: 0,
+  eqOn: true, eq: defaultEq(),
+  modOn: false, modType: 0, modRateHz: 0.8, modDepth: 0.5, modMix: 0.5,
+  delayOn: false, delayTimeMs: 380, delayFeedback: 0.35, delayMix: 0.35, delayTone: 0.6,
+  reverbOn: true, reverbSize: 0.55, reverbDamping: 0.45, reverbMix: 0.25, reverbPreDelayMs: 0,
+});
+
+class Switch {
+  constructor(fs) { this.amount = new Smoothed(0); this.amount.reset(fs, 0.03); this.needsReset = true; this.resetOnEnable = true; }
+  set(on) { this.amount.setTarget(on ? 1 : 0); }
+  isOff() { return !this.amount.isSmoothing() && this.amount.current <= 0; }
+  isFullyOn() { return !this.amount.isSmoothing() && this.amount.current >= 1; }
+}
+
+/** input -> gate -> drive -> cab -> EQ -> (mono to stereo) -> modulation -> delay -> reverb -> output */
+class FxChain {
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    this.maxBlock = Math.max(1, maxBlock);
+    this.gate = new NoiseGate(); this.gate.prepare(sampleRate);
+    this.drive = new Drive(); this.drive.prepare(sampleRate, this.maxBlock);
+    this.cab = new CabSim(); this.cab.prepare(sampleRate);
+    this.eq = new Equalizer(); this.eq.prepare(sampleRate);
+    this.modulation = new Modulation(); this.modulation.prepare(sampleRate);
+    this.delay = new Delay(); this.delay.prepare(sampleRate);
+    this.reverb = new ReverbFx(); this.reverb.prepare(sampleRate, this.maxBlock);
+    this.gateSwitch = new Switch(sampleRate); this.driveSwitch = new Switch(sampleRate);
+    this.cabSwitch = new Switch(sampleRate); this.eqSwitch = new Switch(sampleRate); this.modSwitch = new Switch(sampleRate);
+    this.modSwitch.resetOnEnable = false;
+    this.inputGain = new Smoothed(1); this.outputGain = new Smoothed(1);
+    this.inputGain.reset(sampleRate, 0.05); this.outputGain.reset(sampleRate, 0.05);
+    this.mono = new Float32Array(this.maxBlock);
+    this.dryL = new Float32Array(this.maxBlock); this.dryR = new Float32Array(this.maxBlock);
+    this.spareR = new Float32Array(this.maxBlock);
+    this.analyzerTap = null;
+    this.reset();
+  }
+  reset() {
+    for (const m of [this.gate, this.drive, this.cab, this.eq, this.modulation, this.delay, this.reverb]) m.reset();
+    for (const s of [this.gateSwitch, this.driveSwitch, this.cabSwitch, this.eqSwitch, this.modSwitch]) s.amount.setCurrentAndTarget(s.amount.target);
+    this.inputGain.setCurrentAndTarget(this.inputGain.target);
+    this.outputGain.setCurrentAndTarget(this.outputGain.target);
+    this.inputPeak = this.outputPeak = 0;
+  }
+  setParameters(p) {
+    this.inputGain.setTarget(f32(dbToGain(p.inputGainDb)));
+    this.outputGain.setTarget(p.mute ? 0 : f32(dbToGain(p.outputGainDb)));
+    this.gateSwitch.set(p.gateOn); this.gate.setParameters(p.gateThresholdDb, p.gateReleaseMs);
+    this.driveSwitch.set(p.driveOn); this.drive.setParameters(p.driveType, p.driveGain, p.driveTone, p.driveLevelDb);
+    this.cabSwitch.set(p.cabOn);
+    this.eqSwitch.set(p.eqOn); this.eq.setParameters(p.eq);
+    this.modSwitch.set(p.modOn); this.modulation.setParameters(p.modType, p.modRateHz, p.modDepth, p.modMix);
+    this.delay.setParameters(p.delayOn, p.delayTimeMs, p.delayFeedback, p.delayMix, p.delayTone);
+    this.reverb.setParameters(p.reverbOn, p.reverbSize, p.reverbDamping, p.reverbMix, p.reverbPreDelayMs || 0);
+  }
+  /** Mono in, stereo out. outRight may be null for a mono mix. */
+  process(input, outLeft, outRight, n) {
+    this.inputPeak = this.outputPeak = 0;
+    for (let offset = 0; offset < n; offset += this.maxBlock) {
+      const len = Math.min(this.maxBlock, n - offset);
+      const L = outLeft.subarray(offset, offset + len);
+      const R = outRight ? outRight.subarray(offset, offset + len) : this.spareR.subarray(0, len);
+      this.processChunk(input.subarray(offset, offset + len), L, R, len);
+      if (!outRight) for (let i = 0; i < len; ++i) L[i] = 0.5 * (L[i] + R[i]);
+    }
+  }
+  processChunk(input, left, right, n) {
+    const m = this.mono;
+    for (let i = 0; i < n; ++i) {
+      m[i] = input[i] * this.inputGain.next();
+      this.inputPeak = Math.max(this.inputPeak, Math.abs(m[i]));
+    }
+    this.runMono(this.gateSwitch, this.gate, m, n);
+    this.runMono(this.driveSwitch, this.drive, m, n);
+    this.runMono(this.cabSwitch, this.cab, m, n);
+    this.runMono(this.eqSwitch, this.eq, m, n);
+    if (this.analyzerTap) this.analyzerTap(m, n);
+    for (let i = 0; i < n; ++i) left[i] = right[i] = m[i];
+    if (this.modSwitch.isOff()) this.modulation.feed(left, right, n);
+    this.runStereo(this.modSwitch, this.modulation, left, right, n);
+    this.delay.process(left, right, n);
+    this.reverb.process(left, right, n);
+    for (let i = 0; i < n; ++i) {
+      const g = this.outputGain.next();
+      left[i] = clamp(left[i] * g, -2, 2);
+      right[i] = clamp(right[i] * g, -2, 2);
+      this.outputPeak = Math.max(this.outputPeak, Math.abs(left[i]), Math.abs(right[i]));
+    }
+  }
+  runMono(sw, fx, data, n) {
+    if (sw.isOff()) { sw.needsReset = true; return; }
+    if (sw.needsReset) { if (sw.resetOnEnable) fx.reset(); sw.needsReset = false; }
+    if (sw.isFullyOn()) { fx.process(data, n); return; }
+    const dry = this.dryL;
+    dry.set(data.subarray(0, n));
+    fx.process(data, n);
+    for (let i = 0; i < n; ++i) { const a = sw.amount.next(); data[i] = dry[i] + a * (data[i] - dry[i]); }
+  }
+  runStereo(sw, fx, left, right, n) {
+    if (sw.isOff()) { sw.needsReset = true; return; }
+    if (sw.needsReset) { if (sw.resetOnEnable) fx.reset(); sw.needsReset = false; }
+    if (sw.isFullyOn()) { fx.process(left, right, n); return; }
+    const dl = this.dryL, dr = this.dryR;
+    dl.set(left.subarray(0, n)); dr.set(right.subarray(0, n));
+    fx.process(left, right, n);
+    for (let i = 0; i < n; ++i) {
+      const a = sw.amount.next();
+      left[i] = dl[i] + a * (left[i] - dl[i]);
+      right[i] = dr[i] + a * (right[i] - dr[i]);
+    }
+  }
+}
+
+// ============================================================================
+// Tuner: YIN on input decimated to ~24 kHz
+class PitchDetector {
+  prepare(inputRate) {
+    this.decimation = Math.max(1, Math.round(inputRate / 24000));
+    this.rate = inputRate / this.decimation;
+    this.maxTau = Math.ceil(this.rate / 50) + 2;
+    this.minTau = Math.max(2, Math.floor(this.rate / 1500));
+    this.window = Math.ceil(this.rate * 0.04);
+    this.ring = new Float32Array(this.window + this.maxTau + 2);
+    this.frame = new Float32Array(this.ring.length);
+    this.diff = new Float64Array(this.maxTau + 2);
+    this.cmnd = new Float64Array(this.maxTau + 2);
+    this.writePos = 0; this.acc = 0; this.accCount = 0;
+  }
+  pushSamples(data, n = data.length) {
+    for (let i = 0; i < n; ++i) {
+      this.acc += data[i];
+      if (++this.accCount === this.decimation) {
+        this.ring[this.writePos] = this.acc / this.decimation;
+        this.writePos = (this.writePos + 1) % this.ring.length;
+        this.acc = 0; this.accCount = 0;
+      }
+    }
+  }
+  detect() {
+    const size = this.ring.length, x = this.frame;
+    for (let i = 0; i < size; ++i) x[i] = this.ring[(this.writePos + i) % size];
+    let energy = 0;
+    for (let j = 0; j < size; ++j) energy += x[j] * x[j];
+    if (Math.sqrt(energy / size) < 0.002) return 0;
+    const { diff, cmnd, maxTau, minTau, window } = this;
+    for (let tau = 1; tau <= maxTau; ++tau) {
+      let sum = 0;
+      for (let j = 0; j < window; ++j) { const d = x[j] - x[j + tau]; sum += d * d; }
+      diff[tau] = sum;
+    }
+    let running = 0;
+    cmnd[0] = 1;
+    for (let tau = 1; tau <= maxTau; ++tau) { running += diff[tau]; cmnd[tau] = running > 0 ? (diff[tau] * tau) / running : 1; }
+    let tau = -1;
+    for (let t = minTau; t < maxTau; ++t) {
+      if (cmnd[t] < 0.15) { while (t + 1 < maxTau && cmnd[t + 1] < cmnd[t]) ++t; tau = t; break; }
+    }
+    if (tau < 1) return 0;
+    const a = diff[tau - 1], b = diff[tau], c = diff[tau + 1], denom = a + c - 2 * b;
+    const shift = Math.abs(denom) > 1e-12 ? clamp((0.5 * (a - c)) / denom, -1, 1) : 0;
+    return this.rate / (tau + shift);
+  }
+}
+
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+function frequencyToNote(hz, a4 = 440) {
+  const midi = 69 + 12 * Math.log2(hz / a4), nearest = Math.round(midi);
+  return { midi: nearest, cents: (midi - nearest) * 100, name: NOTE_NAMES[((nearest % 12) + 12) % 12], octave: Math.floor(nearest / 12) - 1 };
+}
+
+// ============================================================================
+// FFT analyser -> 240 log-spaced columns (20 Hz .. 20 kHz) in dBFS
+class SpectrumAnalyzer {
+  static fftSize = 4096;
+  static numColumns = 240;
+  static minHz = 20;
+  static maxHz = 20000;
+  static floorDb = -120;
+  static columnFrequency(c) {
+    const S = SpectrumAnalyzer;
+    return S.minHz * Math.pow(S.maxHz / S.minHz, clamp(c / (S.numColumns - 1), 0, 1));
+  }
+  constructor() {
+    const N = SpectrumAnalyzer.fftSize;
+    this.fs = 48000;
+    this.ring = new Float32Array(N); this.ringPos = 0; this.newSamples = 0;
+    this.re = new Float64Array(N); this.im = new Float64Array(N); this.mag = new Float64Array(N / 2 + 1);
+    this.window = new Float64Array(N);
+    for (let i = 0; i < N; ++i) this.window[i] = 0.5 - 0.5 * Math.cos((2 * PI * i) / (N - 1));
+    this.columns = new Float32Array(SpectrumAnalyzer.numColumns).fill(SpectrumAnalyzer.floorDb);
+    // bit reversal table
+    this.rev = new Uint32Array(N);
+    const bits = Math.log2(N);
+    for (let i = 0; i < N; ++i) { let r = 0; for (let b = 0; b < bits; ++b) r |= ((i >> b) & 1) << (bits - 1 - b); this.rev[i] = r; }
+  }
+  setSampleRate(fs) { if (fs > 0) this.fs = fs; }
+  clear() { this.columns.fill(SpectrumAnalyzer.floorDb); }
+  push(data, n = data.length) {
+    const N = SpectrumAnalyzer.fftSize;
+    for (let i = 0; i < n; ++i) { this.ring[this.ringPos] = data[i]; this.ringPos = (this.ringPos + 1) % N; }
+    this.newSamples += n;
+  }
+  fft() {
+    const N = SpectrumAnalyzer.fftSize, re = this.re, im = this.im;
+    for (let i = 0; i < N; ++i) { const j = this.rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+    for (let size = 2; size <= N; size <<= 1) {
+      const half = size >> 1, step = (-2 * PI) / size;
+      for (let start = 0; start < N; start += size) {
+        for (let k = 0; k < half; ++k) {
+          const wr = Math.cos(step * k), wi = Math.sin(step * k);
+          const a = start + k, b = a + half;
+          const tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
+          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        }
+      }
+    }
+  }
+  process() {
+    const S = SpectrumAnalyzer, N = S.fftSize, fall = 1.6;
+    if (this.newSamples === 0) { for (let c = 0; c < S.numColumns; ++c) this.columns[c] = Math.max(S.floorDb, this.columns[c] - fall); return; }
+    this.newSamples = 0;
+    for (let i = 0; i < N; ++i) { this.re[i] = this.ring[(this.ringPos + i) % N] * this.window[i]; this.im[i] = 0; }
+    this.fft();
+    for (let k = 0; k <= N / 2; ++k) this.mag[k] = Math.hypot(this.re[k], this.im[k]);
+    const norm = 4 / N, maxBin = N / 2;
+    for (let c = 0; c < S.numColumns; ++c) {
+      const lo = (S.columnFrequency(c - 0.5) * N) / this.fs, hi = (S.columnFrequency(c + 0.5) * N) / this.fs;
+      let m = 0;
+      if (hi - lo < 1) {
+        const bin = clamp(0.5 * (lo + hi), 0, maxBin - 1), i0 = Math.floor(bin), t = bin - i0;
+        m = this.mag[i0] + t * (this.mag[i0 + 1] - this.mag[i0]);
+      } else {
+        for (let b = Math.max(0, Math.ceil(lo)); b <= Math.min(maxBin, Math.floor(hi)); ++b) m = Math.max(m, this.mag[b]);
+      }
+      const db = Math.max(S.floorDb, gainToDb(m * norm));
+      this.columns[c] = db > this.columns[c] ? db : Math.max(db, this.columns[c] - fall);
+    }
+  }
+}
+
+// ============================================================================
+// Tap tempo
+const DELAY_DIVISIONS = [["1/4", 1], ["1/8.", 0.75], ["1/8", 0.5], ["1/8T", 1 / 3], ["1/16", 0.25]];
+const REVERB_DIVISIONS = [["1/32", 0.125], ["1/16", 0.25], ["1/8", 0.5], ["1/4", 1]];
+
+class TapTempo {
+  constructor() { this.intervals = [0, 0, 0, 0]; this.count = 0; this.next = 0; this.lastTap = 0; this.hasLastTap = false; }
+  average() {
+    if (this.count === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < this.count; ++i) sum += this.intervals[(this.next - 1 - i + 16) % 4];
+    return sum / this.count;
+  }
+  /** Returns the averaged beat length in ms, or 0 until there are two taps. */
+  tap(nowMs) {
+    const interval = nowMs - this.lastTap;
+    if (this.hasLastTap && interval < 100) return this.average();
+    if (!this.hasLastTap || interval > 2000) this.count = 0;
+    else {
+      if (this.count > 0 && Math.abs(interval - this.average()) > 0.35 * this.average()) this.count = 0;
+      this.intervals[this.next++ % 4] = interval;
+      this.count = Math.min(this.count + 1, 4);
+    }
+    this.hasLastTap = true;
+    this.lastTap = nowMs;
+    return this.average();
+  }
+  getLastTapMs() { return this.hasLastTap ? this.lastTap : 0; }
+}
+
+// ============================================================================
+// Test signals: Karplus-Strong strings and the demo riff
+const OPEN_STRINGS = [82.41, 110.0, 146.83, 196.0, 246.94, 329.63];
+const fretHz = (string, fret) => OPEN_STRINGS[string] * Math.pow(2, fret / 12);
+
+/** How CHORD buttons play. */
+const CHORD_PATTERNS = { arpeggio: 0, strumLoop: 1, single: 2 };
+const CHORD_PATTERN_NAMES = ["Arpeggio", "Strum loop", "Single"];
+
+/** Open-position chord shapes, frets from low E to high e; -1 = string not played (muted). */
+const CHORDS = [
+  { name: "C", shape: "x32010", frets: [-1, 3, 2, 0, 1, 0] },
+  { name: "D", shape: "xx0232", frets: [-1, -1, 0, 2, 3, 2] },
+  { name: "E", shape: "022100", frets: [0, 2, 2, 1, 0, 0] },
+  { name: "F", shape: "133211", frets: [1, 3, 3, 2, 1, 1] },
+  { name: "G", shape: "320003", frets: [3, 2, 0, 0, 0, 3] },
+  { name: "A", shape: "x02220", frets: [-1, 0, 2, 2, 2, 0] },
+  { name: "Am", shape: "x02210", frets: [-1, 0, 2, 2, 1, 0] },
+  { name: "Dm", shape: "xx0231", frets: [-1, -1, 0, 2, 3, 1] },
+  { name: "Em", shape: "022000", frets: [0, 2, 2, 0, 0, 0] },
+];
+
+/** Small deterministic PRNG (mulberry32) so the demo riff is the same every time. */
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return {
+    nextFloat() {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    },
+  };
+}
+
+class PluckedString {
+  prepare(sampleRate, lowestHz = 40) { this.fs = sampleRate; this.buffer = new Float32Array(Math.floor(this.fs / lowestHz) + 4); this.active = false; }
+  pluck(hz, velocity, t60, brightness, rng) {
+    const period = this.fs / hz;
+    this.length = clamp(Math.floor(period - 0.6), 2, this.buffer.length);
+    const fraction = period - 0.5 - this.length;
+    this.apCoef = (1 - fraction) / (1 + fraction);
+    this.loopGain = Math.pow(10, (-3 * period) / (this.fs * t60));
+    const pick = new OnePole();
+    pick.setCutoff(this.fs, 700 + 9000 * brightness);
+    let mean = 0;
+    for (let i = 0; i < this.length; ++i) { this.buffer[i] = pick.lowPass(rng.nextFloat() * 2 - 1); mean += this.buffer[i]; }
+    mean /= this.length;
+    let peak = 1e-6;
+    for (let i = 0; i < this.length; ++i) { this.buffer[i] -= mean; peak = Math.max(peak, Math.abs(this.buffer[i])); }
+    for (let i = 0; i < this.length; ++i) this.buffer[i] *= velocity / peak;
+    this.pos = 0; this.previous = this.apIn = this.apOut = 0;
+    this.remaining = Math.floor(this.fs * t60 * 1.2);
+    this.active = true;
+  }
+  /** Mutes a ringing string over ~60 ms, like resting a finger on it (no click). */
+  damp() {
+    if (!this.active) return;
+    this.loopGain = Math.pow(10, (-3 * this.length) / (this.fs * 0.06));
+    this.remaining = Math.min(this.remaining, Math.floor(this.fs * 0.1));
+  }
+  next() {
+    if (!this.active) return 0;
+    const out = this.buffer[this.pos];
+    const averaged = 0.5 * (out + this.previous) * this.loopGain;
+    this.previous = out;
+    const y = this.apCoef * averaged + this.apIn - this.apCoef * this.apOut;
+    this.apIn = averaged; this.apOut = y;
+    this.buffer[this.pos] = y;
+    if (++this.pos >= this.length) this.pos = 0;
+    if (--this.remaining <= 0) this.active = false;
+    return out;
+  }
+}
+
+/** ~10.8 s riff at 100 BPM; loops seamlessly; peaks at -8 dBFS like a DI'd guitar. */
+function renderDemoRiff(fs) {
+  const eighth = 0.3, loopSeconds = 32 * eighth + 1.2;
+  const notes = [];
+  const chord = (at, hz, muted, length, velocity = 0.33) => {
+    hz.forEach((f, string) => notes.push({
+      at: at * eighth + 0.009 * string, hz: f, velocity: velocity * (1 - 0.04 * string),
+      t60: muted ? 0.16 : 3.5, brightness: muted ? 0.35 : 0.8, length: muted ? eighth : length * eighth,
+    }));
+  };
+  const e5 = [82.41, 123.47, 164.81], g5 = [98.0, 146.83, 196.0], a5 = [110.0, 164.81, 220.0], d5 = [146.83, 220.0, 293.66];
+  const eMajor = [82.41, 123.47, 164.81, 207.65, 246.94, 329.63];
+  for (const t of [0, 1, 2, 3]) chord(t, e5, true, 1);
+  chord(4, e5, false, 2); chord(6, g5, false, 2);
+  for (const t of [8, 9, 10]) chord(t, e5, true, 1);
+  chord(11, a5, false, 2); chord(13, g5, false, 1); chord(14, d5, false, 2);
+  const lick = [329.63, 392.0, 440.0, 493.88, 440.0, 392.0, 329.63, 293.66];
+  lick.forEach((hz, i) => notes.push({ at: (16 + i) * eighth, hz, velocity: 0.38, t60: 2.5, brightness: 0.85, length: (i === 6 ? 1.5 : 1) * eighth }));
+  chord(24, eMajor, false, 12, 0.3);
+
+  const loopLength = Math.floor(loopSeconds * fs);
+  const out = new Float32Array(loopLength + Math.floor(6 * fs));
+  const fade = Math.floor(0.025 * fs);
+  const rng = makeRng(2024), string = new PluckedString();
+  string.prepare(fs);
+  for (const n of notes) {
+    string.pluck(n.hz, n.velocity, n.t60, n.brightness, rng);
+    const start = Math.floor(n.at * fs), held = Math.floor(n.length * fs);
+    for (let i = 0; i < held + fade && start + i < out.length && string.active; ++i) {
+      const env = i < held ? 1 : 1 - (i - held) / fade;
+      out[start + i] += env * string.next();
+    }
+  }
+  for (let i = loopLength; i < out.length; ++i) out[i - loopLength] += out[i];
+  const riff = out.slice(0, loopLength);
+  let peak = 1e-6;
+  for (const s of riff) peak = Math.max(peak, Math.abs(s));
+  for (let i = 0; i < riff.length; ++i) riff[i] *= 0.4 / peak;
+  return riff;
+}
+
+/** What feeds the board: live input, the demo riff or a looped file, plus plucked open strings. */
+class TestSignalPlayer {
+  prepare(fs) {
+    this.fs = fs;
+    this.source = "live";
+    this.demo = null; this.demoPos = 0;
+    this.file = null; this.fileRate = fs; this.filePos = 0;
+    this.voices = OPEN_STRINGS.map(() => {
+      const string = new PluckedString();
+      string.prepare(fs);
+      return { string, pendingDelay: -1, pendingHz: 0, pendingVelocity: 0 };
+    });
+    this.rng = makeRng(7);
+    this.progress = 0;
+    this.playing = true;
+    // chord loop
+    this.chordPattern = CHORD_PATTERNS.arpeggio;
+    this.chordTempo = 90;
+    this.loopChord = -1; this.nextLoopChord = -1; this.loopStep = 0; this.samplesToStep = 0;
+  }
+
+  setChordPattern(p) { this.chordPattern = clamp(p | 0, 0, 2); if (this.chordPattern === CHORD_PATTERNS.single) this.loopChord = this.nextLoopChord = -1; }
+  setChordTempo(bpm) { this.chordTempo = clamp(bpm, 40, 240); }
+  /** Plays a chord with the current pattern; while looping, the new chord takes over on the next eighth note. */
+  playChord(i) {
+    if (!CHORDS[i]) return;
+    if (this.chordPattern === CHORD_PATTERNS.single) { this.strum(i); return; }
+    if (this.loopChord < 0) { this.loopChord = i; this.loopStep = 0; this.samplesToStep = 0; }
+    else this.nextLoopChord = i;
+  }
+  /** Stops the chord loop and mutes the strings. */
+  stopChord() {
+    this.loopChord = this.nextLoopChord = -1;
+    for (const v of this.voices) { v.pendingDelay = -1; v.string.damp(); }
+  }
+  loopingChord() { return this.nextLoopChord >= 0 ? this.nextLoopChord : this.loopChord; }
+
+  runChordLoop(n) {
+    if (this.loopChord < 0) return;
+    const stepLength = Math.max(1, Math.round((this.fs * 30) / this.chordTempo)); // eighth notes
+    while (this.samplesToStep < n) {
+      if (this.nextLoopChord >= 0) { this.loopChord = this.nextLoopChord; this.nextLoopChord = -1; this.loopStep = 0; }
+      this.playStep(CHORDS[this.loopChord], this.loopStep, this.samplesToStep);
+      this.loopStep = (this.loopStep + 1) % 8;
+      this.samplesToStep += stepLength;
+    }
+    this.samplesToStep -= n;
+  }
+
+  /** One eighth note of the pattern, starting `offset` samples into this block. */
+  playStep(chord, step, offset) {
+    const played = [];
+    chord.frets.forEach((f, s) => { if (f >= 0) played.push(s); });
+    const pluckAt = (s, delay, velocity) => {
+      const v = this.voices[s];
+      v.pendingDelay = delay; v.pendingHz = fretHz(s, chord.frets[s]); v.pendingVelocity = velocity;
+    };
+    const muteUnplayed = () => chord.frets.forEach((f, s) => { if (f < 0) this.voices[s].string.damp(); });
+
+    if (this.chordPattern === CHORD_PATTERNS.arpeggio) {
+      // bass, G, B, e, alternate bass, G, B, e
+      const upper = [-1, 3, 4, 5, -1, 3, 4, 5];
+      const bass = played[0];
+      const altBass = played.length > 1 && played[1] <= 2 ? played[1] : bass;
+      const s = step === 0 ? bass : step === 4 ? altBass : upper[step];
+      if (step === 0) muteUnplayed();
+      pluckAt(s, offset, step === 0 ? 0.3 : step === 4 ? 0.26 : 0.2);
+    } else {
+      // down, -, down, up, -, up, down, up
+      const kind = [1, 0, 1, 2, 0, 2, 1, 2][step];
+      if (kind === 1) {
+        muteUnplayed();
+        const spacing = Math.floor(0.009 * this.fs);
+        played.forEach((s, k) => pluckAt(s, offset + k * spacing, (step === 0 ? 0.19 : 0.16) * (1 - 0.04 * k)));
+      } else if (kind === 2) { // up-strums catch only the top four strings, lighter
+        const spacing = Math.floor(0.007 * this.fs);
+        played.slice(-4).reverse().forEach((s, k) => pluckAt(s, offset + k * spacing, 0.11));
+      }
+    }
+  }
+  /** Picking the demo riff or a file also starts it playing. */
+  setSource(s) {
+    if (s === "demo" && !this.demo) this.demo = renderDemoRiff(this.fs);
+    this.source = s;
+    if (s !== "live") this.setPlaying(true);
+  }
+  setFile(samples, rate) { this.file = samples; this.fileRate = rate; this.filePos = 0; this.setSource("file"); }
+  /** STOP / PLAY for the demo riff or file. Stopping rewinds, so PLAY starts from the top. Plucks still sound. */
+  setPlaying(on) {
+    if (!on) { this.demoPos = 0; this.filePos = 0; this.progress = 0; }
+    this.playing = on;
+  }
+  pluck(i) { this.voices[i].pendingDelay = -1; this.voices[i].string.pluck(OPEN_STRINGS[i], 0.35, 3.5, 0.75, this.rng); }
+  /** Down-strums CHORDS[i]: strings 12 ms apart, low to high; unplayed strings are muted. */
+  strum(i) {
+    const chord = CHORDS[i];
+    if (!chord) return;
+    const spacing = Math.floor(0.012 * this.fs);
+    let order = 0;
+    chord.frets.forEach((fret, s) => {
+      const v = this.voices[s];
+      if (fret < 0) { v.pendingDelay = -1; v.string.damp(); return; }
+      v.pendingDelay = spacing * order;
+      v.pendingHz = fretHz(s, fret);
+      v.pendingVelocity = 0.19 * (1 - 0.04 * order); // six strings together peak near -8 dBFS
+      ++order;
+    });
+  }
+  process(io, n) {
+    if (this.source !== "live" && !this.playing) {
+      io.fill(0, 0, n); // stopped: silence, but plucks below still sound
+    } else if (this.source === "demo" && this.demo) {
+      const d = this.demo;
+      for (let i = 0; i < n; ++i) { io[i] = d[this.demoPos]; if (++this.demoPos >= d.length) this.demoPos = 0; }
+      this.progress = this.demoPos / d.length;
+    } else if (this.source === "file") {
+      const s = this.file;
+      if (!s || s.length < 4) io.fill(0, 0, n);
+      else {
+        const size = s.length, step = this.fileRate / this.fs;
+        const at = (i) => s[((i % size) + size) % size];
+        for (let i = 0; i < n; ++i) {
+          const i0 = Math.floor(this.filePos), t = this.filePos - i0;
+          const xm1 = at(i0 - 1), x0 = at(i0), x1 = at(i0 + 1), x2 = at(i0 + 2);
+          const c1 = 0.5 * (x1 - xm1), c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2, c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+          io[i] = ((c3 * t + c2) * t + c1) * t + x0;
+          this.filePos += step;
+          if (this.filePos >= size) this.filePos -= size;
+        }
+        this.progress = this.filePos / size;
+      }
+    }
+    this.runChordLoop(n);
+    for (const v of this.voices) {
+      if (!v.string.active && v.pendingDelay < 0) continue;
+      for (let i = 0; i < n; ++i) {
+        if (v.pendingDelay >= 0 && v.pendingDelay-- === 0) v.string.pluck(v.pendingHz, v.pendingVelocity, 3.0, 0.75, this.rng);
+        io[i] += v.string.next();
+      }
+    }
+  }
+}
+
+return { PI, dbToGain, gainToDb, Smoothed, Biquad, OnePole, DcBlocker, DelayLine, NoiseGate, OVERSAMPLER_COEFFS, Oversampler4x, DRIVE_TYPES, Drive, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, defaultParams, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, DELAY_DIVISIONS, REVERB_DIVISIONS, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
+})();
+
+const WORKLET_SOURCE = "const DSP = (() => {\n// Guitar Pedalboard DSP, ported line for line from the C++ plugin (Source/DSP/*.h).\r\n// Runs inside the AudioWorklet (effects) and on the page (tuner, analyser, EQ curve).\r\n// web/test/compare.mjs checks it against reference renders from the C++ build.\r\n\r\nconst PI = Math.PI;\r\nconst FLT_EPS = 1.1920929e-7, FLT_MIN = 1.17549435e-38;\r\n\r\nconst dbToGain = (db) => Math.pow(10, db * 0.05);\r\nconst gainToDb = (g) => (g > 1e-9 ? 20 * Math.log10(g) : -180);\r\nconst clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);\r\n\r\n// ============================================================================\r\n// juce::SmoothedValue (linear or multiplicative), same stepping rules\r\nclass Smoothed {\r\n  constructor(initial = 0, multiplicative = false) {\r\n    this.current = this.target = initial;\r\n    this.countdown = 0;\r\n    this.stepsToTarget = 0;\r\n    this.step = 0;\r\n    this.multiplicative = multiplicative;\r\n  }\r\n  reset(sampleRate, seconds) { this.stepsToTarget = Math.floor(seconds * sampleRate); this.setCurrentAndTarget(this.target); }\r\n  setCurrentAndTarget(v) { this.target = this.current = v; this.countdown = 0; }\r\n  setTarget(v) {\r\n    const d = Math.abs(v - this.target);\r\n    if (d <= FLT_MIN || d <= FLT_EPS * Math.max(Math.abs(v), Math.abs(this.target))) return;\r\n    if (this.stepsToTarget <= 0) { this.setCurrentAndTarget(v); return; }\r\n    this.target = v;\r\n    this.countdown = this.stepsToTarget;\r\n    this.step = this.multiplicative\r\n      ? Math.exp((Math.log(Math.abs(this.target)) - Math.log(Math.abs(this.current))) / this.countdown)\r\n      : (this.target - this.current) / this.countdown;\r\n  }\r\n  isSmoothing() { return this.countdown > 0; }\r\n  next() {\r\n    if (this.countdown <= 0) return this.target;\r\n    if (--this.countdown > 0) {\r\n      if (this.multiplicative) this.current *= this.step; else this.current += this.step;\r\n    } else this.current = this.target;\r\n    return this.current;\r\n  }\r\n  skip(n) {\r\n    if (n >= this.countdown) { this.setCurrentAndTarget(this.target); return this.target; }\r\n    if (this.multiplicative) this.current *= Math.pow(this.step, n); else this.current += this.step * n;\r\n    this.countdown -= n;\r\n    return this.current;\r\n  }\r\n}\r\n\r\n// ============================================================================\r\n// RBJ biquad, transposed direct form II (coefficients rounded to float like the C++)\r\nconst f32 = Math.fround;\r\nclass Biquad {\r\n  constructor() { this.b0 = 1; this.b1 = 0; this.b2 = 0; this.a1 = 0; this.a2 = 0; this.z1 = 0; this.z2 = 0; }\r\n  reset() { this.z1 = this.z2 = 0; }\r\n  process(x) {\r\n    const y = this.b0 * x + this.z1;\r\n    this.z1 = this.b1 * x - this.a1 * y + this.z2;\r\n    this.z2 = this.b2 * x - this.a2 * y;\r\n    return y;\r\n  }\r\n  static prewarp(fs, fc, q) {\r\n    const w0 = (2 * PI * clamp(fc, 1, 0.49 * fs)) / fs;\r\n    return [Math.cos(w0), Math.sin(w0) / (2 * q)];\r\n  }\r\n  set(b0, b1, b2, a0, a1, a2) {\r\n    this.b0 = f32(b0 / a0); this.b1 = f32(b1 / a0); this.b2 = f32(b2 / a0);\r\n    this.a1 = f32(a1 / a0); this.a2 = f32(a2 / a0);\r\n  }\r\n  setLowPass(fs, fc, q) {\r\n    const [c, a] = Biquad.prewarp(fs, fc, q);\r\n    this.set((1 - c) * 0.5, 1 - c, (1 - c) * 0.5, 1 + a, -2 * c, 1 - a);\r\n  }\r\n  setHighPass(fs, fc, q) {\r\n    const [c, a] = Biquad.prewarp(fs, fc, q);\r\n    this.set((1 + c) * 0.5, -(1 + c), (1 + c) * 0.5, 1 + a, -2 * c, 1 - a);\r\n  }\r\n  setPeak(fs, fc, q, gainDb) {\r\n    const [c, a] = Biquad.prewarp(fs, fc, q);\r\n    const A = Math.pow(10, gainDb / 40);\r\n    this.set(1 + a * A, -2 * c, 1 - a * A, 1 + a / A, -2 * c, 1 - a / A);\r\n  }\r\n  setLowShelf(fs, fc, gainDb) {\r\n    const [c, a] = Biquad.prewarp(fs, fc, 0.70710678);\r\n    const A = Math.pow(10, gainDb / 40), k = 2 * Math.sqrt(A) * a;\r\n    this.set(A * ((A + 1) - (A - 1) * c + k), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - k),\r\n             (A + 1) + (A - 1) * c + k, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - k);\r\n  }\r\n  setHighShelf(fs, fc, gainDb) {\r\n    const [c, a] = Biquad.prewarp(fs, fc, 0.70710678);\r\n    const A = Math.pow(10, gainDb / 40), k = 2 * Math.sqrt(A) * a;\r\n    this.set(A * ((A + 1) + (A - 1) * c + k), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - k),\r\n             (A + 1) - (A - 1) * c + k, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - k);\r\n  }\r\n  /** Linear magnitude at `freq` (for drawing EQ curves). */\r\n  getMagnitude(freq, fs) {\r\n    const w = (-2 * PI * freq) / fs;\r\n    const c1 = Math.cos(w), s1 = Math.sin(w), c2 = Math.cos(2 * w), s2 = Math.sin(2 * w);\r\n    const nr = this.b0 + this.b1 * c1 + this.b2 * c2, ni = this.b1 * s1 + this.b2 * s2;\r\n    const dr = 1 + this.a1 * c1 + this.a2 * c2, di = this.a1 * s1 + this.a2 * s2;\r\n    return Math.sqrt((nr * nr + ni * ni) / (dr * dr + di * di));\r\n  }\r\n}\r\n\r\n// Topology-preserving one-pole filter\r\nclass OnePole {\r\n  constructor() { this.G = 0; this.s = 0; }\r\n  setCutoff(fs, fc) { const g = Math.tan((PI * clamp(fc, 1, 0.49 * fs)) / fs); this.G = f32(g / (1 + g)); }\r\n  reset() { this.s = 0; }\r\n  lowPass(x) { const v = (x - this.s) * this.G; const lp = v + this.s; this.s = lp + v; return lp; }\r\n  highPass(x) { return x - this.lowPass(x); }\r\n}\r\n\r\nclass DcBlocker {\r\n  constructor() { this.r = 0.999; this.x1 = 0; this.y1 = 0; }\r\n  prepare(fs) { this.r = f32(1 - (2 * PI * 10) / fs); this.reset(); }\r\n  reset() { this.x1 = this.y1 = 0; }\r\n  process(x) { const y = x - this.x1 + this.r * this.y1; this.x1 = x; this.y1 = y; return y; }\r\n}\r\n\r\n// Circular buffer with 4-point Hermite interpolation; read(d) = sample pushed d samples ago (d >= 1)\r\nclass DelayLine {\r\n  constructor() { this.buffer = new Float32Array(8); this.writePos = 0; }\r\n  prepare(maxDelaySamples) { this.buffer = new Float32Array(maxDelaySamples + 4); this.writePos = 0; }\r\n  reset() { this.buffer.fill(0); this.writePos = 0; }\r\n  getMaxDelay() { return this.buffer.length - 4; }\r\n  push(x) { this.buffer[this.writePos] = x; if (++this.writePos === this.buffer.length) this.writePos = 0; }\r\n  read(delay) {\r\n    delay = clamp(delay, 1, this.getMaxDelay());\r\n    const b = this.buffer, size = b.length, di = Math.floor(delay), frac = delay - di;\r\n    const at = (d) => { let i = this.writePos - d; while (i < 0) i += size; return b[i]; };\r\n    const xm1 = at(di - 1 < 1 ? 1 : di - 1), x0 = at(di), x1 = at(di + 1), x2 = at(di + 2);\r\n    const c1 = 0.5 * (x1 - xm1);\r\n    const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;\r\n    const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);\r\n    return ((c3 * frac + c2) * frac + c1) * frac + x0;\r\n  }\r\n}\r\n\r\n// ============================================================================\r\nclass NoiseGate {\r\n  prepare(sampleRate) {\r\n    this.fs = sampleRate;\r\n    this.envDecay = Math.exp(-1 / (0.03 * this.fs));\r\n    this.attackCoef = Math.exp(-1 / (0.0005 * this.fs));\r\n    this.holdSamples = Math.floor(0.04 * this.fs);\r\n    this.setParameters(-65, 60);\r\n    this.reset();\r\n  }\r\n  reset() { this.env = 0; this.gain = 0; this.holdCounter = 0; this.isOpen = false; }\r\n  setParameters(thresholdDb, releaseMs) {\r\n    this.openThreshold = dbToGain(thresholdDb);\r\n    this.closeThreshold = this.openThreshold * 0.5;\r\n    this.releaseCoef = Math.exp(-1 / (Math.max(1, releaseMs) * 0.001 * this.fs));\r\n  }\r\n  process(data, n) {\r\n    for (let i = 0; i < n; ++i) {\r\n      const x = data[i], a = Math.abs(x);\r\n      this.env = a > this.env ? a : this.env * this.envDecay;\r\n      if (this.env >= this.openThreshold) { this.isOpen = true; this.holdCounter = this.holdSamples; }\r\n      else if (this.isOpen) {\r\n        if (this.env >= this.closeThreshold) this.holdCounter = this.holdSamples;\r\n        else if (this.holdCounter > 0) --this.holdCounter;\r\n        else this.isOpen = false;\r\n      }\r\n      const target = this.isOpen ? 1 : 0;\r\n      const coef = target > this.gain ? this.attackCoef : this.releaseCoef;\r\n      this.gain = target + coef * (this.gain - target);\r\n      data[i] = x * this.gain;\r\n    }\r\n  }\r\n}\r\n\r\n// ============================================================================\r\n// juce::dsp::Oversampling (2 stages of polyphase IIR half-band = 4x), same structure.\r\n// Coefficients come from JUCE's FilterDesign (exported by the C++ test).\r\nconst OVERSAMPLER_COEFFS = {\r\n  up: [[0.0457281470, 0.332501113, 0.663202047, 0.933855832, 0.168087542, 0.504485726, 0.803780854],\r\n       [0.0542307794, 0.398796976, 0.862917840, 0.199699581, 0.621096849]],\r\n  down: [[0.0542175248, 0.383087337, 0.748720944, 0.196797967, 0.573136389, 0.914293706],\r\n         [0.0707659498, 0.513167560, 0.257853091, 0.817317367]],\r\n};\r\n\r\nclass PolyphaseStage {\r\n  constructor(up, down) {\r\n    this.up = Float32Array.from(up); this.down = Float32Array.from(down);\r\n    this.v1Up = new Float32Array(this.up.length); this.v1Down = new Float32Array(this.down.length);\r\n    this.delayDown = 0;\r\n  }\r\n  reset() { this.v1Up.fill(0); this.v1Down.fill(0); this.delayDown = 0; }\r\n  processUp(input, n, out) {\r\n    const c = this.up, v = this.v1Up, stages = c.length, direct = stages - (stages >> 1);\r\n    for (let i = 0; i < n; ++i) {\r\n      let x = input[i];\r\n      for (let k = 0; k < direct; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }\r\n      out[i << 1] = x;\r\n      x = input[i];\r\n      for (let k = direct; k < stages; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }\r\n      out[(i << 1) + 1] = x;\r\n    }\r\n  }\r\n  processDown(buffer, n, out) {\r\n    const c = this.down, v = this.v1Down, stages = c.length, direct = stages - (stages >> 1);\r\n    let delay = this.delayDown;\r\n    for (let i = 0; i < n; ++i) {\r\n      let x = buffer[i << 1];\r\n      for (let k = 0; k < direct; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }\r\n      const directOut = x;\r\n      x = buffer[(i << 1) + 1];\r\n      for (let k = direct; k < stages; ++k) { const y = c[k] * x + v[k]; v[k] = x - c[k] * y; x = y; }\r\n      out[i] = (delay + directOut) * 0.5;\r\n      delay = x;\r\n    }\r\n    this.delayDown = delay;\r\n  }\r\n}\r\n\r\nclass Oversampler4x {\r\n  constructor(maxBlock) {\r\n    const k = OVERSAMPLER_COEFFS;\r\n    this.stages = [new PolyphaseStage(k.up[0], k.down[0]), new PolyphaseStage(k.up[1], k.down[1])];\r\n    this.buf2 = new Float32Array(maxBlock * 2);\r\n    this.buf4 = new Float32Array(maxBlock * 4);\r\n  }\r\n  reset() { for (const s of this.stages) s.reset(); }\r\n  /** Returns the 4x buffer (process it in place, then call down()). */\r\n  up(input, n) {\r\n    this.stages[0].processUp(input, n, this.buf2);\r\n    this.stages[1].processUp(this.buf2, n * 2, this.buf4);\r\n    return this.buf4;\r\n  }\r\n  down(output, n) {\r\n    this.stages[1].processDown(this.buf4, n * 2, this.buf2);\r\n    this.stages[0].processDown(this.buf2, n, output);\r\n  }\r\n}\r\n\r\n// ============================================================================\r\nconst DRIVE_TYPES = [\"Overdrive\", \"Distortion\", \"Fuzz\"];\r\n\r\nclass Drive {\r\n  prepare(sampleRate, maxBlock) {\r\n    this.fs = sampleRate;\r\n    this.oversampler = new Oversampler4x(maxBlock);\r\n    this.osRate = this.fs * 4;\r\n    this.gain = new Smoothed(1, true);\r\n    this.level = new Smoothed(1);\r\n    this.gain.reset(this.osRate, 0.05);\r\n    this.level.reset(this.fs, 0.05);\r\n    this.preHp = new OnePole(); this.bandLimit = new OnePole(); this.tone = new Biquad(); this.dc = new DcBlocker();\r\n    this.dc.prepare(this.fs);\r\n    this.currentType = -1;\r\n    this.setParameters(0, 0.5, 0.5, 0);\r\n    this.reset();\r\n  }\r\n  reset() {\r\n    this.oversampler.reset();\r\n    this.preHp.reset(); this.bandLimit.reset(); this.tone.reset(); this.dc.reset();\r\n    this.gain.setCurrentAndTarget(this.gain.target);\r\n    this.level.setCurrentAndTarget(this.level.target);\r\n  }\r\n  setParameters(type, drive01, tone01, levelDb) {\r\n    type = clamp(type | 0, 0, 2);\r\n    if (type !== this.currentType) {\r\n      this.currentType = type;\r\n      if (type === 0)      { this.preHp.setCutoff(this.osRate, 720); this.bandLimit.setCutoff(this.osRate, 7000); }\r\n      else if (type === 1) { this.preHp.setCutoff(this.osRate, 160); this.bandLimit.setCutoff(this.osRate, 5500); }\r\n      else                 { this.preHp.setCutoff(this.osRate, 90);  this.bandLimit.setCutoff(this.osRate, 8000); }\r\n    }\r\n    const g = type === 0 ? 3 * Math.pow(40, drive01) : type === 1 ? 6 * Math.pow(120, drive01) : 25 * Math.pow(60, drive01);\r\n    this.gain.setTarget(f32(g));\r\n    this.tone.setLowPass(this.fs, 500 * Math.pow(24, tone01), 0.707);\r\n    const makeup = [0.22, 0.13, 0.11][type];\r\n    this.level.setTarget(f32(dbToGain(levelDb) * makeup));\r\n  }\r\n  process(data, n) {\r\n    const x = this.oversampler.up(data, n), osN = n * 4;\r\n    const gain = this.gain, preHp = this.preHp, band = this.bandLimit;\r\n    if (this.currentType === 0) {\r\n      for (let i = 0; i < osN; ++i) {\r\n        const inp = band.lowPass(x[i]);\r\n        x[i] = inp + Math.tanh(gain.next() * preHp.highPass(inp));\r\n      }\r\n    } else if (this.currentType === 1) {\r\n      for (let i = 0; i < osN; ++i) {\r\n        const v = gain.next() * preHp.highPass(band.lowPass(x[i]));\r\n        x[i] = v / Math.pow(1 + Math.pow(Math.abs(v), 2.5), 0.4);\r\n      }\r\n    } else {\r\n      const bias = 0.25, tb = Math.tanh(bias);\r\n      for (let i = 0; i < osN; ++i) {\r\n        const v = gain.next() * preHp.highPass(x[i]);\r\n        const s1 = Math.tanh(v + bias) - tb;\r\n        x[i] = band.lowPass(Math.tanh(2.5 * s1));\r\n      }\r\n    }\r\n    this.oversampler.down(data, n);\r\n    for (let i = 0; i < n; ++i) data[i] = this.tone.process(this.dc.process(data[i])) * this.level.next();\r\n  }\r\n}\r\n\r\n// ============================================================================\r\nclass CabSim {\r\n  prepare(fs) {\r\n    this.f = [new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad()];\r\n    this.f[0].setHighPass(fs, 75, 0.707);\r\n    this.f[1].setPeak(fs, 120, 1.4, 3);\r\n    this.f[2].setPeak(fs, 450, 1.0, -3.5);\r\n    this.f[3].setPeak(fs, 2300, 1.3, 4);\r\n    this.f[4].setLowPass(fs, 5000, 0.6);\r\n    this.f[5].setLowPass(fs, 6500, 0.9);\r\n  }\r\n  reset() { for (const f of this.f) f.reset(); }\r\n  process(data, n) {\r\n    const [a, b, c, d, e, g] = this.f;\r\n    for (let i = 0; i < n; ++i) data[i] = g.process(e.process(d.process(c.process(b.process(a.process(data[i]))))));\r\n  }\r\n}\r\n\r\n// ============================================================================\r\nconst EQ_BANDS = [\"lowCut\", \"bass\", \"lowMid\", \"highMid\", \"treble\", \"highCut\"];\r\nconst defaultEq = () => ({\r\n  lowCutHz: 20, bassHz: 100, bassDb: 0, lowMidHz: 400, lowMidDb: 0, lowMidQ: 1,\r\n  highMidHz: 2000, highMidDb: 0, highMidQ: 1, trebleHz: 5000, trebleDb: 0, highCutHz: 20000,\r\n});\r\n\r\nclass Equalizer {\r\n  /** Shared by the audio path and the on-screen curve. */\r\n  static design(s, fs, filters) {\r\n    filters[0].setHighPass(fs, s.lowCutHz, 0.707);\r\n    filters[1].setLowShelf(fs, s.bassHz, s.bassDb);\r\n    filters[2].setPeak(fs, s.lowMidHz, s.lowMidQ, s.lowMidDb);\r\n    filters[3].setPeak(fs, s.highMidHz, s.highMidQ, s.highMidDb);\r\n    filters[4].setHighShelf(fs, s.trebleHz, s.trebleDb);\r\n    filters[5].setLowPass(fs, s.highCutHz, 0.707);\r\n  }\r\n  prepare(sampleRate) {\r\n    this.fs = sampleRate;\r\n    this.filters = Array.from({ length: 6 }, () => new Biquad());\r\n    this.smoothed = Array.from({ length: 12 }, () => new Smoothed(0));\r\n    const d = defaultEq();\r\n    this.setParameters(d);\r\n    for (const v of this.smoothed) v.reset(this.fs, 0.04);\r\n    this.reset();\r\n  }\r\n  reset() {\r\n    for (const f of this.filters) f.reset();\r\n    for (const v of this.smoothed) v.setCurrentAndTarget(v.target);\r\n    Equalizer.design(this.currentSettings(), this.fs, this.filters);\r\n  }\r\n  setParameters(s) {\r\n    const t = [Math.log2(s.lowCutHz), Math.log2(s.bassHz), s.bassDb, Math.log2(s.lowMidHz), s.lowMidDb, Math.log2(s.lowMidQ),\r\n               Math.log2(s.highMidHz), s.highMidDb, Math.log2(s.highMidQ), Math.log2(s.trebleHz), s.trebleDb, Math.log2(s.highCutHz)];\r\n    for (let i = 0; i < 12; ++i) this.smoothed[i].setTarget(f32(t[i]));\r\n  }\r\n  currentSettings() {\r\n    const v = (i) => this.smoothed[i].current, hz = (i) => Math.pow(2, v(i));\r\n    return { lowCutHz: hz(0), bassHz: hz(1), bassDb: v(2), lowMidHz: hz(3), lowMidDb: v(4), lowMidQ: hz(5),\r\n             highMidHz: hz(6), highMidDb: v(7), highMidQ: hz(8), trebleHz: hz(9), trebleDb: v(10), highCutHz: hz(11) };\r\n  }\r\n  process(data, n) {\r\n    const f = this.filters;\r\n    for (let start = 0; start < n; start += 16) {\r\n      const len = Math.min(16, n - start);\r\n      if (this.smoothed.some((v) => v.isSmoothing())) {\r\n        for (const v of this.smoothed) v.skip(len);\r\n        Equalizer.design(this.currentSettings(), this.fs, f);\r\n      }\r\n      for (let i = start; i < start + len; ++i)\r\n        data[i] = f[5].process(f[4].process(f[3].process(f[2].process(f[1].process(f[0].process(data[i]))))));\r\n    }\r\n  }\r\n}\r\n\r\n// ============================================================================\r\nconst MOD_TYPES = [\"Chorus\", \"Flanger\", \"Phaser\", \"Tremolo\"];\r\n\r\nclass Modulation {\r\n  prepare(sampleRate) {\r\n    this.fs = sampleRate;\r\n    this.lines = [new DelayLine(), new DelayLine()];\r\n    for (const l of this.lines) l.prepare(Math.floor(0.03 * this.fs) + 8);\r\n    this.depth = new Smoothed(0.5); this.mix = new Smoothed(0.5);\r\n    this.depth.reset(this.fs, 0.05); this.mix.reset(this.fs, 0.05);\r\n    this.allpass = [new Float64Array(6), new Float64Array(6)];\r\n    this.phaserFb = [0, 0];\r\n    this.type = 0; this.rate = 1; this.phase = 0;\r\n    this.reset();\r\n  }\r\n  reset() {\r\n    for (const l of this.lines) l.reset();\r\n    this.resetPhaser();\r\n    this.phase = 0;\r\n    this.depth.setCurrentAndTarget(this.depth.target);\r\n    this.mix.setCurrentAndTarget(this.mix.target);\r\n  }\r\n  resetPhaser() { this.allpass[0].fill(0); this.allpass[1].fill(0); this.phaserFb[0] = this.phaserFb[1] = 0; }\r\n  feed(left, right, n) { for (let i = 0; i < n; ++i) { this.lines[0].push(left[i]); this.lines[1].push(right[i]); } }\r\n  setParameters(type, rateHz, depth01, mix01) {\r\n    type = clamp(type | 0, 0, 3);\r\n    if (type !== this.type) { this.type = type; this.resetPhaser(); }\r\n    this.rate = rateHz;\r\n    this.depth.setTarget(f32(depth01));\r\n    this.mix.setTarget(f32(mix01));\r\n  }\r\n  process(left, right, n) {\r\n    const io = [left, right], inc = this.rate / this.fs, fs = this.fs;\r\n    for (let i = 0; i < n; ++i) {\r\n      const d = this.depth.next(), m = this.mix.next();\r\n      const lfo0 = Math.sin(2 * PI * this.phase), lfo1 = Math.sin(2 * PI * (this.phase + 0.25));\r\n      this.phase += inc;\r\n      if (this.phase >= 1) this.phase -= 1;\r\n      for (let ch = 0; ch < 2; ++ch) {\r\n        const x = io[ch][i], lfo = ch === 0 ? lfo0 : lfo1;\r\n        switch (this.type) {\r\n          case 0: {\r\n            const wet = this.lines[ch].read((12 + 6 * d * lfo) * 0.001 * fs);\r\n            this.lines[ch].push(x);\r\n            io[ch][i] = x * (1 - m) + wet * m;\r\n            break;\r\n          }\r\n          case 1: {\r\n            const wet = this.lines[ch].read((0.25 + 4 * d * 0.5 * (lfo + 1)) * 0.001 * fs);\r\n            this.lines[ch].push(x + 0.7 * wet);\r\n            io[ch][i] = x * (1 - m) + wet * m;\r\n            break;\r\n          }\r\n          case 2: {\r\n            const fc = 1000 * Math.pow(2, 2.3 * d * lfo);\r\n            const t = Math.tan((PI * fc) / fs), a = (t - 1) / (t + 1);\r\n            const st = this.allpass[ch];\r\n            let v = x + 0.4 * this.phaserFb[ch];\r\n            for (let k = 0; k < 6; ++k) { const y = a * v + st[k]; st[k] = v - a * y; v = y; }\r\n            this.phaserFb[ch] = v;\r\n            io[ch][i] = x * (1 - m) + v * m;\r\n            break;\r\n          }\r\n          default: {\r\n            const k = 0.5 + 9 * m;\r\n            const shaped = Math.tanh(k * lfo0) / Math.tanh(k);\r\n            io[ch][i] = x * (1 - d * 0.5 * (shaped + 1));\r\n          }\r\n        }\r\n      }\r\n    }\r\n  }\r\n}\r\n\r\n// ============================================================================\r\nclass Delay {\r\n  prepare(sampleRate) {\r\n    this.fs = sampleRate;\r\n    this.lines = [new DelayLine(), new DelayLine()];\r\n    for (const l of this.lines) l.prepare(Math.floor(2 * this.fs) + 8);\r\n    this.lowPass = [new OnePole(), new OnePole()];\r\n    this.highPass = [new OnePole(), new OnePole()];\r\n    for (const f of this.highPass) f.setCutoff(this.fs, 70);\r\n    this.time = new Smoothed(1); this.feedback = new Smoothed(0); this.mix = new Smoothed(0); this.send = new Smoothed(0);\r\n    this.time.reset(this.fs, 0.3); this.feedback.reset(this.fs, 0.05); this.mix.reset(this.fs, 0.05); this.send.reset(this.fs, 0.03);\r\n    this.reset();\r\n  }\r\n  reset() {\r\n    for (const l of this.lines) l.reset();\r\n    for (const f of this.lowPass) f.reset();\r\n    for (const f of this.highPass) f.reset();\r\n    this.active = false;\r\n    this.silentSamples = 0;\r\n  }\r\n  setParameters(enabled, timeMs, feedback01, mix01, tone01) {\r\n    const delaySamples = f32(clamp(timeMs * 0.001 * this.fs, 1, this.lines[0].getMaxDelay()));\r\n    if (enabled && !this.active) { this.reset(); this.active = true; this.time.setCurrentAndTarget(delaySamples); }\r\n    this.send.setTarget(enabled ? 1 : 0);\r\n    this.time.setTarget(delaySamples);\r\n    this.feedback.setTarget(f32(feedback01));\r\n    this.mix.setTarget(f32(mix01));\r\n    for (const f of this.lowPass) f.setCutoff(this.fs, 1000 * Math.pow(12, tone01));\r\n  }\r\n  process(left, right, n) {\r\n    if (!this.active) return;\r\n    const io = [left, right];\r\n    let peak = 0;\r\n    for (let i = 0; i < n; ++i) {\r\n      const d = this.time.next(), fb = this.feedback.next(), m = this.mix.next(), s = this.send.next();\r\n      for (let ch = 0; ch < 2; ++ch) {\r\n        let wet = this.lines[ch].read(d);\r\n        wet = this.highPass[ch].highPass(this.lowPass[ch].lowPass(wet));\r\n        this.lines[ch].push(1.5 * Math.tanh((io[ch][i] * s + fb * wet) / 1.5));\r\n        io[ch][i] += m * wet;\r\n        peak = Math.max(peak, Math.abs(wet));\r\n      }\r\n    }\r\n    if (this.send.target === 0 && !this.send.isSmoothing()) {\r\n      this.silentSamples = peak < 1e-5 ? this.silentSamples + n : 0;\r\n      if (this.silentSamples > Math.floor(this.time.target) + Math.floor(0.1 * this.fs)) this.reset();\r\n    } else this.silentSamples = 0;\r\n  }\r\n}\r\n\r\n// ============================================================================\r\n// juce::Reverb (Freeverb) port\r\nconst UNDENORM = f32(0.1);\r\nconst undenormalise = (x) => f32(f32(f32(x) + UNDENORM) - UNDENORM); // JUCE_UNDENORMALISE on x86\r\n\r\nclass Comb {\r\n  setSize(size) { this.buffer = new Float32Array(size); this.index = 0; this.last = 0; }\r\n  clear() { this.buffer.fill(0); this.last = 0; }\r\n  process(input, damp, feedback) {\r\n    const out = this.buffer[this.index];\r\n    this.last = undenormalise(out * (1 - damp) + this.last * damp);\r\n    this.buffer[this.index] = undenormalise(input + this.last * feedback);\r\n    if (++this.index === this.buffer.length) this.index = 0;\r\n    return out;\r\n  }\r\n}\r\nclass AllPass {\r\n  setSize(size) { this.buffer = new Float32Array(size); this.index = 0; }\r\n  clear() { this.buffer.fill(0); }\r\n  process(input) {\r\n    const buffered = this.buffer[this.index];\r\n    this.buffer[this.index] = undenormalise(input + buffered * 0.5);\r\n    if (++this.index === this.buffer.length) this.index = 0;\r\n    return buffered - input;\r\n  }\r\n}\r\n\r\nclass Freeverb {\r\n  constructor() {\r\n    this.comb = [Array.from({ length: 8 }, () => new Comb()), Array.from({ length: 8 }, () => new Comb())];\r\n    this.allPass = [Array.from({ length: 4 }, () => new AllPass()), Array.from({ length: 4 }, () => new AllPass())];\r\n    this.damping = new Smoothed(0); this.feedback = new Smoothed(0);\r\n    this.dryGain = new Smoothed(0); this.wetGain1 = new Smoothed(0); this.wetGain2 = new Smoothed(0);\r\n    this.setParameters({ roomSize: 0.5, damping: 0.5, wetLevel: 0.33, dryLevel: 0.4, width: 1 });\r\n    this.setSampleRate(44100);\r\n  }\r\n  setParameters(p) {\r\n    const wet = f32(p.wetLevel * 3);\r\n    this.dryGain.setTarget(f32(p.dryLevel * 2));\r\n    this.wetGain1.setTarget(f32(0.5 * wet * (1 + p.width)));\r\n    this.wetGain2.setTarget(f32(0.5 * wet * (1 - p.width)));\r\n    this.gain = f32(0.015);\r\n    this.damping.setTarget(f32(p.damping * 0.4));\r\n    this.feedback.setTarget(f32(p.roomSize * 0.28 + 0.7));\r\n  }\r\n  setSampleRate(sampleRate) {\r\n    const combTunings = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617], allPassTunings = [556, 441, 341, 225];\r\n    const sr = sampleRate | 0, spread = 23;\r\n    for (let i = 0; i < 8; ++i) {\r\n      this.comb[0][i].setSize(Math.floor((sr * combTunings[i]) / 44100));\r\n      this.comb[1][i].setSize(Math.floor((sr * (combTunings[i] + spread)) / 44100));\r\n    }\r\n    for (let i = 0; i < 4; ++i) {\r\n      this.allPass[0][i].setSize(Math.floor((sr * allPassTunings[i]) / 44100));\r\n      this.allPass[1][i].setSize(Math.floor((sr * (allPassTunings[i] + spread)) / 44100));\r\n    }\r\n    for (const s of [this.damping, this.feedback, this.dryGain, this.wetGain1, this.wetGain2]) s.reset(sampleRate, 0.01);\r\n  }\r\n  reset() {\r\n    for (const ch of this.comb) for (const c of ch) c.clear();\r\n    for (const ch of this.allPass) for (const a of ch) a.clear();\r\n  }\r\n  processStereo(left, right, n) {\r\n    const [cL, cR] = this.comb, [aL, aR] = this.allPass;\r\n    for (let i = 0; i < n; ++i) {\r\n      const input = (left[i] + right[i]) * this.gain;\r\n      const damp = this.damping.next(), fb = this.feedback.next();\r\n      let outL = 0, outR = 0;\r\n      for (let j = 0; j < 8; ++j) { outL += cL[j].process(input, damp, fb); outR += cR[j].process(input, damp, fb); }\r\n      for (let j = 0; j < 4; ++j) { outL = aL[j].process(outL); outR = aR[j].process(outR); }\r\n      const dry = this.dryGain.next(), wet1 = this.wetGain1.next(), wet2 = this.wetGain2.next();\r\n      const l = left[i], r = right[i];\r\n      left[i] = outL * wet1 + outR * wet2 + l * dry;\r\n      right[i] = outR * wet1 + outL * wet2 + r * dry;\r\n    }\r\n  }\r\n}\r\n\r\nclass ReverbFx {\r\n  prepare(sampleRate, maxBlock) {\r\n    this.fs = sampleRate;\r\n    this.reverb = new Freeverb();\r\n    this.reverb.setSampleRate(this.fs);\r\n    this.wetL = new Float32Array(maxBlock); this.wetR = new Float32Array(maxBlock);\r\n    this.pre = [new DelayLine(), new DelayLine()];\r\n    for (const l of this.pre) l.prepare(Math.floor(0.5 * this.fs) + 8);\r\n    this.send = new Smoothed(0); this.preDelay = new Smoothed(0);\r\n    this.send.reset(this.fs, 0.03); this.preDelay.reset(this.fs, 0.2);\r\n    this.reset();\r\n  }\r\n  reset() {\r\n    this.reverb.reset();\r\n    for (const l of this.pre) l.reset();\r\n    this.preDelay.setCurrentAndTarget(this.preDelay.target);\r\n    this.active = false;\r\n    this.silentSamples = 0;\r\n  }\r\n  setParameters(enabled, size01, damping01, mix01, preDelayMs = 0) {\r\n    const preSamples = f32(clamp(preDelayMs * 0.001 * this.fs, 0, 0.5 * this.fs));\r\n    const starting = enabled && !this.active;\r\n    if (starting) { for (const l of this.pre) l.reset(); this.preDelay.setCurrentAndTarget(preSamples); this.active = true; }\r\n    this.send.setTarget(enabled ? 1 : 0);\r\n    this.preDelay.setTarget(preSamples);\r\n    this.reverb.setParameters({ roomSize: f32(0.3 + 0.68 * size01), damping: damping01, wetLevel: f32(0.35 * mix01), dryLevel: 0, width: 1 });\r\n    if (starting) this.reverb.setSampleRate(this.fs);\r\n  }\r\n  process(left, right, n) {\r\n    if (!this.active) return;\r\n    const wl = this.wetL, wr = this.wetR;\r\n    for (let i = 0; i < n; ++i) {\r\n      const s = this.send.next(), d = this.preDelay.next() + 1;\r\n      this.pre[0].push(left[i] * s); this.pre[1].push(right[i] * s);\r\n      wl[i] = this.pre[0].read(d); wr[i] = this.pre[1].read(d);\r\n    }\r\n    this.reverb.processStereo(wl, wr, n);\r\n    let peak = 0;\r\n    for (let i = 0; i < n; ++i) {\r\n      left[i] += wl[i]; right[i] += wr[i];\r\n      peak = Math.max(peak, Math.abs(wl[i]), Math.abs(wr[i]));\r\n    }\r\n    if (this.send.target === 0 && !this.send.isSmoothing()) {\r\n      this.silentSamples = peak < 1e-5 ? this.silentSamples + n : 0;\r\n      if (this.silentSamples > Math.floor(0.8 * this.fs)) this.reset();\r\n    } else this.silentSamples = 0;\r\n  }\r\n}\r\n\r\n// ============================================================================\r\nconst defaultParams = () => ({\r\n  inputGainDb: 0, outputGainDb: 0, mute: false, cabOn: true,\r\n  gateOn: true, gateThresholdDb: -65, gateReleaseMs: 60,\r\n  driveOn: true, driveType: 0, driveGain: 0.5, driveTone: 0.5, driveLevelDb: 0,\r\n  eqOn: true, eq: defaultEq(),\r\n  modOn: false, modType: 0, modRateHz: 0.8, modDepth: 0.5, modMix: 0.5,\r\n  delayOn: false, delayTimeMs: 380, delayFeedback: 0.35, delayMix: 0.35, delayTone: 0.6,\r\n  reverbOn: true, reverbSize: 0.55, reverbDamping: 0.45, reverbMix: 0.25, reverbPreDelayMs: 0,\r\n});\r\n\r\nclass Switch {\r\n  constructor(fs) { this.amount = new Smoothed(0); this.amount.reset(fs, 0.03); this.needsReset = true; this.resetOnEnable = true; }\r\n  set(on) { this.amount.setTarget(on ? 1 : 0); }\r\n  isOff() { return !this.amount.isSmoothing() && this.amount.current <= 0; }\r\n  isFullyOn() { return !this.amount.isSmoothing() && this.amount.current >= 1; }\r\n}\r\n\r\n/** input -> gate -> drive -> cab -> EQ -> (mono to stereo) -> modulation -> delay -> reverb -> output */\r\nclass FxChain {\r\n  prepare(sampleRate, maxBlock) {\r\n    this.fs = sampleRate;\r\n    this.maxBlock = Math.max(1, maxBlock);\r\n    this.gate = new NoiseGate(); this.gate.prepare(sampleRate);\r\n    this.drive = new Drive(); this.drive.prepare(sampleRate, this.maxBlock);\r\n    this.cab = new CabSim(); this.cab.prepare(sampleRate);\r\n    this.eq = new Equalizer(); this.eq.prepare(sampleRate);\r\n    this.modulation = new Modulation(); this.modulation.prepare(sampleRate);\r\n    this.delay = new Delay(); this.delay.prepare(sampleRate);\r\n    this.reverb = new ReverbFx(); this.reverb.prepare(sampleRate, this.maxBlock);\r\n    this.gateSwitch = new Switch(sampleRate); this.driveSwitch = new Switch(sampleRate);\r\n    this.cabSwitch = new Switch(sampleRate); this.eqSwitch = new Switch(sampleRate); this.modSwitch = new Switch(sampleRate);\r\n    this.modSwitch.resetOnEnable = false;\r\n    this.inputGain = new Smoothed(1); this.outputGain = new Smoothed(1);\r\n    this.inputGain.reset(sampleRate, 0.05); this.outputGain.reset(sampleRate, 0.05);\r\n    this.mono = new Float32Array(this.maxBlock);\r\n    this.dryL = new Float32Array(this.maxBlock); this.dryR = new Float32Array(this.maxBlock);\r\n    this.spareR = new Float32Array(this.maxBlock);\r\n    this.analyzerTap = null;\r\n    this.reset();\r\n  }\r\n  reset() {\r\n    for (const m of [this.gate, this.drive, this.cab, this.eq, this.modulation, this.delay, this.reverb]) m.reset();\r\n    for (const s of [this.gateSwitch, this.driveSwitch, this.cabSwitch, this.eqSwitch, this.modSwitch]) s.amount.setCurrentAndTarget(s.amount.target);\r\n    this.inputGain.setCurrentAndTarget(this.inputGain.target);\r\n    this.outputGain.setCurrentAndTarget(this.outputGain.target);\r\n    this.inputPeak = this.outputPeak = 0;\r\n  }\r\n  setParameters(p) {\r\n    this.inputGain.setTarget(f32(dbToGain(p.inputGainDb)));\r\n    this.outputGain.setTarget(p.mute ? 0 : f32(dbToGain(p.outputGainDb)));\r\n    this.gateSwitch.set(p.gateOn); this.gate.setParameters(p.gateThresholdDb, p.gateReleaseMs);\r\n    this.driveSwitch.set(p.driveOn); this.drive.setParameters(p.driveType, p.driveGain, p.driveTone, p.driveLevelDb);\r\n    this.cabSwitch.set(p.cabOn);\r\n    this.eqSwitch.set(p.eqOn); this.eq.setParameters(p.eq);\r\n    this.modSwitch.set(p.modOn); this.modulation.setParameters(p.modType, p.modRateHz, p.modDepth, p.modMix);\r\n    this.delay.setParameters(p.delayOn, p.delayTimeMs, p.delayFeedback, p.delayMix, p.delayTone);\r\n    this.reverb.setParameters(p.reverbOn, p.reverbSize, p.reverbDamping, p.reverbMix, p.reverbPreDelayMs || 0);\r\n  }\r\n  /** Mono in, stereo out. outRight may be null for a mono mix. */\r\n  process(input, outLeft, outRight, n) {\r\n    this.inputPeak = this.outputPeak = 0;\r\n    for (let offset = 0; offset < n; offset += this.maxBlock) {\r\n      const len = Math.min(this.maxBlock, n - offset);\r\n      const L = outLeft.subarray(offset, offset + len);\r\n      const R = outRight ? outRight.subarray(offset, offset + len) : this.spareR.subarray(0, len);\r\n      this.processChunk(input.subarray(offset, offset + len), L, R, len);\r\n      if (!outRight) for (let i = 0; i < len; ++i) L[i] = 0.5 * (L[i] + R[i]);\r\n    }\r\n  }\r\n  processChunk(input, left, right, n) {\r\n    const m = this.mono;\r\n    for (let i = 0; i < n; ++i) {\r\n      m[i] = input[i] * this.inputGain.next();\r\n      this.inputPeak = Math.max(this.inputPeak, Math.abs(m[i]));\r\n    }\r\n    this.runMono(this.gateSwitch, this.gate, m, n);\r\n    this.runMono(this.driveSwitch, this.drive, m, n);\r\n    this.runMono(this.cabSwitch, this.cab, m, n);\r\n    this.runMono(this.eqSwitch, this.eq, m, n);\r\n    if (this.analyzerTap) this.analyzerTap(m, n);\r\n    for (let i = 0; i < n; ++i) left[i] = right[i] = m[i];\r\n    if (this.modSwitch.isOff()) this.modulation.feed(left, right, n);\r\n    this.runStereo(this.modSwitch, this.modulation, left, right, n);\r\n    this.delay.process(left, right, n);\r\n    this.reverb.process(left, right, n);\r\n    for (let i = 0; i < n; ++i) {\r\n      const g = this.outputGain.next();\r\n      left[i] = clamp(left[i] * g, -2, 2);\r\n      right[i] = clamp(right[i] * g, -2, 2);\r\n      this.outputPeak = Math.max(this.outputPeak, Math.abs(left[i]), Math.abs(right[i]));\r\n    }\r\n  }\r\n  runMono(sw, fx, data, n) {\r\n    if (sw.isOff()) { sw.needsReset = true; return; }\r\n    if (sw.needsReset) { if (sw.resetOnEnable) fx.reset(); sw.needsReset = false; }\r\n    if (sw.isFullyOn()) { fx.process(data, n); return; }\r\n    const dry = this.dryL;\r\n    dry.set(data.subarray(0, n));\r\n    fx.process(data, n);\r\n    for (let i = 0; i < n; ++i) { const a = sw.amount.next(); data[i] = dry[i] + a * (data[i] - dry[i]); }\r\n  }\r\n  runStereo(sw, fx, left, right, n) {\r\n    if (sw.isOff()) { sw.needsReset = true; return; }\r\n    if (sw.needsReset) { if (sw.resetOnEnable) fx.reset(); sw.needsReset = false; }\r\n    if (sw.isFullyOn()) { fx.process(left, right, n); return; }\r\n    const dl = this.dryL, dr = this.dryR;\r\n    dl.set(left.subarray(0, n)); dr.set(right.subarray(0, n));\r\n    fx.process(left, right, n);\r\n    for (let i = 0; i < n; ++i) {\r\n      const a = sw.amount.next();\r\n      left[i] = dl[i] + a * (left[i] - dl[i]);\r\n      right[i] = dr[i] + a * (right[i] - dr[i]);\r\n    }\r\n  }\r\n}\r\n\r\n// ============================================================================\r\n// Tuner: YIN on input decimated to ~24 kHz\r\nclass PitchDetector {\r\n  prepare(inputRate) {\r\n    this.decimation = Math.max(1, Math.round(inputRate / 24000));\r\n    this.rate = inputRate / this.decimation;\r\n    this.maxTau = Math.ceil(this.rate / 50) + 2;\r\n    this.minTau = Math.max(2, Math.floor(this.rate / 1500));\r\n    this.window = Math.ceil(this.rate * 0.04);\r\n    this.ring = new Float32Array(this.window + this.maxTau + 2);\r\n    this.frame = new Float32Array(this.ring.length);\r\n    this.diff = new Float64Array(this.maxTau + 2);\r\n    this.cmnd = new Float64Array(this.maxTau + 2);\r\n    this.writePos = 0; this.acc = 0; this.accCount = 0;\r\n  }\r\n  pushSamples(data, n = data.length) {\r\n    for (let i = 0; i < n; ++i) {\r\n      this.acc += data[i];\r\n      if (++this.accCount === this.decimation) {\r\n        this.ring[this.writePos] = this.acc / this.decimation;\r\n        this.writePos = (this.writePos + 1) % this.ring.length;\r\n        this.acc = 0; this.accCount = 0;\r\n      }\r\n    }\r\n  }\r\n  detect() {\r\n    const size = this.ring.length, x = this.frame;\r\n    for (let i = 0; i < size; ++i) x[i] = this.ring[(this.writePos + i) % size];\r\n    let energy = 0;\r\n    for (let j = 0; j < size; ++j) energy += x[j] * x[j];\r\n    if (Math.sqrt(energy / size) < 0.002) return 0;\r\n    const { diff, cmnd, maxTau, minTau, window } = this;\r\n    for (let tau = 1; tau <= maxTau; ++tau) {\r\n      let sum = 0;\r\n      for (let j = 0; j < window; ++j) { const d = x[j] - x[j + tau]; sum += d * d; }\r\n      diff[tau] = sum;\r\n    }\r\n    let running = 0;\r\n    cmnd[0] = 1;\r\n    for (let tau = 1; tau <= maxTau; ++tau) { running += diff[tau]; cmnd[tau] = running > 0 ? (diff[tau] * tau) / running : 1; }\r\n    let tau = -1;\r\n    for (let t = minTau; t < maxTau; ++t) {\r\n      if (cmnd[t] < 0.15) { while (t + 1 < maxTau && cmnd[t + 1] < cmnd[t]) ++t; tau = t; break; }\r\n    }\r\n    if (tau < 1) return 0;\r\n    const a = diff[tau - 1], b = diff[tau], c = diff[tau + 1], denom = a + c - 2 * b;\r\n    const shift = Math.abs(denom) > 1e-12 ? clamp((0.5 * (a - c)) / denom, -1, 1) : 0;\r\n    return this.rate / (tau + shift);\r\n  }\r\n}\r\n\r\nconst NOTE_NAMES = [\"C\", \"C#\", \"D\", \"D#\", \"E\", \"F\", \"F#\", \"G\", \"G#\", \"A\", \"A#\", \"B\"];\r\nfunction frequencyToNote(hz, a4 = 440) {\r\n  const midi = 69 + 12 * Math.log2(hz / a4), nearest = Math.round(midi);\r\n  return { midi: nearest, cents: (midi - nearest) * 100, name: NOTE_NAMES[((nearest % 12) + 12) % 12], octave: Math.floor(nearest / 12) - 1 };\r\n}\r\n\r\n// ============================================================================\r\n// FFT analyser -> 240 log-spaced columns (20 Hz .. 20 kHz) in dBFS\r\nclass SpectrumAnalyzer {\r\n  static fftSize = 4096;\r\n  static numColumns = 240;\r\n  static minHz = 20;\r\n  static maxHz = 20000;\r\n  static floorDb = -120;\r\n  static columnFrequency(c) {\r\n    const S = SpectrumAnalyzer;\r\n    return S.minHz * Math.pow(S.maxHz / S.minHz, clamp(c / (S.numColumns - 1), 0, 1));\r\n  }\r\n  constructor() {\r\n    const N = SpectrumAnalyzer.fftSize;\r\n    this.fs = 48000;\r\n    this.ring = new Float32Array(N); this.ringPos = 0; this.newSamples = 0;\r\n    this.re = new Float64Array(N); this.im = new Float64Array(N); this.mag = new Float64Array(N / 2 + 1);\r\n    this.window = new Float64Array(N);\r\n    for (let i = 0; i < N; ++i) this.window[i] = 0.5 - 0.5 * Math.cos((2 * PI * i) / (N - 1));\r\n    this.columns = new Float32Array(SpectrumAnalyzer.numColumns).fill(SpectrumAnalyzer.floorDb);\r\n    // bit reversal table\r\n    this.rev = new Uint32Array(N);\r\n    const bits = Math.log2(N);\r\n    for (let i = 0; i < N; ++i) { let r = 0; for (let b = 0; b < bits; ++b) r |= ((i >> b) & 1) << (bits - 1 - b); this.rev[i] = r; }\r\n  }\r\n  setSampleRate(fs) { if (fs > 0) this.fs = fs; }\r\n  clear() { this.columns.fill(SpectrumAnalyzer.floorDb); }\r\n  push(data, n = data.length) {\r\n    const N = SpectrumAnalyzer.fftSize;\r\n    for (let i = 0; i < n; ++i) { this.ring[this.ringPos] = data[i]; this.ringPos = (this.ringPos + 1) % N; }\r\n    this.newSamples += n;\r\n  }\r\n  fft() {\r\n    const N = SpectrumAnalyzer.fftSize, re = this.re, im = this.im;\r\n    for (let i = 0; i < N; ++i) { const j = this.rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }\r\n    for (let size = 2; size <= N; size <<= 1) {\r\n      const half = size >> 1, step = (-2 * PI) / size;\r\n      for (let start = 0; start < N; start += size) {\r\n        for (let k = 0; k < half; ++k) {\r\n          const wr = Math.cos(step * k), wi = Math.sin(step * k);\r\n          const a = start + k, b = a + half;\r\n          const tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;\r\n          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;\r\n        }\r\n      }\r\n    }\r\n  }\r\n  process() {\r\n    const S = SpectrumAnalyzer, N = S.fftSize, fall = 1.6;\r\n    if (this.newSamples === 0) { for (let c = 0; c < S.numColumns; ++c) this.columns[c] = Math.max(S.floorDb, this.columns[c] - fall); return; }\r\n    this.newSamples = 0;\r\n    for (let i = 0; i < N; ++i) { this.re[i] = this.ring[(this.ringPos + i) % N] * this.window[i]; this.im[i] = 0; }\r\n    this.fft();\r\n    for (let k = 0; k <= N / 2; ++k) this.mag[k] = Math.hypot(this.re[k], this.im[k]);\r\n    const norm = 4 / N, maxBin = N / 2;\r\n    for (let c = 0; c < S.numColumns; ++c) {\r\n      const lo = (S.columnFrequency(c - 0.5) * N) / this.fs, hi = (S.columnFrequency(c + 0.5) * N) / this.fs;\r\n      let m = 0;\r\n      if (hi - lo < 1) {\r\n        const bin = clamp(0.5 * (lo + hi), 0, maxBin - 1), i0 = Math.floor(bin), t = bin - i0;\r\n        m = this.mag[i0] + t * (this.mag[i0 + 1] - this.mag[i0]);\r\n      } else {\r\n        for (let b = Math.max(0, Math.ceil(lo)); b <= Math.min(maxBin, Math.floor(hi)); ++b) m = Math.max(m, this.mag[b]);\r\n      }\r\n      const db = Math.max(S.floorDb, gainToDb(m * norm));\r\n      this.columns[c] = db > this.columns[c] ? db : Math.max(db, this.columns[c] - fall);\r\n    }\r\n  }\r\n}\r\n\r\n// ============================================================================\r\n// Tap tempo\r\nconst DELAY_DIVISIONS = [[\"1/4\", 1], [\"1/8.\", 0.75], [\"1/8\", 0.5], [\"1/8T\", 1 / 3], [\"1/16\", 0.25]];\r\nconst REVERB_DIVISIONS = [[\"1/32\", 0.125], [\"1/16\", 0.25], [\"1/8\", 0.5], [\"1/4\", 1]];\r\n\r\nclass TapTempo {\r\n  constructor() { this.intervals = [0, 0, 0, 0]; this.count = 0; this.next = 0; this.lastTap = 0; this.hasLastTap = false; }\r\n  average() {\r\n    if (this.count === 0) return 0;\r\n    let sum = 0;\r\n    for (let i = 0; i < this.count; ++i) sum += this.intervals[(this.next - 1 - i + 16) % 4];\r\n    return sum / this.count;\r\n  }\r\n  /** Returns the averaged beat length in ms, or 0 until there are two taps. */\r\n  tap(nowMs) {\r\n    const interval = nowMs - this.lastTap;\r\n    if (this.hasLastTap && interval < 100) return this.average();\r\n    if (!this.hasLastTap || interval > 2000) this.count = 0;\r\n    else {\r\n      if (this.count > 0 && Math.abs(interval - this.average()) > 0.35 * this.average()) this.count = 0;\r\n      this.intervals[this.next++ % 4] = interval;\r\n      this.count = Math.min(this.count + 1, 4);\r\n    }\r\n    this.hasLastTap = true;\r\n    this.lastTap = nowMs;\r\n    return this.average();\r\n  }\r\n  getLastTapMs() { return this.hasLastTap ? this.lastTap : 0; }\r\n}\r\n\r\n// ============================================================================\r\n// Test signals: Karplus-Strong strings and the demo riff\r\nconst OPEN_STRINGS = [82.41, 110.0, 146.83, 196.0, 246.94, 329.63];\r\nconst fretHz = (string, fret) => OPEN_STRINGS[string] * Math.pow(2, fret / 12);\r\n\r\n/** How CHORD buttons play. */\r\nconst CHORD_PATTERNS = { arpeggio: 0, strumLoop: 1, single: 2 };\r\nconst CHORD_PATTERN_NAMES = [\"Arpeggio\", \"Strum loop\", \"Single\"];\r\n\r\n/** Open-position chord shapes, frets from low E to high e; -1 = string not played (muted). */\r\nconst CHORDS = [\r\n  { name: \"C\", shape: \"x32010\", frets: [-1, 3, 2, 0, 1, 0] },\r\n  { name: \"D\", shape: \"xx0232\", frets: [-1, -1, 0, 2, 3, 2] },\r\n  { name: \"E\", shape: \"022100\", frets: [0, 2, 2, 1, 0, 0] },\r\n  { name: \"F\", shape: \"133211\", frets: [1, 3, 3, 2, 1, 1] },\r\n  { name: \"G\", shape: \"320003\", frets: [3, 2, 0, 0, 0, 3] },\r\n  { name: \"A\", shape: \"x02220\", frets: [-1, 0, 2, 2, 2, 0] },\r\n  { name: \"Am\", shape: \"x02210\", frets: [-1, 0, 2, 2, 1, 0] },\r\n  { name: \"Dm\", shape: \"xx0231\", frets: [-1, -1, 0, 2, 3, 1] },\r\n  { name: \"Em\", shape: \"022000\", frets: [0, 2, 2, 0, 0, 0] },\r\n];\r\n\r\n/** Small deterministic PRNG (mulberry32) so the demo riff is the same every time. */\r\nfunction makeRng(seed) {\r\n  let a = seed >>> 0;\r\n  return {\r\n    nextFloat() {\r\n      a = (a + 0x6d2b79f5) >>> 0;\r\n      let t = a;\r\n      t = Math.imul(t ^ (t >>> 15), t | 1);\r\n      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\r\n      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\r\n    },\r\n  };\r\n}\r\n\r\nclass PluckedString {\r\n  prepare(sampleRate, lowestHz = 40) { this.fs = sampleRate; this.buffer = new Float32Array(Math.floor(this.fs / lowestHz) + 4); this.active = false; }\r\n  pluck(hz, velocity, t60, brightness, rng) {\r\n    const period = this.fs / hz;\r\n    this.length = clamp(Math.floor(period - 0.6), 2, this.buffer.length);\r\n    const fraction = period - 0.5 - this.length;\r\n    this.apCoef = (1 - fraction) / (1 + fraction);\r\n    this.loopGain = Math.pow(10, (-3 * period) / (this.fs * t60));\r\n    const pick = new OnePole();\r\n    pick.setCutoff(this.fs, 700 + 9000 * brightness);\r\n    let mean = 0;\r\n    for (let i = 0; i < this.length; ++i) { this.buffer[i] = pick.lowPass(rng.nextFloat() * 2 - 1); mean += this.buffer[i]; }\r\n    mean /= this.length;\r\n    let peak = 1e-6;\r\n    for (let i = 0; i < this.length; ++i) { this.buffer[i] -= mean; peak = Math.max(peak, Math.abs(this.buffer[i])); }\r\n    for (let i = 0; i < this.length; ++i) this.buffer[i] *= velocity / peak;\r\n    this.pos = 0; this.previous = this.apIn = this.apOut = 0;\r\n    this.remaining = Math.floor(this.fs * t60 * 1.2);\r\n    this.active = true;\r\n  }\r\n  /** Mutes a ringing string over ~60 ms, like resting a finger on it (no click). */\r\n  damp() {\r\n    if (!this.active) return;\r\n    this.loopGain = Math.pow(10, (-3 * this.length) / (this.fs * 0.06));\r\n    this.remaining = Math.min(this.remaining, Math.floor(this.fs * 0.1));\r\n  }\r\n  next() {\r\n    if (!this.active) return 0;\r\n    const out = this.buffer[this.pos];\r\n    const averaged = 0.5 * (out + this.previous) * this.loopGain;\r\n    this.previous = out;\r\n    const y = this.apCoef * averaged + this.apIn - this.apCoef * this.apOut;\r\n    this.apIn = averaged; this.apOut = y;\r\n    this.buffer[this.pos] = y;\r\n    if (++this.pos >= this.length) this.pos = 0;\r\n    if (--this.remaining <= 0) this.active = false;\r\n    return out;\r\n  }\r\n}\r\n\r\n/** ~10.8 s riff at 100 BPM; loops seamlessly; peaks at -8 dBFS like a DI'd guitar. */\r\nfunction renderDemoRiff(fs) {\r\n  const eighth = 0.3, loopSeconds = 32 * eighth + 1.2;\r\n  const notes = [];\r\n  const chord = (at, hz, muted, length, velocity = 0.33) => {\r\n    hz.forEach((f, string) => notes.push({\r\n      at: at * eighth + 0.009 * string, hz: f, velocity: velocity * (1 - 0.04 * string),\r\n      t60: muted ? 0.16 : 3.5, brightness: muted ? 0.35 : 0.8, length: muted ? eighth : length * eighth,\r\n    }));\r\n  };\r\n  const e5 = [82.41, 123.47, 164.81], g5 = [98.0, 146.83, 196.0], a5 = [110.0, 164.81, 220.0], d5 = [146.83, 220.0, 293.66];\r\n  const eMajor = [82.41, 123.47, 164.81, 207.65, 246.94, 329.63];\r\n  for (const t of [0, 1, 2, 3]) chord(t, e5, true, 1);\r\n  chord(4, e5, false, 2); chord(6, g5, false, 2);\r\n  for (const t of [8, 9, 10]) chord(t, e5, true, 1);\r\n  chord(11, a5, false, 2); chord(13, g5, false, 1); chord(14, d5, false, 2);\r\n  const lick = [329.63, 392.0, 440.0, 493.88, 440.0, 392.0, 329.63, 293.66];\r\n  lick.forEach((hz, i) => notes.push({ at: (16 + i) * eighth, hz, velocity: 0.38, t60: 2.5, brightness: 0.85, length: (i === 6 ? 1.5 : 1) * eighth }));\r\n  chord(24, eMajor, false, 12, 0.3);\r\n\r\n  const loopLength = Math.floor(loopSeconds * fs);\r\n  const out = new Float32Array(loopLength + Math.floor(6 * fs));\r\n  const fade = Math.floor(0.025 * fs);\r\n  const rng = makeRng(2024), string = new PluckedString();\r\n  string.prepare(fs);\r\n  for (const n of notes) {\r\n    string.pluck(n.hz, n.velocity, n.t60, n.brightness, rng);\r\n    const start = Math.floor(n.at * fs), held = Math.floor(n.length * fs);\r\n    for (let i = 0; i < held + fade && start + i < out.length && string.active; ++i) {\r\n      const env = i < held ? 1 : 1 - (i - held) / fade;\r\n      out[start + i] += env * string.next();\r\n    }\r\n  }\r\n  for (let i = loopLength; i < out.length; ++i) out[i - loopLength] += out[i];\r\n  const riff = out.slice(0, loopLength);\r\n  let peak = 1e-6;\r\n  for (const s of riff) peak = Math.max(peak, Math.abs(s));\r\n  for (let i = 0; i < riff.length; ++i) riff[i] *= 0.4 / peak;\r\n  return riff;\r\n}\r\n\r\n/** What feeds the board: live input, the demo riff or a looped file, plus plucked open strings. */\r\nclass TestSignalPlayer {\r\n  prepare(fs) {\r\n    this.fs = fs;\r\n    this.source = \"live\";\r\n    this.demo = null; this.demoPos = 0;\r\n    this.file = null; this.fileRate = fs; this.filePos = 0;\r\n    this.voices = OPEN_STRINGS.map(() => {\r\n      const string = new PluckedString();\r\n      string.prepare(fs);\r\n      return { string, pendingDelay: -1, pendingHz: 0, pendingVelocity: 0 };\r\n    });\r\n    this.rng = makeRng(7);\r\n    this.progress = 0;\r\n    this.playing = true;\r\n    // chord loop\r\n    this.chordPattern = CHORD_PATTERNS.arpeggio;\r\n    this.chordTempo = 90;\r\n    this.loopChord = -1; this.nextLoopChord = -1; this.loopStep = 0; this.samplesToStep = 0;\r\n  }\r\n\r\n  setChordPattern(p) { this.chordPattern = clamp(p | 0, 0, 2); if (this.chordPattern === CHORD_PATTERNS.single) this.loopChord = this.nextLoopChord = -1; }\r\n  setChordTempo(bpm) { this.chordTempo = clamp(bpm, 40, 240); }\r\n  /** Plays a chord with the current pattern; while looping, the new chord takes over on the next eighth note. */\r\n  playChord(i) {\r\n    if (!CHORDS[i]) return;\r\n    if (this.chordPattern === CHORD_PATTERNS.single) { this.strum(i); return; }\r\n    if (this.loopChord < 0) { this.loopChord = i; this.loopStep = 0; this.samplesToStep = 0; }\r\n    else this.nextLoopChord = i;\r\n  }\r\n  /** Stops the chord loop and mutes the strings. */\r\n  stopChord() {\r\n    this.loopChord = this.nextLoopChord = -1;\r\n    for (const v of this.voices) { v.pendingDelay = -1; v.string.damp(); }\r\n  }\r\n  loopingChord() { return this.nextLoopChord >= 0 ? this.nextLoopChord : this.loopChord; }\r\n\r\n  runChordLoop(n) {\r\n    if (this.loopChord < 0) return;\r\n    const stepLength = Math.max(1, Math.round((this.fs * 30) / this.chordTempo)); // eighth notes\r\n    while (this.samplesToStep < n) {\r\n      if (this.nextLoopChord >= 0) { this.loopChord = this.nextLoopChord; this.nextLoopChord = -1; this.loopStep = 0; }\r\n      this.playStep(CHORDS[this.loopChord], this.loopStep, this.samplesToStep);\r\n      this.loopStep = (this.loopStep + 1) % 8;\r\n      this.samplesToStep += stepLength;\r\n    }\r\n    this.samplesToStep -= n;\r\n  }\r\n\r\n  /** One eighth note of the pattern, starting `offset` samples into this block. */\r\n  playStep(chord, step, offset) {\r\n    const played = [];\r\n    chord.frets.forEach((f, s) => { if (f >= 0) played.push(s); });\r\n    const pluckAt = (s, delay, velocity) => {\r\n      const v = this.voices[s];\r\n      v.pendingDelay = delay; v.pendingHz = fretHz(s, chord.frets[s]); v.pendingVelocity = velocity;\r\n    };\r\n    const muteUnplayed = () => chord.frets.forEach((f, s) => { if (f < 0) this.voices[s].string.damp(); });\r\n\r\n    if (this.chordPattern === CHORD_PATTERNS.arpeggio) {\r\n      // bass, G, B, e, alternate bass, G, B, e\r\n      const upper = [-1, 3, 4, 5, -1, 3, 4, 5];\r\n      const bass = played[0];\r\n      const altBass = played.length > 1 && played[1] <= 2 ? played[1] : bass;\r\n      const s = step === 0 ? bass : step === 4 ? altBass : upper[step];\r\n      if (step === 0) muteUnplayed();\r\n      pluckAt(s, offset, step === 0 ? 0.3 : step === 4 ? 0.26 : 0.2);\r\n    } else {\r\n      // down, -, down, up, -, up, down, up\r\n      const kind = [1, 0, 1, 2, 0, 2, 1, 2][step];\r\n      if (kind === 1) {\r\n        muteUnplayed();\r\n        const spacing = Math.floor(0.009 * this.fs);\r\n        played.forEach((s, k) => pluckAt(s, offset + k * spacing, (step === 0 ? 0.19 : 0.16) * (1 - 0.04 * k)));\r\n      } else if (kind === 2) { // up-strums catch only the top four strings, lighter\r\n        const spacing = Math.floor(0.007 * this.fs);\r\n        played.slice(-4).reverse().forEach((s, k) => pluckAt(s, offset + k * spacing, 0.11));\r\n      }\r\n    }\r\n  }\r\n  /** Picking the demo riff or a file also starts it playing. */\r\n  setSource(s) {\r\n    if (s === \"demo\" && !this.demo) this.demo = renderDemoRiff(this.fs);\r\n    this.source = s;\r\n    if (s !== \"live\") this.setPlaying(true);\r\n  }\r\n  setFile(samples, rate) { this.file = samples; this.fileRate = rate; this.filePos = 0; this.setSource(\"file\"); }\r\n  /** STOP / PLAY for the demo riff or file. Stopping rewinds, so PLAY starts from the top. Plucks still sound. */\r\n  setPlaying(on) {\r\n    if (!on) { this.demoPos = 0; this.filePos = 0; this.progress = 0; }\r\n    this.playing = on;\r\n  }\r\n  pluck(i) { this.voices[i].pendingDelay = -1; this.voices[i].string.pluck(OPEN_STRINGS[i], 0.35, 3.5, 0.75, this.rng); }\r\n  /** Down-strums CHORDS[i]: strings 12 ms apart, low to high; unplayed strings are muted. */\r\n  strum(i) {\r\n    const chord = CHORDS[i];\r\n    if (!chord) return;\r\n    const spacing = Math.floor(0.012 * this.fs);\r\n    let order = 0;\r\n    chord.frets.forEach((fret, s) => {\r\n      const v = this.voices[s];\r\n      if (fret < 0) { v.pendingDelay = -1; v.string.damp(); return; }\r\n      v.pendingDelay = spacing * order;\r\n      v.pendingHz = fretHz(s, fret);\r\n      v.pendingVelocity = 0.19 * (1 - 0.04 * order); // six strings together peak near -8 dBFS\r\n      ++order;\r\n    });\r\n  }\r\n  process(io, n) {\r\n    if (this.source !== \"live\" && !this.playing) {\r\n      io.fill(0, 0, n); // stopped: silence, but plucks below still sound\r\n    } else if (this.source === \"demo\" && this.demo) {\r\n      const d = this.demo;\r\n      for (let i = 0; i < n; ++i) { io[i] = d[this.demoPos]; if (++this.demoPos >= d.length) this.demoPos = 0; }\r\n      this.progress = this.demoPos / d.length;\r\n    } else if (this.source === \"file\") {\r\n      const s = this.file;\r\n      if (!s || s.length < 4) io.fill(0, 0, n);\r\n      else {\r\n        const size = s.length, step = this.fileRate / this.fs;\r\n        const at = (i) => s[((i % size) + size) % size];\r\n        for (let i = 0; i < n; ++i) {\r\n          const i0 = Math.floor(this.filePos), t = this.filePos - i0;\r\n          const xm1 = at(i0 - 1), x0 = at(i0), x1 = at(i0 + 1), x2 = at(i0 + 2);\r\n          const c1 = 0.5 * (x1 - xm1), c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2, c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);\r\n          io[i] = ((c3 * t + c2) * t + c1) * t + x0;\r\n          this.filePos += step;\r\n          if (this.filePos >= size) this.filePos -= size;\r\n        }\r\n        this.progress = this.filePos / size;\r\n      }\r\n    }\r\n    this.runChordLoop(n);\r\n    for (const v of this.voices) {\r\n      if (!v.string.active && v.pendingDelay < 0) continue;\r\n      for (let i = 0; i < n; ++i) {\r\n        if (v.pendingDelay >= 0 && v.pendingDelay-- === 0) v.string.pluck(v.pendingHz, v.pendingVelocity, 3.0, 0.75, this.rng);\r\n        io[i] += v.string.next();\r\n      }\r\n    }\r\n  }\r\n}\r\n\nreturn { PI, dbToGain, gainToDb, Smoothed, Biquad, OnePole, DcBlocker, DelayLine, NoiseGate, OVERSAMPLER_COEFFS, Oversampler4x, DRIVE_TYPES, Drive, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, defaultParams, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, DELAY_DIVISIONS, REVERB_DIVISIONS, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };\n})();\n\n// AudioWorklet processor: runs the whole pedalboard on the audio thread.\r\n// The build prepends dsp.js as `const DSP = (...)()`.\r\n//\r\n// Messages in:  {type:\"params\", params} | {type:\"source\", source} | {type:\"pluck\", index} | {type:\"file\", samples, rate} | {type:\"playing\", playing} | {type:\"strum\", index}\r\n//               {type:\"chord\", index} | {type:\"chordStop\"} | {type:\"chordSettings\", pattern, bpm}\r\n// Messages out: {tuner, analyzer, inPeak, outPeak, progress} every 1024 frames\r\n//               (raw input for the tuner, post-EQ signal for the spectrum analyser)\r\n\r\nconst BATCH = 1024;\r\n\r\nclass PedalboardProcessor extends AudioWorkletProcessor {\r\n  constructor(options) {\r\n    super();\r\n    const init = (options && options.processorOptions) || {};\r\n\r\n    this.chain = new DSP.FxChain();\r\n    this.chain.prepare(sampleRate, 128);\r\n    this.params = init.params || DSP.defaultParams();\r\n    this.chain.setParameters(this.params);\r\n    this.chain.reset(); // pedals start in their switched state, no fade-in\r\n\r\n    this.player = new DSP.TestSignalPlayer();\r\n    this.player.prepare(sampleRate);\r\n    if (init.source) this.player.setSource(init.source);\r\n    if (init.playing === false) this.player.setPlaying(false);\r\n    if (init.chordPattern !== undefined) this.player.setChordPattern(init.chordPattern);\r\n    if (init.chordTempo !== undefined) this.player.setChordTempo(init.chordTempo);\r\n\r\n    this.mono = new Float32Array(128);\r\n    this.postEq = new Float32Array(128);\r\n    this.postEqLength = 0;\r\n    this.chain.analyzerTap = (data, n) => {\r\n      if (this.postEqLength + n > this.postEq.length) {\r\n        const grown = new Float32Array((this.postEqLength + n) * 2);\r\n        grown.set(this.postEq.subarray(0, this.postEqLength));\r\n        this.postEq = grown;\r\n      }\r\n      this.postEq.set(data.subarray(0, n), this.postEqLength);\r\n      this.postEqLength += n;\r\n    };\r\n\r\n    this.newBatch();\r\n    this.port.onmessage = (e) => this.onMessage(e.data);\r\n  }\r\n\r\n  newBatch() {\r\n    this.tuner = new Float32Array(BATCH);\r\n    this.analyzer = new Float32Array(BATCH);\r\n    this.fill = 0;\r\n    this.inPeak = 0;\r\n    this.outPeak = 0;\r\n  }\r\n\r\n  onMessage(m) {\r\n    if (m.type === \"params\") { this.params = m.params; }\r\n    else if (m.type === \"source\") { this.player.setSource(m.source); }\r\n    else if (m.type === \"pluck\") { this.player.pluck(m.index); }\r\n    else if (m.type === \"strum\") { this.player.strum(m.index); }\r\n    else if (m.type === \"chord\") { this.player.playChord(m.index); }\r\n    else if (m.type === \"chordStop\") { this.player.stopChord(); }\r\n    else if (m.type === \"chordSettings\") { this.player.setChordPattern(m.pattern); this.player.setChordTempo(m.bpm); }\r\n    else if (m.type === \"file\") { this.player.setFile(m.samples, m.rate); }\r\n    else if (m.type === \"playing\") { this.player.setPlaying(m.playing); }\r\n  }\r\n\r\n  process(inputs, outputs) {\r\n    const out = outputs[0];\r\n    const left = out[0], right = out.length > 1 ? out[1] : null;\r\n    const n = left.length;\r\n    if (this.mono.length < n) this.mono = new Float32Array(n);\r\n    const mono = this.mono.subarray(0, n);\r\n\r\n    const live = inputs[0] && inputs[0][0];\r\n    if (live && this.player.source === \"live\") mono.set(live.subarray(0, n)); else mono.fill(0);\r\n    this.player.process(mono, n);\r\n\r\n    this.postEqLength = 0;\r\n    this.chain.setParameters(this.params);\r\n    this.chain.process(mono, left, right, n);\r\n\r\n    // hand raw input + post-EQ audio to the page in batches\r\n    for (let i = 0; i < n; ) {\r\n      const take = Math.min(n - i, BATCH - this.fill);\r\n      this.tuner.set(mono.subarray(i, i + take), this.fill);\r\n      this.analyzer.set(this.postEq.subarray(i, i + take), this.fill);\r\n      this.fill += take;\r\n      i += take;\r\n      if (this.fill === BATCH) this.flush();\r\n    }\r\n    this.inPeak = Math.max(this.inPeak, this.chain.inputPeak);\r\n    this.outPeak = Math.max(this.outPeak, this.chain.outputPeak);\r\n    return true;\r\n  }\r\n\r\n  flush() {\r\n    this.port.postMessage(\r\n      { tuner: this.tuner, analyzer: this.analyzer, inPeak: this.inPeak, outPeak: this.outPeak, progress: this.player.progress,\r\n        chord: this.player.loopingChord() },\r\n      [this.tuner.buffer, this.analyzer.buffer]\r\n    );\r\n    this.newBatch();\r\n  }\r\n}\r\n\r\nregisterProcessor(\"pedalboard\", PedalboardProcessor);\r\n";
+(() => {
+// Guitar Pedalboard - page logic. The build provides `DSP` (dsp.js) and WORKLET_SOURCE.
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, cls, attrs = {}) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+};
+
+// ============================================================================
+// Parameters: same ids, ranges, skews and text as the plugin (PluginProcessor.cpp)
+const fmt = {
+  db: (v) => `${v.toFixed(1)} dB`,
+  signedDb: (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`,
+  pct: (v) => `${Math.round(v)} %`,
+  ms: (v) => `${Math.round(v)} ms`,
+  hz: (v) => `${v.toFixed(2)} Hz`,
+  knob: (v) => v.toFixed(1),
+  q: (v) => v.toFixed(2),
+  freq: (v) => (v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)} kHz` : `${Math.round(v)} Hz`),
+};
+
+const PARAMS = {};
+const float = (id, name, min, max, dflt, format, { centre = 0, step = 0 } = {}) => {
+  const skew = centre ? Math.log(0.5) / Math.log((centre - min) / (max - min)) : 1;
+  PARAMS[id] = { id, name, kind: "float", min, max, dflt, format, skew, step };
+};
+const bool = (id, name, dflt) => (PARAMS[id] = { id, name, kind: "bool", dflt });
+const choice = (id, name, choices, dflt = 0) => (PARAMS[id] = { id, name, kind: "choice", choices, dflt });
+
+float("inGain", "Input", -24, 24, 0, fmt.db, { step: 0.1 });
+float("master", "Master", -40, 12, 0, fmt.db, { step: 0.1 });
+bool("mute", "Mute", false);
+bool("cab", "Cab Sim", true);
+bool("gateOn", "Gate", true);
+float("gateThr", "Threshold", -90, -20, -65, fmt.db, { step: 0.5 });
+float("gateRel", "Release", 5, 500, 60, fmt.ms, { centre: 80 });
+bool("drvOn", "Drive", true);
+choice("drvType", "Drive type", DSP.DRIVE_TYPES);
+float("drvGain", "Drive", 0, 10, 5, fmt.knob, { step: 0.1 });
+float("drvTone", "Tone", 0, 10, 5, fmt.knob, { step: 0.1 });
+float("drvLevel", "Level", -30, 12, 0, fmt.db, { step: 0.1 });
+bool("eqOn", "EQ", true);
+float("eqLcFreq", "Low cut", 20, 600, 20, fmt.freq, { centre: 100 });
+float("eqBassFreq", "Bass freq", 40, 500, 100, fmt.freq, { centre: 120 });
+float("eqBassGain", "Bass gain", -15, 15, 0, fmt.signedDb, { step: 0.1 });
+float("eqLmFreq", "Low mid freq", 100, 2000, 400, fmt.freq, { centre: 450 });
+float("eqLmGain", "Low mid gain", -15, 15, 0, fmt.signedDb, { step: 0.1 });
+float("eqLmQ", "Low mid Q", 0.3, 6, 1, fmt.q, { centre: 1 });
+float("eqHmFreq", "High mid freq", 500, 8000, 2000, fmt.freq, { centre: 2000 });
+float("eqHmGain", "High mid gain", -15, 15, 0, fmt.signedDb, { step: 0.1 });
+float("eqHmQ", "High mid Q", 0.3, 6, 1, fmt.q, { centre: 1 });
+float("eqTrebFreq", "Treble freq", 1500, 15000, 5000, fmt.freq, { centre: 5000 });
+float("eqTrebGain", "Treble gain", -15, 15, 0, fmt.signedDb, { step: 0.1 });
+float("eqHcFreq", "High cut", 1000, 20000, 20000, fmt.freq, { centre: 6000 });
+bool("modOn", "Mod", false);
+choice("modType", "Mod type", DSP.MOD_TYPES);
+float("modRate", "Rate", 0.05, 10, 0.8, fmt.hz, { centre: 1 });
+float("modDepth", "Depth", 0, 100, 50, fmt.pct, { step: 1 });
+float("modMix", "Mix", 0, 100, 50, fmt.pct, { step: 1 });
+bool("dlyOn", "Delay", false);
+float("dlyTime", "Time", 20, 1500, 380, fmt.ms, { centre: 400 });
+float("dlyFb", "Feedback", 0, 95, 35, fmt.pct, { step: 1 });
+float("dlyMix", "Mix", 0, 100, 35, fmt.pct, { step: 1 });
+float("dlyTone", "Tone", 0, 10, 6, fmt.knob, { step: 0.1 });
+choice("dlyDiv", "Delay note", DSP.DELAY_DIVISIONS.map((d) => d[0]));
+bool("revOn", "Reverb", true);
+float("revSize", "Size", 0, 100, 55, fmt.pct, { step: 1 });
+float("revDamp", "Damp", 0, 100, 45, fmt.pct, { step: 1 });
+float("revMix", "Mix", 0, 100, 25, fmt.pct, { step: 1 });
+float("revPre", "Pre-delay", 0, 500, 0, fmt.ms, { centre: 120 });
+choice("revDiv", "Pre-delay note", DSP.REVERB_DIVISIONS.map((d) => d[0]), 1);
+
+// juce::NormalisableRange conversions
+function toNorm(p, v) {
+  const prop = clamp((v - p.min) / (p.max - p.min), 0, 1);
+  return p.skew === 1 ? prop : Math.pow(prop, p.skew);
+}
+function fromNorm(p, n) {
+  let prop = clamp(n, 0, 1);
+  if (p.skew !== 1 && prop > 0) prop = Math.exp(Math.log(prop) / p.skew);
+  let v = p.min + (p.max - p.min) * prop;
+  if (p.step > 0) v = p.min + p.step * Math.round((v - p.min) / p.step);
+  return clamp(v, p.min, p.max);
+}
+
+// ============================================================================
+// State (remembered per browser)
+const STORE_KEY = "guitar-pedalboard.web.v1";
+const values = {};
+for (const p of Object.values(PARAMS)) values[p.id] = p.dflt;
+let source = "demo";
+let playing = true; // demo riff / file transport (STOP / PLAY)
+let chordPattern = DSP.CHORD_PATTERNS.arpeggio, chordTempo = 90, loopingChord = -1;
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+  if (saved && saved.values) {
+    for (const [id, v] of Object.entries(saved.values)) {
+      const p = PARAMS[id];
+      if (!p) continue;
+      if (p.kind === "float" && Number.isFinite(v)) values[id] = clamp(v, p.min, p.max);
+      if (p.kind === "bool" && typeof v === "boolean") values[id] = v;
+      if (p.kind === "choice" && Number.isInteger(v) && v >= 0 && v < p.choices.length) values[id] = v;
+    }
+    if (saved.source === "demo" || saved.source === "live") source = saved.source;
+    if (Number.isInteger(saved.chordPattern) && saved.chordPattern >= 0 && saved.chordPattern <= 2) chordPattern = saved.chordPattern;
+    if (Number.isFinite(saved.chordTempo)) chordTempo = clamp(Math.round(saved.chordTempo), 40, 240);
+  }
+} catch { /* storage unavailable: defaults */ }
+
+const listeners = {};
+const onChange = (id, fn) => { (listeners[id] ||= []).push(fn); fn(values[id]); };
+let saveTimer = 0;
+function setValue(id, v) {
+  const p = PARAMS[id];
+  if (p.kind === "float") v = clamp(v, p.min, p.max);
+  if (values[id] === v) return;
+  values[id] = v;
+  for (const fn of listeners[id] || []) fn(v);
+  sendParams();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(persist, 400);
+}
+function persist() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ values, source, chordPattern, chordTempo })); } catch { /* ignore */ }
+}
+
+function fxParams() {
+  const v = values;
+  return {
+    inputGainDb: v.inGain, outputGainDb: v.master, mute: v.mute, cabOn: v.cab,
+    gateOn: v.gateOn, gateThresholdDb: v.gateThr, gateReleaseMs: v.gateRel,
+    driveOn: v.drvOn, driveType: v.drvType, driveGain: v.drvGain / 10, driveTone: v.drvTone / 10, driveLevelDb: v.drvLevel,
+    eqOn: v.eqOn,
+    eq: { lowCutHz: v.eqLcFreq, bassHz: v.eqBassFreq, bassDb: v.eqBassGain, lowMidHz: v.eqLmFreq, lowMidDb: v.eqLmGain,
+          lowMidQ: v.eqLmQ, highMidHz: v.eqHmFreq, highMidDb: v.eqHmGain, highMidQ: v.eqHmQ,
+          trebleHz: v.eqTrebFreq, trebleDb: v.eqTrebGain, highCutHz: v.eqHcFreq },
+    modOn: v.modOn, modType: v.modType, modRateHz: v.modRate, modDepth: v.modDepth / 100, modMix: v.modMix / 100,
+    delayOn: v.dlyOn, delayTimeMs: v.dlyTime, delayFeedback: v.dlyFb / 100, delayMix: v.dlyMix / 100, delayTone: v.dlyTone / 10,
+    reverbOn: v.revOn, reverbSize: v.revSize / 100, reverbDamping: v.revDamp / 100, reverbMix: v.revMix / 100, reverbPreDelayMs: v.revPre,
+  };
+}
+
+// ============================================================================
+// Audio engine
+const engine = { ctx: null, node: null, kind: "", mic: null, starting: null, wantOn: false, silentAudio: null,
+                 streamOut: null, outputElement: null };
+const tunerDetector = new DSP.PitchDetector();
+const analyzer = new DSP.SpectrumAnalyzer();
+tunerDetector.prepare(48000);
+const levels = { in: 0, out: 0, progress: 0 };
+let fileData = null; // { samples, rate, name }
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+// On iPhone/iPad, Web Audio obeys the ring/silent switch, and a page embedded in another page (like the
+// claude.ai viewer) can't switch its audio session to "playback". There, the sound is sent through an
+// <audio> element instead, which plays like a video does. On a page of its own, the output stays direct.
+const useMediaElementOutput = isIOS && window.top !== window.self
+  || (location.hostname === "localhost" && location.search.includes("mediaout")); // testing only
+
+function post(msg, transfer) { if (engine.node) engine.node.port.postMessage(msg, transfer || []); }
+let paramsQueued = false;
+function sendParams() {
+  if (paramsQueued || !engine.node) return;
+  paramsQueued = true;
+  queueMicrotask(() => { paramsQueued = false; post({ type: "params", params: fxParams() }); });
+}
+
+/** A tiny silent WAV, looped by an <audio> element on older iPhones (see unlockAudio). */
+function silentWavUrl() {
+  const n = 800, bytes = new Uint8Array(44 + n), v = new DataView(bytes.buffer);
+  const text = (o, t) => [...t].forEach((c, i) => (bytes[o + i] = c.charCodeAt(0)));
+  text(0, "RIFF"); v.setUint32(4, 36 + n, true); text(8, "WAVEfmt "); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true);
+  v.setUint16(32, 1, true); v.setUint16(34, 8, true); text(36, "data"); v.setUint32(40, n, true);
+  bytes.fill(128, 44);
+  return URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+}
+
+/** Sends the board's output through an <audio> element (see useMediaElementOutput). */
+function startMediaElementOutput(ctx) {
+  if (!engine.streamOut) {
+    engine.streamOut = ctx.createMediaStreamDestination();
+    const a = new Audio();
+    a.setAttribute("playsinline", "");
+    a.srcObject = engine.streamOut.stream;
+    engine.outputElement = a;
+  }
+  engine.outputElement.play().catch((err) => setStatus("iPhone 還沒允許播放，請再按一次 POWER（" + err.name + "）"));
+}
+
+/** Must run synchronously inside the tap/click, or iOS keeps the sound off. */
+function unlockAudio(ctx) {
+  if (useMediaElementOutput) startMediaElementOutput(ctx);
+  // iPhone's ring/silent switch mutes web audio unless the page asks for "playback" (Safari 16.4+)
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch { /* not supported */ }
+  ctx.resume().catch(() => {});
+  try {
+    const src = ctx.createBufferSource();
+    src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch { /* ignore */ }
+  // older iPhones: a looping silent <audio> moves the page to the playback audio session as well
+  if (isIOS && !navigator.audioSession && !engine.silentAudio) {
+    try {
+      const a = new Audio(silentWavUrl());
+      a.loop = true;
+      a.setAttribute("playsinline", "");
+      a.play().catch(() => {});
+      engine.silentAudio = a;
+    } catch { /* ignore */ }
+  }
+}
+
+async function loadWorklet(ctx) {
+  if (typeof WORKLET_SOURCE === "string") {
+    const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: "text/javascript" }));
+    try { await ctx.audioWorklet.addModule(url); return; } catch { /* blob blocked: try the file next to the page */ }
+  }
+  await ctx.audioWorklet.addModule("worklet.js");
+}
+
+/** Fallback when AudioWorklet is missing or can't be loaded: the same DSP on the page's thread
+    (ScriptProcessorNode). Works everywhere, with a little more latency. */
+function createScriptProcessorEngine(ctx, init) {
+  const block = 1024;
+  const node = ctx.createScriptProcessor(block, 1, 2);
+  const chain = new DSP.FxChain();
+  chain.prepare(ctx.sampleRate, block);
+  let params = init.params;
+  chain.setParameters(params);
+  chain.reset();
+  const player = new DSP.TestSignalPlayer();
+  player.prepare(ctx.sampleRate);
+  player.setSource(init.source);
+  player.setChordPattern(init.chordPattern);
+  player.setChordTempo(init.chordTempo);
+  const mono = new Float32Array(block), postEq = new Float32Array(block);
+  let postLength = 0;
+  chain.analyzerTap = (data, n) => { postEq.set(data.subarray(0, n), postLength); postLength += n; };
+  node.onaudioprocess = (e) => {
+    const input = e.inputBuffer.getChannelData(0), left = e.outputBuffer.getChannelData(0), right = e.outputBuffer.getChannelData(1);
+    const n = left.length;
+    if (player.source === "live") mono.set(input.subarray(0, n)); else mono.fill(0);
+    player.process(mono, n);
+    postLength = 0;
+    chain.setParameters(params);
+    chain.process(mono.subarray(0, n), left, right, n);
+    onAudioData({ tuner: mono.slice(0, n), analyzer: postEq.slice(0, n), inPeak: chain.inputPeak, outPeak: chain.outputPeak, progress: player.progress,
+                  chord: player.loopingChord() });
+  };
+  node.port = {
+    postMessage(m) {
+      if (m.type === "params") params = m.params;
+      else if (m.type === "source") player.setSource(m.source);
+      else if (m.type === "pluck") player.pluck(m.index);
+      else if (m.type === "strum") player.strum(m.index);
+      else if (m.type === "chord") player.playChord(m.index);
+      else if (m.type === "chordStop") player.stopChord();
+      else if (m.type === "chordSettings") { player.setChordPattern(m.pattern); player.setChordTempo(m.bpm); }
+      else if (m.type === "file") player.setFile(m.samples, m.rate);
+      else if (m.type === "playing") player.setPlaying(m.playing);
+    },
+  };
+  return node;
+}
+
+/** Call directly from a tap/click handler (the first lines must run inside the gesture). */
+async function startAudio() {
+  engine.wantOn = true;
+  if (engine.ctx) {
+    unlockAudio(engine.ctx);
+    await engine.ctx.resume().catch(() => {});
+    setPower(engine.ctx.state === "running");
+    return engine.ctx.state === "running";
+  }
+  if (engine.starting) return engine.starting;
+
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) {
+    setStatus("這個瀏覽器不支援 Web Audio，請改用新版 Safari、Chrome、Edge 或 Firefox。");
+    return false;
+  }
+  const ctx = new Ctx({ latencyHint: "interactive" });
+  unlockAudio(ctx);
+
+  engine.starting = (async () => {
+    // The processor starts with the board's real settings, so even its first few milliseconds
+    // respect MUTE, the pedal switches and the chosen source.
+    const startSource = source === "file" && !fileData ? "demo" : source;
+    const init = { params: fxParams(), source: startSource, playing, chordPattern, chordTempo };
+    let node = null;
+    const forceFallback = location.hostname === "localhost" && location.search.includes("fallback"); // testing only
+    if (ctx.audioWorklet && !forceFallback) {
+      try {
+        await loadWorklet(ctx);
+        node = new AudioWorkletNode(ctx, "pedalboard", {
+          numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: init,
+        });
+        node.port.onmessage = (e) => onAudioData(e.data);
+        engine.kind = "AudioWorklet";
+      } catch (err) {
+        console.warn("AudioWorklet unavailable, using ScriptProcessor fallback:", err);
+        node = null;
+      }
+    }
+    if (!node) {
+      node = createScriptProcessorEngine(ctx, init);
+      engine.kind = "相容模式";
+    }
+    node.connect(useMediaElementOutput ? engine.streamOut : ctx.destination);
+    engine.ctx = ctx;
+    engine.node = node;
+    ctx.onstatechange = () => {
+      const running = ctx.state === "running";
+      setPower(running);
+      if (!running && engine.wantOn) setStatus("音訊被系統暫停（例如來電或切換 App），請再按一次 POWER。");
+    };
+    tunerDetector.prepare(ctx.sampleRate);
+    analyzer.setSampleRate(ctx.sampleRate);
+    if (fileData) post({ type: "file", samples: fileData.samples.slice(), rate: fileData.rate });
+    await applySource(startSource);
+    await ctx.resume().catch(() => {});
+    setPower(ctx.state === "running");
+    if (ctx.state !== "running") setStatus("瀏覽器還沒允許播放聲音，請再按一次 POWER。");
+    return ctx.state === "running";
+  })();
+  const ok = await engine.starting;
+  engine.starting = null;
+  return ok;
+}
+
+async function stopAudio() {
+  engine.wantOn = false;
+  if (engine.outputElement) engine.outputElement.pause();
+  if (engine.ctx) await engine.ctx.suspend();
+  setPower(false);
+}
+
+function onAudioData(m) {
+  tunerDetector.pushSamples(m.tuner);
+  analyzer.push(m.analyzer);
+  levels.in = Math.max(levels.in, m.inPeak);
+  levels.out = Math.max(levels.out, m.outPeak);
+  levels.progress = m.progress;
+  if (m.chord !== undefined && m.chord !== loopingChord) { loopingChord = m.chord; renderChordButtons(); renderSource(); }
+}
+
+async function enableMic() {
+  if (engine.mic) return true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus("這個頁面無法使用音訊輸入（瀏覽器封鎖或非 HTTPS）。可以用 DEMO RIFF 或載入音檔測試。");
+    return false;
+  }
+  // iPhone: recording needs the "play-and-record" audio session (plain "playback" can't capture)
+  try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch { /* not supported */ }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+    });
+    const src = engine.ctx.createMediaStreamSource(stream);
+    src.connect(engine.node);
+    engine.mic = { stream, src };
+    return true;
+  } catch (err) {
+    setStatus(err && err.name === "NotAllowedError"
+      ? "麥克風權限被拒絕或這個頁面不允許使用音訊輸入。要接吉他請用自架的網址開啟；也可以用 DEMO RIFF 或載入音檔。"
+      : "找不到音訊輸入裝置。請接上錄音介面後再試，或改用 DEMO RIFF。");
+    return false;
+  }
+}
+
+async function applySource(next) {
+  if (next === "live" && !(await enableMic())) next = source === "live" ? "demo" : source;
+  if (next === "file" && !fileData) next = "demo";
+  source = next;
+  if (source !== "live") playing = true; // choosing the riff or a file starts it
+  post({ type: "source", source });
+  persist();
+  renderSource();
+}
+
+// ============================================================================
+// Widgets
+const START_ANGLE = -144, END_ANGLE = 144; // JUCE's default rotary range, degrees from 12 o'clock
+const polar = (r, deg) => [50 + r * Math.sin((deg * Math.PI) / 180), 50 - r * Math.cos((deg * Math.PI) / 180)];
+const arcPath = (r, a0, a1) => {
+  const [x0, y0] = polar(r, a0), [x1, y1] = polar(r, a1);
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+};
+let svgIds = 0;
+
+/** Rotary knob bound to a float parameter (rebindable, for the EQ band knobs). */
+function makeKnob(label, paramId) {
+  const root = el("div", "knob");
+  const lab = el("label");
+  const dial = el("div", "dial", { role: "slider", tabindex: "0" });
+  const out = el("output");
+  const id = `k${++svgIds}`;
+  lab.id = `${id}-label`;
+  dial.setAttribute("aria-labelledby", lab.id);
+  lab.textContent = label;
+  dial.innerHTML = `<svg viewBox="0 0 100 100" aria-hidden="true">
+    <defs>
+      <linearGradient id="${id}-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3c3c42"/><stop offset="1" stop-color="#0c0c0e"/></linearGradient>
+      <linearGradient id="${id}-cap" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4a4a52"/><stop offset="1" stop-color="#1a1a1e"/></linearGradient>
+    </defs>
+    <path d="${arcPath(45, START_ANGLE, END_ANGLE)}" fill="none" stroke="rgba(0,0,0,.35)" stroke-width="6" stroke-linecap="round"/>
+    <path class="value" fill="none" stroke="var(--arc, #ffb020)" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="50" cy="53" r="35" fill="rgba(0,0,0,.45)"/>
+    <circle cx="50" cy="50" r="34" fill="url(#${id}-body)"/>
+    <circle cx="50" cy="50" r="25" fill="url(#${id}-cap)" stroke="rgba(255,255,255,.12)"/>
+    <line class="pointer" x1="50" y1="40" x2="50" y2="18" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/>
+  </svg>`;
+  root.append(lab, dial, out);
+  const valuePath = dial.querySelector(".value"), pointer = dial.querySelector(".pointer");
+  let param = null, unsubscribeToken = 0;
+
+  const render = (v) => {
+    const n = toNorm(param, v), angle = START_ANGLE + n * (END_ANGLE - START_ANGLE);
+    valuePath.setAttribute("d", n > 0.001 ? arcPath(45, START_ANGLE, angle) : "");
+    pointer.setAttribute("transform", `rotate(${angle.toFixed(1)} 50 50)`);
+    out.textContent = param.format(v);
+    dial.setAttribute("aria-valuenow", v.toFixed(2));
+    dial.setAttribute("aria-valuetext", param.format(v));
+  };
+  const bind = (pid) => {
+    param = PARAMS[pid];
+    const token = ++unsubscribeToken;
+    dial.setAttribute("aria-valuemin", param.min);
+    dial.setAttribute("aria-valuemax", param.max);
+    onChange(pid, (v) => { if (token === unsubscribeToken) render(v); });
+  };
+  bind(paramId);
+
+  const setNorm = (n) => setValue(param.id, fromNorm(param, n));
+  let drag = null;
+  dial.addEventListener("pointerdown", (e) => {
+    dial.focus({ preventScroll: true });
+    dial.setPointerCapture(e.pointerId);
+    drag = { y: e.clientY, start: toNorm(param, values[param.id]) };
+    e.preventDefault();
+  });
+  dial.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const range = e.shiftKey ? 800 : 180;
+    setNorm(drag.start + (drag.y - e.clientY) / range);
+  });
+  const end = () => { drag = null; };
+  dial.addEventListener("pointerup", end);
+  dial.addEventListener("pointercancel", end);
+  dial.addEventListener("dblclick", () => setValue(param.id, param.dflt));
+  // the wheel turns a knob only once it has been clicked (focused), so scrolling the page never does
+  dial.addEventListener("wheel", (e) => {
+    if (document.activeElement !== dial) return;
+    e.preventDefault();
+    setNorm(toNorm(param, values[param.id]) - Math.sign(e.deltaY) * 0.02);
+  }, { passive: false });
+  dial.addEventListener("keydown", (e) => {
+    const n = toNorm(param, values[param.id]);
+    const steps = { ArrowUp: 0.01, ArrowRight: 0.01, ArrowDown: -0.01, ArrowLeft: -0.01, PageUp: 0.1, PageDown: -0.1 };
+    if (e.key in steps) setNorm(n + steps[e.key]);
+    else if (e.key === "Home") setNorm(0);
+    else if (e.key === "End") setNorm(1);
+    else return;
+    e.preventDefault();
+  });
+  return { root, bind, setLabel: (t) => { if (lab.textContent !== t) lab.textContent = t; } };
+}
+
+function makeMeter() {
+  const root = el("div", "meter", { "aria-hidden": "true" });
+  root.innerHTML = '<div class="fill"></div><div class="hold"></div><div class="clip"></div>';
+  const fill = root.querySelector(".fill"), hold = root.querySelector(".hold"), clip = root.querySelector(".clip");
+  const state = { level: 0, hold: 0, holdFrames: 0, clipFrames: 0 };
+  const toPct = (g) => clamp((DSP.gainToDb(Math.max(g, 1e-6)) + 60) / 60, 0, 1) * 100;
+  return {
+    root,
+    update(peak) {
+      state.level = Math.max(peak, state.level * 0.82);
+      if (peak >= state.hold) { state.hold = peak; state.holdFrames = 45; } else if (--state.holdFrames < 0) state.hold *= 0.9;
+      state.clipFrames = peak >= 1 ? 60 : Math.max(0, state.clipFrames - 1);
+      fill.style.height = `${toPct(state.level)}%`;
+      hold.style.bottom = `${toPct(state.hold)}%`;
+      hold.style.opacity = state.hold > 0.001 ? 1 : 0;
+      clip.classList.toggle("on", state.clipFrames > 0);
+    },
+  };
+}
+
+function bindToggle(button, id) {
+  button.addEventListener("click", () => setValue(id, !values[id]));
+  onChange(id, (v) => button.setAttribute("aria-pressed", String(v)));
+}
+
+// ============================================================================
+// Header
+const inMeter = makeMeter(), outMeter = makeMeter();
+$("#io-in").append(makeKnob("Input", "inGain").root, inMeter.root);
+$("#io-out").append(makeKnob("Master", "master").root, outMeter.root);
+bindToggle($("#cab"), "cab");
+bindToggle($("#mute"), "mute");
+
+const powerButton = $("#power");
+function setPower(on) { powerButton.setAttribute("aria-pressed", String(on)); renderSource(); }
+powerButton.addEventListener("click", () => {
+  if (powerButton.getAttribute("aria-pressed") === "true") stopAudio(); else startAudio();
+});
+
+// ============================================================================
+// Pedals
+const tapControls = [];
+
+function makeTap(timeId, divId, divisions, what) {
+  const wrap = el("div", "pedal-row");
+  const select = el("select", "", { "aria-label": `Note value of the ${what}` });
+  divisions.forEach(([name], i) => select.append(new Option(name, String(i))));
+  const tap = el("button", "tap", { type: "button", title: `Tap 3-4 times in time with the music to set the ${what}` });
+  tap.innerHTML = "<i></i><span>TAP</span>";
+  const label = tap.querySelector("span");
+  wrap.append(select, tap);
+
+  const tempo = new DSP.TapTempo();
+  const beatMs = () => values[timeId] / divisions[values[divId]][1];
+  onChange(divId, (v) => { select.value = String(v); });
+  select.addEventListener("change", () => {
+    const beat = beatMs(); // keep the tempo, recompute the time for the new note value
+    setValue(divId, Number(select.value));
+    if (beat > 0) setValue(timeId, beat * divisions[values[divId]][1]);
+  });
+  tap.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const beat = tempo.tap(performance.now());
+    if (beat > 0) setValue(timeId, beat * divisions[values[divId]][1]);
+  });
+  tap.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); tap.dispatchEvent(new PointerEvent("pointerdown")); } });
+
+  tapControls.push(() => {
+    const beat = beatMs(), bpm = beat > 0 ? 60000 / beat : 0, has = bpm >= 20 && bpm <= 400;
+    label.textContent = has ? `TAP ${Math.round(bpm)}` : "TAP";
+    tap.classList.toggle("beat", has && (performance.now() - tempo.getLastTapMs()) % beat < 90);
+  });
+  return wrap;
+}
+
+const PEDALS = [
+  { id: "gate", title: "Gate", colour: "var(--gate)", on: "gateOn", sub: "noise suppressor", knobs: [["gateThr", "Threshold"], ["gateRel", "Release"]] },
+  { id: "drive", title: "Drive", colour: "var(--drive)", on: "drvOn", type: "drvType", knobs: [["drvGain", "Drive"], ["drvTone", "Tone"], ["drvLevel", "Level"]] },
+  { id: "mod", title: "Mod", colour: "var(--mod)", on: "modOn", type: "modType", knobs: [["modRate", "Rate"], ["modDepth", "Depth"], ["modMix", "Mix"]] },
+  { id: "delay", title: "Delay", colour: "var(--delay)", on: "dlyOn", tap: ["dlyTime", "dlyDiv", DSP.DELAY_DIVISIONS, "delay time"],
+    knobs: [["dlyTime", "Time"], ["dlyFb", "Feedback"], ["dlyMix", "Mix"], ["dlyTone", "Tone"]] },
+  { id: "reverb", title: "Reverb", colour: "var(--reverb)", on: "revOn", tap: ["revPre", "revDiv", DSP.REVERB_DIVISIONS, "reverb pre-delay"],
+    knobs: [["revSize", "Size"], ["revDamp", "Damp"], ["revMix", "Mix"], ["revPre", "Pre-delay"]] },
+];
+const knobRefs = {};
+
+for (const spec of PEDALS) {
+  const pedal = el("article", "pedal", { "aria-label": `${spec.title} pedal` });
+  pedal.style.setProperty("--body", spec.colour);
+  for (const c of ["tl", "tr", "bl", "br"]) pedal.append(el("span", `screw ${c}`, { "aria-hidden": "true" }));
+  const h = el("h2");
+  h.textContent = spec.title;
+
+  let row;
+  if (spec.type) {
+    row = el("div", "pedal-row");
+    const select = el("select", "type-select", { "aria-label": `${spec.title} mode` });
+    PARAMS[spec.type].choices.forEach((name, i) => select.append(new Option(name, String(i))));
+    select.addEventListener("change", () => setValue(spec.type, Number(select.value)));
+    onChange(spec.type, (v) => { select.value = String(v); });
+    row.append(select);
+  } else if (spec.tap) {
+    row = makeTap(...spec.tap);
+  } else {
+    row = el("div", "pedal-row");
+    const sub = el("span", "sub");
+    sub.textContent = spec.sub;
+    row.append(sub);
+  }
+
+  const knobs = el("div", "knobs");
+  for (const [pid, label] of spec.knobs) {
+    const k = makeKnob(label, pid);
+    knobRefs[pid] = k;
+    knobs.append(k.root);
+  }
+
+  const plate = el("div", "switch-plate");
+  const led = el("span", "pedal-led", { "aria-hidden": "true" });
+  const stomp = el("button", "stomp", { type: "button", "aria-label": `${spec.title} on/off` });
+  stomp.addEventListener("click", () => setValue(spec.on, !values[spec.on]));
+  onChange(spec.on, (v) => { led.classList.toggle("on", v); stomp.setAttribute("aria-pressed", String(v)); });
+  plate.append(led, stomp);
+
+  pedal.append(h, row, knobs, plate);
+  $("#pedals").append(pedal);
+}
+// on the tremolo, MIX morphs the wave shape
+onChange("modType", (v) => knobRefs.modMix.setLabel(v === 3 ? "Shape" : "Mix"));
+
+// ============================================================================
+// Input source strip
+const statusText = $("#status-text"), progressBar = $("#progress-bar");
+let statusOverride = "", statusTimer = 0;
+function setStatus(text) {
+  statusOverride = text;
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { statusOverride = ""; renderSource(); }, 9000);
+  renderSource();
+}
+function setPlaying(on) {
+  playing = on;
+  post({ type: "playing", playing: on });
+  renderSource();
+}
+
+const transport = $("#transport");
+transport.addEventListener("click", async () => {
+  if (playing && engine.ctx && engine.ctx.state === "running") { setPlaying(false); return; }
+  if (!(await startAudio())) return;
+  setPlaying(true);
+});
+
+function renderSource() {
+  for (const chip of document.querySelectorAll(".source .chip")) chip.setAttribute("aria-checked", String(chip.dataset.source === source));
+  const stopped = source !== "live" && !playing;
+  transport.hidden = source === "live";
+  transport.dataset.state = stopped ? "stopped" : "playing";
+  transport.querySelector(".label").textContent = stopped ? "Play" : "Stop";
+  const powered = powerButton.getAttribute("aria-pressed") === "true";
+  let text;
+  if (statusOverride) text = statusOverride;
+  else if (!powered) text = source === "live" ? "按 POWER 開始，接著允許使用音訊輸入" : "按 POWER 開始播放";
+  else if (source === "live") text = "吉他輸入（請戴耳機，避免回授）";
+  else if (loopingChord >= 0) text = `和弦循環：${DSP.CHORDS[loopingChord].name} · ${DSP.CHORD_PATTERN_NAMES[chordPattern]} · ${chordTempo} BPM`;
+  else if (!playing) text = "已停止：可以按 PLUCK 撥單弦、CHORD 刷和弦，或按 PLAY 從頭播放";
+  else if (source === "demo") text = "內建樂句，100 BPM，循環播放";
+  else text = fileData ? fileData.name : "尚未載入音檔";
+  if (powered && isIOS && !useMediaElementOutput && !statusOverride) text += "（沒聲音？請確認音量已調高、不是靜音模式）";
+  statusText.textContent = text;
+}
+renderSource();
+
+for (const chip of document.querySelectorAll(".source .chip")) {
+  chip.addEventListener("click", async () => {
+    const want = chip.dataset.source;
+    if (want === "file" && !fileData) { $("#file").click(); return; }
+    if (!(await startAudio())) return;
+    await applySource(want);
+  });
+}
+
+$("#file").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  if (!(await startAudio())) return;
+  try {
+    setStatus(`讀取 ${file.name}…`);
+    const buffer = await engine.ctx.decodeAudioData(await file.arrayBuffer());
+    const samples = new Float32Array(buffer.length);
+    for (let ch = 0; ch < buffer.numberOfChannels; ++ch) {
+      const data = buffer.getChannelData(ch);
+      for (let i = 0; i < data.length; ++i) samples[i] += data[i] / buffer.numberOfChannels;
+    }
+    fileData = { samples, rate: buffer.sampleRate, name: file.name };
+    post({ type: "file", samples: samples.slice(), rate: buffer.sampleRate });
+    statusOverride = "";
+    await applySource("file");
+  } catch {
+    setStatus(`無法讀取 ${file.name}。支援 WAV、MP3、FLAC、OGG、M4A（視瀏覽器而定）。`);
+  }
+});
+
+for (const b of document.querySelectorAll(".pluck button")) {
+  // "click", not "pointerdown": on iPhone only a completed tap may start audio
+  b.addEventListener("click", async () => {
+    if (!(await startAudio())) return;
+    // plucking means "let me hear this string": stop the looping demo / file first
+    if (source !== "live" && playing) setPlaying(false);
+    post({ type: "pluck", index: Number(b.dataset.string) });
+  });
+}
+
+const chordRow = $("#chord-buttons");
+const chordButtons = DSP.CHORDS.map((chord, i) => {
+  const b = el("button", "", { type: "button", title: `Play ${chord.name} (${chord.shape})`, "aria-pressed": "false" });
+  b.textContent = chord.name;
+  b.addEventListener("click", async () => {
+    if (!(await startAudio())) return;
+    if (source !== "live" && playing) setPlaying(false); // hear the chord on its own
+    post({ type: "chord", index: i });
+  });
+  chordRow.append(b);
+  return b;
+});
+function renderChordButtons() {
+  chordButtons.forEach((b, i) => b.setAttribute("aria-pressed", String(i === loopingChord)));
+}
+
+const patternSelect = $("#chord-pattern"), bpmInput = $("#chord-bpm");
+DSP.CHORD_PATTERN_NAMES.forEach((name, i) => patternSelect.append(new Option(name, String(i))));
+patternSelect.value = String(chordPattern);
+bpmInput.value = String(chordTempo);
+const sendChordSettings = () => { post({ type: "chordSettings", pattern: chordPattern, bpm: chordTempo }); persist(); renderSource(); };
+patternSelect.addEventListener("change", () => { chordPattern = Number(patternSelect.value); sendChordSettings(); });
+bpmInput.addEventListener("input", () => {
+  const bpm = Number(bpmInput.value);
+  if (Number.isFinite(bpm) && bpm >= 40 && bpm <= 240) { chordTempo = Math.round(bpm); sendChordSettings(); }
+});
+bpmInput.addEventListener("change", () => { bpmInput.value = String(chordTempo); }); // snap back an out-of-range entry
+$("#chord-stop").addEventListener("click", () => post({ type: "chordStop" }));
+
+// ============================================================================
+// EQ panel
+const EQ_BANDS = [
+  { name: "Low cut", freq: "eqLcFreq", colour: "#a8b2bd" },
+  { name: "Bass", freq: "eqBassFreq", gain: "eqBassGain", colour: "#ff6b5e" },
+  { name: "Lo mid", freq: "eqLmFreq", gain: "eqLmGain", q: "eqLmQ", colour: "#ffb020" },
+  { name: "Hi mid", freq: "eqHmFreq", gain: "eqHmGain", q: "eqHmQ", colour: "#35e07a" },
+  { name: "Treble", freq: "eqTrebFreq", gain: "eqTrebGain", colour: "#4fb3ff" },
+  { name: "High cut", freq: "eqHcFreq", colour: "#c58bff" },
+];
+let selectedBand = 2, hoveredBand = -1, showAnalyzer = true;
+
+bindToggle($("#eq-on"), "eqOn");
+$("#analyzer").addEventListener("click", () => {
+  showAnalyzer = !showAnalyzer;
+  $("#analyzer").setAttribute("aria-pressed", String(showAnalyzer));
+  analyzer.clear();
+});
+$("#eq-flat").addEventListener("click", () => {
+  for (const b of EQ_BANDS) for (const id of [b.freq, b.gain, b.q]) if (id) setValue(id, PARAMS[id].dflt);
+});
+
+const bandChips = $("#band-chips"), bandKnobsBox = $("#band-knobs");
+const bandKnobs = { freq: makeKnob("Freq", "eqLmFreq"), gain: makeKnob("Gain", "eqLmGain"), q: makeKnob("Q", "eqLmQ") };
+bandKnobsBox.append(bandKnobs.freq.root, bandKnobs.gain.root, bandKnobs.q.root);
+EQ_BANDS.forEach((b, i) => {
+  const chip = el("button", "chip", { type: "button", role: "radio" });
+  chip.style.setProperty("--chip", b.colour);
+  chip.textContent = b.name;
+  chip.addEventListener("click", () => selectBand(i));
+  bandChips.append(chip);
+});
+function selectBand(i) {
+  selectedBand = i;
+  const b = EQ_BANDS[i];
+  [...bandChips.children].forEach((c, j) => c.setAttribute("aria-checked", String(j === i)));
+  bandKnobsBox.style.setProperty("--band", b.colour);
+  for (const key of ["freq", "gain", "q"]) {
+    bandKnobs[key].root.hidden = !b[key];
+    if (b[key]) bandKnobs[key].bind(b[key]);
+  }
+}
+selectBand(2);
+
+const eqCanvas = $("#eq-canvas");
+const MIN_HZ = 20, MAX_HZ = 20000, RANGE_DB = 18, SPEC_RANGE = 84;
+const eqPlot = { x: 0, y: 0, w: 1, h: 1 };
+const xForFreq = (hz) => eqPlot.x + (eqPlot.w * Math.log(hz / MIN_HZ)) / Math.log(MAX_HZ / MIN_HZ);
+const freqForX = (x) => MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, clamp((x - eqPlot.x) / eqPlot.w, 0, 1));
+const yForDb = (db) => eqPlot.y + eqPlot.h / 2 - (db / RANGE_DB) * (eqPlot.h / 2);
+const dbForY = (y) => ((eqPlot.y + eqPlot.h / 2 - y) / (eqPlot.h / 2)) * RANGE_DB;
+const eqSettings = () => fxParams().eq;
+const eqFilters = Array.from({ length: 6 }, () => new DSP.Biquad());
+
+function nodePos(i) {
+  const b = EQ_BANDS[i];
+  return [xForFreq(values[b.freq]), yForDb(b.gain ? values[b.gain] : -3)];
+}
+function bandAt(x, y, radius) {
+  let best = -1, bestD = radius;
+  for (let i = 0; i < EQ_BANDS.length; ++i) {
+    const [nx, ny] = nodePos(i), d = Math.hypot(nx - x, ny - y);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+function canvasPoint(e) {
+  const r = eqCanvas.getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+let eqDrag = -1;
+eqCanvas.addEventListener("pointerdown", (e) => {
+  const [x, y] = canvasPoint(e);
+  const band = bandAt(x, y, e.pointerType === "touch" ? 30 : 16);
+  if (band < 0) return;
+  eqDrag = band;
+  selectBand(band);
+  eqCanvas.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+eqCanvas.addEventListener("pointermove", (e) => {
+  const [x, y] = canvasPoint(e);
+  if (eqDrag >= 0) {
+    const b = EQ_BANDS[eqDrag];
+    setValue(b.freq, freqForX(x));
+    if (b.gain) setValue(b.gain, dbForY(y));
+  } else {
+    hoveredBand = bandAt(x, y, 16);
+    eqCanvas.style.cursor = hoveredBand >= 0 ? "grab" : "default";
+  }
+});
+const endEqDrag = () => { eqDrag = -1; };
+eqCanvas.addEventListener("pointerup", endEqDrag);
+eqCanvas.addEventListener("pointercancel", endEqDrag);
+eqCanvas.addEventListener("pointerleave", () => { hoveredBand = -1; });
+eqCanvas.addEventListener("dblclick", (e) => {
+  const [x, y] = canvasPoint(e);
+  const band = bandAt(x, y, 16);
+  if (band >= 0) for (const id of [EQ_BANDS[band].freq, EQ_BANDS[band].gain, EQ_BANDS[band].q]) if (id) setValue(id, PARAMS[id].dflt);
+});
+eqCanvas.addEventListener("wheel", (e) => {
+  const [x, y] = canvasPoint(e);
+  const band = bandAt(x, y, 16), qId = band >= 0 ? EQ_BANDS[band].q : null;
+  if (!qId) return; // not on a point: let the page scroll
+  e.preventDefault();
+  selectBand(band);
+  setValue(qId, values[qId] * Math.pow(2, -Math.sign(e.deltaY) * 0.15));
+}, { passive: false });
+
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath();
+  if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);
+}
+
+function fitCanvas(canvas) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [g, w, h];
+}
+
+function drawEq() {
+  const [g, w, h] = fitCanvas(eqCanvas);
+  Object.assign(eqPlot, { x: 36, y: 22, w: w - 44, h: h - 44 });
+  const fs = engine.ctx ? engine.ctx.sampleRate : 48000;
+  const active = values.eqOn;
+  g.clearRect(0, 0, w, h);
+
+  // grid
+  g.font = "10.5px 'IBM Plex Mono', ui-monospace, monospace";
+  g.textAlign = "center";
+  g.textBaseline = "top";
+  for (const hz of [30, 40, 60, 70, 80, 90, 300, 400, 600, 700, 800, 900, 3000, 4000, 6000, 7000, 8000, 9000]) {
+    g.fillStyle = "rgba(255,255,255,0.035)";
+    g.fillRect(Math.round(xForFreq(hz)), eqPlot.y, 1, eqPlot.h);
+  }
+  for (const [hz, text] of [[50, "50"], [100, "100"], [200, "200"], [500, "500"], [1000, "1k"], [2000, "2k"], [5000, "5k"], [10000, "10k"]]) {
+    const x = Math.round(xForFreq(hz));
+    g.fillStyle = "rgba(255,255,255,0.08)";
+    g.fillRect(x, eqPlot.y, 1, eqPlot.h);
+    g.fillStyle = "#8f8f98";
+    g.fillText(text, x, eqPlot.y + eqPlot.h + 5);
+  }
+  g.textAlign = "right";
+  g.textBaseline = "middle";
+  for (let db = -12; db <= 12; db += 6) {
+    const y = Math.round(yForDb(db));
+    g.fillStyle = db === 0 ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.07)";
+    g.fillRect(eqPlot.x, y, eqPlot.w, 1);
+    g.fillStyle = "#8f8f98";
+    g.fillText((db > 0 ? "+" : "") + db, eqPlot.x - 6, y);
+  }
+
+  g.save();
+  g.beginPath();
+  g.rect(eqPlot.x, eqPlot.y, eqPlot.w, eqPlot.h);
+  g.clip();
+
+  // live spectrum of the post-EQ signal
+  if (showAnalyzer) {
+    const cols = analyzer.columns, n = cols.length;
+    g.beginPath();
+    g.moveTo(eqPlot.x, eqPlot.y + eqPlot.h);
+    for (let c = 0; c < n; ++c) {
+      const y = eqPlot.y + eqPlot.h - eqPlot.h * clamp((cols[c] + SPEC_RANGE) / SPEC_RANGE, 0, 1);
+      g.lineTo(eqPlot.x + (eqPlot.w * c) / (n - 1), y);
+    }
+    g.lineTo(eqPlot.x + eqPlot.w, eqPlot.y + eqPlot.h);
+    g.closePath();
+    const grad = g.createLinearGradient(0, eqPlot.y, 0, eqPlot.y + eqPlot.h);
+    grad.addColorStop(0, "rgba(52,195,255,0.33)");
+    grad.addColorStop(1, "rgba(52,195,255,0.03)");
+    g.fillStyle = grad;
+    g.fill();
+    g.strokeStyle = "rgba(52,195,255,0.55)";
+    g.lineWidth = 1;
+    g.stroke();
+  }
+
+  // response: the selected band shaded, the total as a white line
+  DSP.Equalizer.design(eqSettings(), fs, eqFilters);
+  const points = Math.max(2, Math.floor(eqPlot.w / 2)), zero = yForDb(0);
+  const total = new Path2D(), sel = new Path2D();
+  sel.moveTo(eqPlot.x, zero);
+  for (let i = 0; i < points; ++i) {
+    const x = eqPlot.x + (eqPlot.w * i) / (points - 1), hz = freqForX(x);
+    let gain = 1;
+    for (const f of eqFilters) gain *= f.getMagnitude(hz, fs);
+    const yt = yForDb(DSP.gainToDb(gain)), ys = yForDb(DSP.gainToDb(eqFilters[selectedBand].getMagnitude(hz, fs)));
+    if (i === 0) total.moveTo(x, yt); else total.lineTo(x, yt);
+    sel.lineTo(x, ys);
+  }
+  sel.lineTo(eqPlot.x + eqPlot.w, zero);
+  sel.closePath();
+  g.globalAlpha = active ? 0.2 : 0.08;
+  g.fillStyle = EQ_BANDS[selectedBand].colour;
+  g.fill(sel);
+  g.globalAlpha = 1;
+  g.strokeStyle = active ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.3)";
+  g.lineWidth = 2.2;
+  g.lineJoin = "round";
+  g.stroke(total);
+  g.restore();
+
+  // readout for the selected band
+  const b = EQ_BANDS[selectedBand];
+  let text = b.name.toUpperCase();
+  for (const id of [b.freq, b.gain, b.q]) if (id) text += `   ${id === b.q ? "Q " : ""}${PARAMS[id].format(values[id])}`;
+  g.font = "600 12px 'Barlow', system-ui, sans-serif";
+  g.textAlign = "left";
+  g.textBaseline = "middle";
+  g.fillStyle = b.colour;
+  g.fillText(text, eqPlot.x + 6, 11);
+  g.textAlign = "right";
+  g.fillStyle = "#8f8f98";
+  g.font = "11px 'Barlow', system-ui, sans-serif";
+  g.fillText(active ? (w > 520 ? "drag points  |  wheel: Q  |  double-click: reset" : "drag the points") : "EQ BYPASSED", eqPlot.x + eqPlot.w, 11);
+
+  // band points
+  EQ_BANDS.forEach((band, i) => {
+    const [x, y] = nodePos(i), r = i === selectedBand ? 7.5 : 6;
+    g.globalAlpha = active ? 1 : 0.45;
+    if (i === selectedBand || i === hoveredBand || i === eqDrag) {
+      g.fillStyle = band.colour + "40";
+      g.beginPath(); g.arc(x, y, r * 1.8, 0, Math.PI * 2); g.fill();
+    }
+    g.fillStyle = band.colour;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = i === selectedBand ? "#fff" : "rgba(0,0,0,0.6)";
+    g.lineWidth = i === selectedBand ? 2 : 1;
+    g.stroke();
+    g.globalAlpha = 1;
+  });
+}
+
+// ============================================================================
+// Tuner
+const tunerCanvas = $("#tuner");
+const tunerState = { hz: 0, pending: 0, silent: 0 };
+function updateTuner() {
+  if (!engine.ctx) return;
+  const hz = tunerDetector.detect();
+  if (hz > 0) {
+    tunerState.silent = 0;
+    const jump = tunerState.hz <= 0 || Math.abs(1200 * Math.log2(hz / tunerState.hz)) > 40;
+    if (!jump) { tunerState.hz += 0.3 * (hz - tunerState.hz); tunerState.pending = 0; }
+    else if (tunerState.hz <= 0 || ++tunerState.pending >= 2) { tunerState.hz = hz; tunerState.pending = 0; }
+  } else if (++tunerState.silent > 18) tunerState.hz = 0;
+}
+function drawTuner() {
+  const [g, w, h] = fitCanvas(tunerCanvas);
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = "#0a1310";
+  roundRect(g, 3, 3, w - 6, h - 6, 6); g.fill();
+  const has = tunerState.hz > 0;
+  const note = has ? DSP.frequencyToNote(tunerState.hz) : null;
+  const cents = has ? note.cents : 0, abs = Math.abs(cents);
+  const colour = !has ? "rgba(125,255,176,0.18)" : abs < 3 ? "#35e07a" : abs < 15 ? "#ffb020" : "#ff3b30";
+  const noteW = Math.min(84, w * 0.24);
+
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillStyle = has ? colour : "rgba(125,255,176,0.25)";
+  g.font = "700 44px 'Barlow Condensed', 'Arial Narrow', sans-serif";
+  g.fillText(has ? note.name : "–", 12 + noteW / 2, h / 2 - 7);
+  g.font = "12px 'IBM Plex Mono', monospace";
+  g.fillStyle = has ? "rgba(125,255,176,0.7)" : "rgba(125,255,176,0.3)";
+  g.fillText(has ? `octave ${note.octave}` : "TUNER", 12 + noteW / 2, h - 16);
+
+  const sx = 12 + noteW + 12, sw = w - sx - 16, sy = 14, sh = h - 44;
+  const xFor = (c) => sx + (sw * (c + 50)) / 100;
+  g.fillStyle = "rgba(53,224,122,0.12)";
+  g.fillRect(xFor(-3), sy, xFor(3) - xFor(-3), sh);
+  for (let c = -50; c <= 50; c += 5) {
+    const tall = c === 0 ? sh : c % 25 === 0 ? sh * 0.55 : sh * 0.3;
+    g.fillStyle = c === 0 ? "rgba(125,255,176,0.6)" : "rgba(125,255,176,0.25)";
+    g.fillRect(xFor(c) - 0.75, sy + (sh - tall) / 2, 1.5, tall);
+  }
+  if (has) {
+    const x = xFor(clamp(cents, -50, 50));
+    g.fillStyle = colour + "4d";
+    roundRect(g, x - 6, sy - 2, 12, sh + 4, 4); g.fill();
+    g.fillStyle = colour;
+    roundRect(g, x - 2, sy - 2, 4, sh + 4, 2); g.fill();
+  }
+  g.font = "12px 'IBM Plex Mono', monospace";
+  g.fillStyle = has ? "rgba(125,255,176,0.85)" : "rgba(125,255,176,0.35)";
+  const ry = h - 16;
+  if (has) {
+    g.textAlign = "left"; g.fillText(`${cents >= 0 ? "+" : ""}${cents.toFixed(1)} cents`, sx, ry);
+    g.textAlign = "right"; g.fillText(`${tunerState.hz.toFixed(2)} Hz`, sx + sw, ry);
+    if (abs < 3 && sw > 260) { g.textAlign = "center"; g.fillText("IN TUNE", sx + sw / 2, ry); }
+  } else {
+    g.textAlign = "center";
+    g.fillText(engine.ctx ? "play a single string" : "press POWER", sx + sw / 2, ry);
+  }
+}
+
+// ============================================================================
+// Audio status line (helps when there's no sound on a particular device)
+const engineInfo = $("#engine-info");
+const STATE_NAMES = { running: "運作中", suspended: "暫停", interrupted: "被系統中斷", closed: "已關閉" };
+let lastInfo = 0;
+function renderEngineInfo(t) {
+  if (t - lastInfo < 500) return;
+  lastInfo = t;
+  const ctx = engine.ctx;
+  if (!ctx) return;
+  const latency = Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000);
+  const route = useMediaElementOutput
+    ? `輸出：媒體通道（${engine.outputElement && !engine.outputElement.paused ? "播放中" : "未播放"}）`
+    : "輸出：直接";
+  const parts = [`音訊狀態：${STATE_NAMES[ctx.state] || ctx.state}`, engine.kind, route, `${(ctx.sampleRate / 1000).toFixed(1)} kHz`];
+  if (latency > 0) parts.push(`輸出延遲約 ${latency} ms`);
+  const text = parts.filter(Boolean).join(" · ");
+  if (engineInfo.textContent !== text) engineInfo.textContent = text;
+}
+
+// ============================================================================
+// Frame loop: meters every frame, analysis + canvases ~30 fps
+let lastHeavy = 0;
+function frame(t) {
+  requestAnimationFrame(frame);
+  inMeter.update(levels.in);
+  outMeter.update(levels.out);
+  levels.in = levels.out = 0;
+  progressBar.style.width = source === "live" || !engine.ctx || !playing ? "0%" : `${(levels.progress * 100).toFixed(1)}%`;
+  for (const fn of tapControls) fn();
+  renderEngineInfo(t);
+  if (t - lastHeavy < 32) return;
+  lastHeavy = t;
+  updateTuner();
+  if (showAnalyzer) analyzer.process();
+  drawTuner();
+  drawEq();
+}
+requestAnimationFrame(frame);
+document.fonts && document.fonts.ready.then(() => { drawTuner(); drawEq(); });
+
+// debugging handle for local testing only
+if (location.hostname === "localhost") window.__pedalboard = { engine, values, levels, fxParams, tunerState, analyzer, frame: () => frame(performance.now() + 1000) };
+
+})();
+</script>
+</body>
+</html>

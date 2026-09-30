@@ -1,7 +1,11 @@
 const DSP = (() => {
+// ---- dsp/core.js
+const { PI, dbToGain, gainToDb, clamp, Smoothed, f32, Biquad, OnePole, DcBlocker, DelayLine, OVERSAMPLER_COEFFS, Oversampler4x } = (() => {
 // Guitar Pedalboard DSP, ported line for line from the C++ plugin (Source/DSP/*.h).
 // Runs inside the AudioWorklet (effects) and on the page (tuner, analyser, EQ curve).
 // web/test/compare.mjs checks it against reference renders from the C++ build.
+//
+// core.js: the building blocks every effect uses (Source/DSP/DspUtils.h).
 
 const PI = Math.PI;
 const FLT_EPS = 1.1920929e-7, FLT_MIN = 1.17549435e-38;
@@ -139,40 +143,6 @@ class DelayLine {
 }
 
 // ============================================================================
-class NoiseGate {
-  prepare(sampleRate) {
-    this.fs = sampleRate;
-    this.envDecay = Math.exp(-1 / (0.03 * this.fs));
-    this.attackCoef = Math.exp(-1 / (0.0005 * this.fs));
-    this.holdSamples = Math.floor(0.04 * this.fs);
-    this.setParameters(-65, 60);
-    this.reset();
-  }
-  reset() { this.env = 0; this.gain = 0; this.holdCounter = 0; this.isOpen = false; }
-  setParameters(thresholdDb, releaseMs) {
-    this.openThreshold = dbToGain(thresholdDb);
-    this.closeThreshold = this.openThreshold * 0.5;
-    this.releaseCoef = Math.exp(-1 / (Math.max(1, releaseMs) * 0.001 * this.fs));
-  }
-  process(data, n) {
-    for (let i = 0; i < n; ++i) {
-      const x = data[i], a = Math.abs(x);
-      this.env = a > this.env ? a : this.env * this.envDecay;
-      if (this.env >= this.openThreshold) { this.isOpen = true; this.holdCounter = this.holdSamples; }
-      else if (this.isOpen) {
-        if (this.env >= this.closeThreshold) this.holdCounter = this.holdSamples;
-        else if (this.holdCounter > 0) --this.holdCounter;
-        else this.isOpen = false;
-      }
-      const target = this.isOpen ? 1 : 0;
-      const coef = target > this.gain ? this.attackCoef : this.releaseCoef;
-      this.gain = target + coef * (this.gain - target);
-      data[i] = x * this.gain;
-    }
-  }
-}
-
-// ============================================================================
 // juce::dsp::Oversampling (2 stages of polyphase IIR half-band = 4x), same structure.
 // Coefficients come from JUCE's FilterDesign (exported by the C++ test).
 const OVERSAMPLER_COEFFS = {
@@ -233,6 +203,48 @@ class Oversampler4x {
   down(output, n) {
     this.stages[1].processDown(this.buf4, n * 2, this.buf2);
     this.stages[0].processDown(this.buf2, n, output);
+  }
+}
+
+
+return { PI, dbToGain, gainToDb, clamp, Smoothed, f32, Biquad, OnePole, DcBlocker, DelayLine, OVERSAMPLER_COEFFS, Oversampler4x };
+})();
+// ---- dsp/engines.js
+const { NoiseGate, Distortion, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx } = (() => {
+// The first effect engines: noise gate, the 15 distortion models, cab sim, EQ, and the original
+// modulation / delay / reverb (Source/DSP/NoiseGate.h, Distortion.h, CabSim.h, Equalizer.h, Modulation.h, Delay.h, ReverbFx.h).
+
+// ============================================================================
+class NoiseGate {
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    this.envDecay = Math.exp(-1 / (0.03 * this.fs));
+    this.attackCoef = Math.exp(-1 / (0.0005 * this.fs));
+    this.holdSamples = Math.floor(0.04 * this.fs);
+    this.setParameters(-65, 60);
+    this.reset();
+  }
+  reset() { this.env = 0; this.gain = 0; this.holdCounter = 0; this.isOpen = false; }
+  setParameters(thresholdDb, releaseMs) {
+    this.openThreshold = dbToGain(thresholdDb);
+    this.closeThreshold = this.openThreshold * 0.5;
+    this.releaseCoef = Math.exp(-1 / (Math.max(1, releaseMs) * 0.001 * this.fs));
+  }
+  process(data, n) {
+    for (let i = 0; i < n; ++i) {
+      const x = data[i], a = Math.abs(x);
+      this.env = a > this.env ? a : this.env * this.envDecay;
+      if (this.env >= this.openThreshold) { this.isOpen = true; this.holdCounter = this.holdSamples; }
+      else if (this.isOpen) {
+        if (this.env >= this.closeThreshold) this.holdCounter = this.holdSamples;
+        else if (this.holdCounter > 0) --this.holdCounter;
+        else this.isOpen = false;
+      }
+      const target = this.isOpen ? 1 : 0;
+      const coef = target > this.gain ? this.attackCoef : this.releaseCoef;
+      this.gain = target + coef * (this.gain - target);
+      data[i] = x * this.gain;
+    }
   }
 }
 
@@ -1014,20 +1026,36 @@ class ReverbFx {
   }
 }
 
-// ============================================================================
-// Models (Source/DSP/Models.h): the board is an HD500X-style chain of eight FX slots plus the amp/cab block
+
+return { NoiseGate, Distortion, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx };
+})();
+// ---- dsp/modeltypes.js
+const { NUM_SLOTS, MAX_KNOBS, CATEGORY, CATEGORY_NAMES, CATEGORY_ORDER, ENGINE, UNIT, knobSpec, knob10, percent, decibels, levelDb, millis, hertz, freq, semitones, choice, DELAY_NOTE_NAMES, DELAY_NOTE_BEATS, REVERB_NOTE_NAMES, REVERB_NOTE_BEATS, model, knobSkew, knobFromNorm, knobToNorm, knobText } = (() => {
+// Model list types (Source/DSP/ModelTypes.h): categories, engines, knob units and the knob constructors
+// every effect file uses to describe its models. Numbering matches the C++ enums: only ever append.
+
 const NUM_SLOTS = 8;
 const MAX_KNOBS = 8;
-const CATEGORY = { none: 0, dynamics: 1, distortion: 2, modulation: 3, delay: 4, reverb: 5 };
-const CATEGORY_NAMES = ["Empty", "Dynamics", "Distortion", "Modulation", "Delay", "Reverb"];
-const ENGINE = { none: 0, gate: 1, distortion: 2, modulation: 3, delay: 4, reverb: 5 };
-const UNIT = { knob: 0, percent: 1, db: 2, ms: 3, hz: 4, choice: 5 };
+const CATEGORY = { none: 0, dynamics: 1, distortion: 2, modulation: 3, delay: 4, reverb: 5, filter: 6, pitch: 7, eq: 8, wah: 9, volume: 10,
+                          amp: 11, cab: 12 }; // amp / cab: the amp block's own lists, not offered in the FX slots
+const CATEGORY_NAMES = ["Empty", "Dynamics", "Distortion", "Modulation", "Delay", "Reverb", "Filter", "Pitch", "Preamp+EQ", "Wah", "Volume/Pan", "Amp", "Cab"];
+/** The order the categories are listed in, as on the HD500X. */
+const CATEGORY_ORDER = [0, 1, 2, 3, 6, 7, 8, 4, 5, 10, 9];
+const ENGINE = { none: 0, gate: 1, distortion: 2, modulation: 3, delay: 4, reverb: 5,
+                        dynamicsFx: 6, modFx: 7, filterFx: 8, pitchFx: 9, eqFx: 10, delayFx: 11, reverbFx: 12, wahFx: 13, volumeFx: 14,
+                        ampFx: 15, cabFx: 16 };
+const UNIT = { knob: 0, percent: 1, db: 2, ms: 3, hz: 4, choice: 5, semitones: 6, freq: 7 };
 
+// Knob constructors, same names and arguments as the C++ ones
 const knobSpec = (name, min, max, def, centre, step, unit, choices) => ({ name, min, max, def, centre, step, unit, choices: choices || [] });
+const knob10 = (name, def) => knobSpec(name, 0, 10, def, 0, 0.1, UNIT.knob);
 const percent = (name, def, max = 100) => knobSpec(name, 0, max, def, 0, 1, UNIT.percent);
 const decibels = (name, min, max, def, step = 0.1) => knobSpec(name, min, max, def, 0, step, UNIT.db);
+const levelDb = (def = 0) => decibels("Level", -30, 12, def);
 const millis = (name, min, max, def, centre) => knobSpec(name, min, max, def, centre, 1, UNIT.ms);
 const hertz = (name, min, max, def, centre) => knobSpec(name, min, max, def, centre, 0.01, UNIT.hz);
+const freq = (name, min, max, def, centre) => knobSpec(name, min, max, def, centre, 1, UNIT.freq);
+const semitones = (name, min, max, def, step = 1) => knobSpec(name, min, max, def, 0, step, UNIT.semitones);
 const choice = (name, choices, def) => knobSpec(name, 0, choices.length - 1, def, 0, 1, UNIT.choice, choices);
 
 const DELAY_NOTE_NAMES = ["ms", "1/4", "1/8.", "1/8", "1/8T", "1/16"];
@@ -1035,11 +1063,7929 @@ const DELAY_NOTE_BEATS = [0, 1, 0.75, 0.5, 1 / 3, 0.25];
 const REVERB_NOTE_NAMES = ["ms", "1/32", "1/16", "1/8", "1/4"];
 const REVERB_NOTE_BEATS = [0, 0.125, 0.25, 0.5, 1];
 
+/** One entry of a model list. `extra`: timeKnob, noteKnob, noteBeats, timeKnob2, noteKnob2, stereo, trails. */
+const model = (key, name, category, engine, variant, basedOn, knobs, extra = {}) =>
+  ({ key, name, category, engine, variant, basedOn, knobs, timeKnob: -1, noteKnob: -1, noteBeats: null,
+     timeKnob2: -1, noteKnob2: -1, stereo: false, trails: false, ...extra });
+
+// knob travel (0..1) <-> value, juce::NormalisableRange style
+function knobSkew(spec) { return spec.centre > 0 ? Math.log(0.5) / Math.log((spec.centre - spec.min) / (spec.max - spec.min)) : 1; }
+function knobFromNorm(spec, n) {
+  let p = clamp(n, 0, 1);
+  if (spec.centre > 0 && p > 0) p = Math.exp(Math.log(p) / knobSkew(spec));
+  let v = spec.min + (spec.max - spec.min) * p;
+  if (spec.step > 0) v = spec.min + spec.step * Math.round((v - spec.min) / spec.step);
+  return clamp(v, spec.min, spec.max);
+}
+function knobToNorm(spec, v) {
+  const p = clamp((v - spec.min) / (spec.max - spec.min), 0, 1);
+  return spec.centre > 0 ? Math.pow(p, knobSkew(spec)) : p;
+}
+function knobText(spec, v) {
+  switch (spec.unit) {
+    case UNIT.percent: return `${Math.round(v)} %`;
+    case UNIT.db: return `${v.toFixed(1)} dB`;
+    case UNIT.ms: return `${Math.round(v)} ms`;
+    case UNIT.hz: return `${v.toFixed(2)} Hz`;
+    case UNIT.choice: return spec.choices[clamp(Math.round(v), 0, spec.choices.length - 1)];
+    case UNIT.semitones: return `${v > 0 ? "+" : ""}${Number.isInteger(spec.step) ? Math.round(v) : v.toFixed(1)} st`;
+    case UNIT.freq: return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)} kHz` : `${Math.round(v)} Hz`;
+    default: return v.toFixed(1);
+  }
+}
+
+return { NUM_SLOTS, MAX_KNOBS, CATEGORY, CATEGORY_NAMES, CATEGORY_ORDER, ENGINE, UNIT, knobSpec, knob10, percent, decibels, levelDb, millis, hertz, freq, semitones, choice, DELAY_NOTE_NAMES, DELAY_NOTE_BEATS, REVERB_NOTE_NAMES, REVERB_NOTE_BEATS, model, knobSkew, knobFromNorm, knobToNorm, knobText };
+})();
+// ---- dsp/noise.js
+const { HUM_MODES, HumFilter, Denoiser } = (() => {
+// Noise reduction (Source/DSP/NoiseReduction.h): a mains-hum filter for the input and a hiss reducer for the output.
+
+const HUM_MODES = ["Off", "50 Hz", "60 Hz"];
+
+/** Narrow notches on 50 or 60 Hz and its first harmonics (mono, in double precision like the C++). */
+class HumFilter {
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    this.amount = new Smoothed(0);
+    this.amount.reset(sampleRate, 0.03);
+    this.notches = Array.from({ length: 6 }, () => ({ b0: 1, b1: 0, b2: 0, a1: 0, a2: 0, z1: 0, z2: 0 }));
+    this.wanted = this.wanted || 0;
+    this.tuned = this.tuned || 2;
+    this.needsClear = false;
+    this.design();
+    this.reset();
+  }
+  reset() {
+    this.clear();
+    if (this.wanted !== 0) this.tuned = this.wanted;
+    this.design();
+    this.amount.setCurrentAndTarget(this.wanted !== 0 ? 1 : 0);
+  }
+  isIdle() { return !this.amount.isSmoothing() && this.amount.current <= 0; }
+  clear() { for (const n of this.notches) n.z1 = n.z2 = 0; }
+  static bandwidthHz(k) { return 2 + 0.4 * (k - 1); }
+  design() {
+    const mains = this.tuned === 1 ? 50 : 60;
+    for (let k = 1; k <= this.notches.length; ++k) {
+      const f = mains * k, w0 = (2 * PI * f) / this.fs;
+      const alpha = Math.sin(w0) / (2 * (f / HumFilter.bandwidthHz(k))), a0 = 1 + alpha, n = this.notches[k - 1];
+      n.b0 = 1 / a0;
+      n.b1 = (-2 * Math.cos(w0)) / a0;
+      n.b2 = 1 / a0;
+      n.a1 = n.b1;
+      n.a2 = (1 - alpha) / a0;
+    }
+  }
+  setMode(mode) {
+    this.wanted = clamp(mode | 0, 0, 2);
+    if (this.wanted !== 0 && this.wanted !== this.tuned && this.isIdle()) { this.tuned = this.wanted; this.design(); this.clear(); }
+    this.amount.setTarget(this.wanted !== 0 && this.wanted === this.tuned ? 1 : 0);
+  }
+  process(data, n) {
+    if (this.isIdle()) { this.needsClear = true; return; }
+    if (this.needsClear) { this.clear(); this.needsClear = false; }
+    const notches = this.notches, amount = this.amount;
+    for (let i = 0; i < n; ++i) {
+      const x = data[i];
+      let y = x;
+      for (let k = 0; k < notches.length; ++k) {
+        const c = notches[k], out = c.b0 * y + c.z1;
+        c.z1 = c.b1 * y - c.a1 * out + c.z2;
+        c.z2 = c.b2 * y - c.a2 * out;
+        y = out;
+      }
+      data[i] = x + amount.next() * (y - x);
+    }
+  }
+}
+
+/** Hiss reduction for the output (stereo): open while you play, a sliding low-pass and up to 12 dB less
+    level as the sound dies away. amount: 0 % = off. */
+class Denoiser {
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    this.attack = f32(Math.exp(-1 / (0.002 * sampleRate)));
+    this.release = f32(Math.exp(-1 / (0.12 * sampleRate)));
+    this.filters = [new OnePole(), new OnePole(), new OnePole(), new OnePole()];
+    this.mix = new Smoothed(0); this.mix.reset(sampleRate, 0.03);
+    this.gain = new Smoothed(1); this.gain.reset(sampleRate, 0.02);
+    this.amount = 0; this.thresholdDb = -75; this.needsReset = false;
+    this.reset();
+  }
+  reset() {
+    for (const f of this.filters) f.reset();
+    this.env = 1;
+    this.counter = 0;
+    this.mix.setCurrentAndTarget(this.mix.target);
+    this.gain.setCurrentAndTarget(1);
+    this.retune(1);
+  }
+  setAmount(percent) {
+    this.amount = f32(clamp(percent, 0, 100));
+    this.thresholdDb = f32(-75 + 0.4 * this.amount);
+    this.mix.setTarget(this.amount > 0 ? 1 : 0);
+  }
+  retune(open) {
+    const cutoff = 1000 * Math.pow((0.49 * this.fs) / 1000, open);
+    for (const f of this.filters) f.setCutoff(this.fs, cutoff);
+  }
+  process(left, right, n) {
+    if (!this.mix.isSmoothing() && this.mix.current <= 0) { this.needsReset = true; return; }
+    if (this.needsReset) {
+      for (const f of this.filters) f.reset();
+      this.env = 1; this.counter = 0;
+      this.gain.setCurrentAndTarget(1);
+      this.retune(1);
+      this.needsReset = false;
+    }
+    const [f0, f1, f2, f3] = this.filters, attack = this.attack, release = this.release;
+    let env = this.env;
+    for (let i = 0; i < n; ++i) {
+      const l = left[i], r = right[i];
+      const level = Math.max(Math.abs(l), Math.abs(r));
+      env = f32(level + (level > env ? attack : release) * (env - level));
+      if (this.counter === 0) {
+        const x = f32(clamp((f32(gainToDb(env)) - this.thresholdDb) / 18, 0, 1));
+        const open = f32(x * x * (3 - 2 * x));
+        this.retune(open);
+        this.gain.setTarget(f32(dbToGain(-12 * (1 - open))));
+      }
+      this.counter = (this.counter + 1) & 15;
+      const g = this.gain.next(), m = this.mix.next();
+      const yl = f1.lowPass(f0.lowPass(l)) * g;
+      const yr = f3.lowPass(f2.lowPass(r)) * g;
+      left[i] = l + m * (yl - l);
+      right[i] = r + m * (yr - r);
+    }
+    this.env = env;
+  }
+}
+
+return { HUM_MODES, HumFilter, Denoiser };
+})();
+// ---- dsp/dynamics.js
+const { DynamicsFx, DYNAMICS_MODELS } = (() => {
+// The HD500X's Dynamics models without the Noise Gate (Source/DSP/fx/Dynamics.h). All mono.
+//   Hard Gate: Open Threshold, Close Threshold, Hold, Decay   |   Tube Comp: Threshold, Level
+//   Red Comp / Blue Comp / Blue Comp Treb: Sustain, Level     |   Vetta Comp: Sensitivity, Level
+//   Vetta Juice: Amount, Level                                |   Boost Comp: Drive, Bass, Comp, Treble, Output
+
+const HARD_GATE = 0, TUBE_COMP = 1, RED_COMP = 2, BLUE_COMP = 3, BLUE_COMP_TREB = 4, VETTA_COMP = 5, VETTA_JUICE = 6, BOOST_COMP = 7;
+
+/** Linear up to `knee`, then bends over smoothly towards `ceiling`. */
+function softClip(v, knee, ceiling) {
+  const a = Math.abs(v);
+  if (a <= knee) return v;
+  const range = ceiling - knee;
+  const s = knee + range * Math.tanh((a - knee) / range);
+  return v < 0 ? -s : s;
+}
+/** Per-sample step of a one-pole follower with the time constant `seconds`. */
+const stepFor = (seconds, fs) => f32(1 - Math.exp(-1 / (seconds * fs)));
+
+// Tube Comp (LA-2A)
+const TUBE_ATTACK = 0.010, TUBE_RELEASE = 0.060, TUBE_LAG = 0.004, TUBE_MEM_CHARGE = 0.8, TUBE_MEM_RELEASE = 2.5;
+const TUBE_MEM_SHARE = f32(0.6), TUBE_DETECTOR = f32(0.837), TUBE_REFERENCE = 0.15;
+// Red Comp (Dyna Comp)
+const RED_THRESHOLD = f32(0.25), RED_STIFFNESS = f32(8), RED_LEVEL = f32(0.62);
+const RED_ATTACK = 0.005, RED_RELEASE = 0.45, RED_TONE = 5500, RED_MAX_GAIN_DB = 34;
+// Blue Comp (CS-1)
+const BLUE_THRESHOLD = f32(0.22), BLUE_DETECTOR = f32(0.934), BLUE_LEVEL = f32(0.56);
+const BLUE_ATTACK = 0.005, BLUE_RELEASE = 0.15, BLUE_LAG = 0.003, BLUE_MAX_GAIN_DB = 26;
+// Vetta Comp / Vetta Juice
+const VETTA_RATIO = f32(2.35), VETTA_KNEE = 6, JUICE_THRESHOLD_DB = -44, JUICE_KNEE = 12, JUICE_MIN_SLOPE = f32(0.1);
+const VETTA_DETECTOR = 0.010, VETTA_ATTACK = 0.008, VETTA_RELEASE = 0.15, JUICE_ATTACK = 0.003, JUICE_RELEASE = 0.25;
+// Boost Comp
+const BOOST_THRESHOLD = f32(0.30), BOOST_STIFFNESS = f32(8), BOOST_COMP_GAIN_DB = 20, BOOST_DRIVE_DB = 26, BOOST_EQ_DB = 12;
+const BOOST_BASS_HZ = 120, BOOST_TREBLE_HZ = 3000;
+
+const RED_SIDE = f32(RED_STIFFNESS / RED_THRESHOLD), BLUE_SIDE = f32(1 / f32(BLUE_DETECTOR * BLUE_THRESHOLD));
+const C06 = f32(0.6), C07 = f32(0.7), C14 = f32(1.4), C16 = f32(1.6), C006 = f32(0.06);
+const DB_TO_NEPER = f32(0.115129255), EQ_STEP = f32(0.02), PERCENT = f32(0.01);
+// added to the signal so that followers and filters settle at 1e-20 in silence, not in the (slow) denormals
+const TINY = f32(1e-20), FLUSH_BELOW = f32(1e-15);
+
+class DynamicsFx {
+  constructor() {
+    this.fs = 48000; this.variant = HARD_GATE;
+    this.level = new Smoothed(1); this.pre = new Smoothed(1); this.side = new Smoothed(0); this.slope = new Smoothed(0);
+    this.makeup = new Smoothed(1); this.drive = new Smoothed(1); this.bass = new Smoothed(1); this.treble = new Smoothed(1);
+    this.smoothers = [this.level, this.pre, this.side, this.slope, this.makeup, this.drive, this.bass, this.treble];
+    this.cachedKnob = -1e9; this.sideTarget = 0; this.makeupTarget = 1;
+    this.attack = 0; this.release = 0; this.lagStep = 0; this.memCharge = 0; this.memRelease = 0; this.knee = 6;
+    this.env = 0; this.mem = 0; this.lag = 0; this.cap = 0; this.gainReduction = 0;
+    this.openThreshold = f32(0.01); this.closeThreshold = f32(0.005); this.decayFactor = f32(0.999); this.openStep = f32(0.02);
+    this.detectorRelease = f32(0.01); this.gateGain = 0;
+    this.holdSamples = 0; this.holdCount = 0; this.detectorHold = 0; this.detectorCount = 0; this.gateOpen = false;
+    this.dc = new DcBlocker();
+    this.redToneFilter = new OnePole(); this.bassFilter = new OnePole(); this.trebleFilter = new OnePole();
+    this.blueTrebleShelf = new Biquad();
+  }
+
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    for (const s of this.smoothers) s.reset(this.fs, 0.03);
+
+    this.dc.prepare(this.fs);
+    this.redToneFilter.setCutoff(this.fs, RED_TONE);
+    this.blueTrebleShelf.setHighShelf(this.fs, 3000, 7);
+    this.bassFilter.setCutoff(this.fs, BOOST_BASS_HZ);
+    this.trebleFilter.setCutoff(this.fs, BOOST_TREBLE_HZ);
+
+    this.detectorHold = Math.floor(0.010 * this.fs);
+    this.detectorRelease = stepFor(0.002, this.fs);
+    this.openStep = f32(1 / (0.001 * this.fs));
+
+    this.configure();
+    this.reset();
+  }
+
+  reset() {
+    for (const s of this.smoothers) s.setCurrentAndTarget(s.target);
+    this.env = this.mem = this.lag = this.cap = this.gainReduction = 0;
+    this.gateGain = 0;
+    this.gateOpen = false;
+    this.holdCount = this.detectorCount = 0;
+    this.dc.reset();
+    this.redToneFilter.reset();
+    this.blueTrebleShelf.reset();
+    this.bassFilter.reset();
+    this.trebleFilter.reset();
+  }
+
+  setModel(variant) {
+    this.variant = clamp(variant | 0, 0, 7);
+    this.configure();
+  }
+
+  setParameters(k) {
+    const k0 = f32(k[0]), k1 = f32(k[1]);
+    switch (this.variant) {
+      case HARD_GATE: {
+        this.openThreshold = f32(dbToGain(k0));
+        this.closeThreshold = f32(dbToGain(Math.min(k0, k1))); // never above the open threshold
+        this.holdSamples = Math.round(f32(k[2]) * 0.001 * this.fs);
+        // Decay: the time the gain takes to fall 60 dB once the hold has run out
+        this.decayFactor = f32(Math.exp(-6.907755 / (Math.max(1, f32(k[3])) * 0.001 * this.fs)));
+        break;
+      }
+      case TUBE_COMP: {
+        if (k0 !== this.cachedKnob) {
+          this.cachedKnob = k0;
+          // gain = 1 / (1 + (y / T)^2) with y the compressed signal: y (1 + (y/T)^2) = x, 3:1 far above T
+          const threshold = Math.pow(10, k0 / 20);
+          this.sideTarget = f32(1 / (TUBE_DETECTOR * threshold));
+          // make-up tied to the threshold: whatever the cell takes off a signal at the reference level
+          const invT2 = 1 / (threshold * threshold);
+          let y = Math.min(TUBE_REFERENCE, Math.cbrt(TUBE_REFERENCE / invT2));
+          for (let i = 0; i < 6; ++i) y -= (y + invT2 * y * y * y - TUBE_REFERENCE) / (1 + 3 * invT2 * y * y);
+          this.makeupTarget = f32(TUBE_REFERENCE / y);
+        }
+        this.side.setTarget(this.sideTarget);
+        this.makeup.setTarget(this.makeupTarget);
+        this.level.setTarget(f32(dbToGain(k1)));
+        break;
+      }
+      case RED_COMP: {
+        this.pre.setTarget(f32(dbToGain(f32(f32(RED_MAX_GAIN_DB * k0) * PERCENT))));
+        this.level.setTarget(f32(f32(dbToGain(k1)) * RED_LEVEL));
+        break;
+      }
+      case BLUE_COMP:
+      case BLUE_COMP_TREB: {
+        this.pre.setTarget(f32(dbToGain(f32(f32(BLUE_MAX_GAIN_DB * k0) * PERCENT))));
+        this.level.setTarget(f32(f32(dbToGain(k1)) * BLUE_LEVEL));
+        break;
+      }
+      case VETTA_COMP: {
+        this.side.setTarget(f32(f32(-50 * k0) * PERCENT)); // Sensitivity: threshold 0 ... -50 dBFS
+        this.slope.setTarget(f32(1 - f32(1 / VETTA_RATIO)));
+        this.level.setTarget(f32(dbToGain(k1)));
+        break;
+      }
+      case VETTA_JUICE: {
+        this.side.setTarget(JUICE_THRESHOLD_DB);
+        this.slope.setTarget(f32(f32(f32(1 - JUICE_MIN_SLOPE) * k0) * PERCENT)); // Amount: 1:1 ... 10:1
+        this.level.setTarget(f32(dbToGain(k1)));
+        break;
+      }
+      default: { // Boost Comp
+        const amount = f32(f32(k[2]) * PERCENT);
+        this.drive.setTarget(f32(dbToGain(f32(f32(BOOST_DRIVE_DB * k0) * PERCENT))));
+        this.bass.setTarget(f32(dbToGain(f32(f32(BOOST_EQ_DB * f32(k1 - 50)) * EQ_STEP))));
+        this.pre.setTarget(f32(dbToGain(f32(BOOST_COMP_GAIN_DB * amount))));
+        this.side.setTarget(f32(f32(amount * BOOST_STIFFNESS) / BOOST_THRESHOLD));
+        this.treble.setTarget(f32(dbToGain(f32(f32(BOOST_EQ_DB * f32(f32(k[3]) - 50)) * EQ_STEP))));
+        this.level.setTarget(f32(dbToGain(f32(k[4]))));
+        break;
+      }
+    }
+  }
+
+  process(left, right, n) {
+    switch (this.variant) {
+      case HARD_GATE: this.processGate(left, right, n); break;
+      case TUBE_COMP: this.processTube(left, right, n); break;
+      case RED_COMP: this.processRed(left, right, n); break;
+      case BLUE_COMP:
+      case BLUE_COMP_TREB: this.processBlue(left, right, n); break;
+      case VETTA_COMP:
+      case VETTA_JUICE: this.processVetta(left, right, n); break;
+      default: this.processBoost(left, right, n); break;
+    }
+  }
+
+  /** Time constants of the selected model. */
+  configure() {
+    const fs = this.fs;
+    this.cachedKnob = -1e9;
+    switch (this.variant) {
+      case TUBE_COMP:
+        this.attack = stepFor(TUBE_ATTACK, fs); this.release = stepFor(TUBE_RELEASE, fs);
+        this.lagStep = stepFor(TUBE_LAG, fs);
+        this.memCharge = stepFor(TUBE_MEM_CHARGE, fs); this.memRelease = stepFor(TUBE_MEM_RELEASE, fs);
+        break;
+      case RED_COMP:
+      case BOOST_COMP:
+        this.attack = stepFor(RED_ATTACK, fs); this.release = stepFor(RED_RELEASE, fs);
+        break;
+      case BLUE_COMP:
+      case BLUE_COMP_TREB:
+        this.attack = stepFor(BLUE_ATTACK, fs); this.release = stepFor(BLUE_RELEASE, fs);
+        this.lagStep = stepFor(BLUE_LAG, fs);
+        break;
+      case VETTA_COMP:
+        this.attack = stepFor(VETTA_ATTACK, fs); this.release = stepFor(VETTA_RELEASE, fs);
+        this.lagStep = stepFor(VETTA_DETECTOR, fs); this.knee = VETTA_KNEE;
+        break;
+      case VETTA_JUICE:
+        this.attack = stepFor(JUICE_ATTACK, fs); this.release = stepFor(JUICE_RELEASE, fs);
+        this.lagStep = stepFor(VETTA_DETECTOR, fs); this.knee = JUICE_KNEE;
+        break;
+      default: break;
+    }
+  }
+
+  // Hard Gate: opens above one threshold, closes below another, waits for the Hold time, then fades out over Decay.
+  processGate(left, right, n) {
+    const openThreshold = this.openThreshold, closeThreshold = this.closeThreshold, holdSamples = this.holdSamples;
+    const detectorHold = this.detectorHold, detectorRelease = this.detectorRelease, openStep = this.openStep, decayFactor = this.decayFactor;
+    let env = this.env, detectorCount = this.detectorCount, gateOpen = this.gateOpen, holdCount = this.holdCount, gateGain = this.gateGain;
+    for (let i = 0; i < n; ++i) {
+      const x = 0.5 * (left[i] + right[i]);
+      const a = Math.abs(x) + TINY;
+
+      // level detector: keeps each peak for 10 ms, then lets go quickly
+      if (a >= env) { env = a; detectorCount = detectorHold; }
+      else if (detectorCount > 0) --detectorCount;
+      else env -= env * detectorRelease;
+
+      if (env >= openThreshold) { gateOpen = true; holdCount = holdSamples; }
+      else if (gateOpen) {
+        if (env >= closeThreshold) holdCount = holdSamples;
+        else if (holdCount > 0) --holdCount;
+        else gateOpen = false;
+      }
+
+      if (gateOpen) gateGain = Math.min(1, gateGain + openStep); // opens within 1 ms
+      else {
+        gateGain *= decayFactor;
+        if (gateGain < 1e-5) gateGain = 0;
+      }
+      left[i] = right[i] = x * gateGain;
+    }
+    this.env = env; this.detectorCount = detectorCount; this.gateOpen = gateOpen; this.holdCount = holdCount; this.gateGain = gateGain;
+  }
+
+  // Tube Comp (LA-2A): optical cell in a feedback loop, two-stage release, make-up tied to the threshold, tube output.
+  processTube(left, right, n) {
+    const side = this.side, makeup = this.makeup, level = this.level, dc = this.dc;
+    const attack = this.attack, release = this.release, memCharge = this.memCharge, memRelease = this.memRelease, lagStep = this.lagStep;
+    let env = this.env, mem = this.mem, lag = this.lag;
+    for (let i = 0; i < n; ++i) {
+      const x = 0.5 * (left[i] + right[i]) + TINY;
+      const y = x / (1 + lag * lag);
+
+      const u = side.next() * Math.abs(y);
+      env += (u - env) * (u > env ? attack : release);
+
+      const memTarget = TUBE_MEM_SHARE * env;
+      mem += (memTarget - mem) * (memTarget > mem ? memCharge : memRelease);
+
+      lag += (Math.max(env, mem) - lag) * lagStep; // the photoresistor lags behind the light
+
+      let v = softClip(y * makeup.next(), C07, C14);
+      v -= C006 * v * v;
+      left[i] = right[i] = dc.process(v) * level.next();
+    }
+    this.env = env; this.mem = mem; this.lag = lag;
+  }
+
+  // Red Comp (Dyna Comp): OTA pulled down by the rectified output; fast attack, long release, rolled-off top.
+  processRed(left, right, n) {
+    const pre = this.pre, level = this.level, tone = this.redToneFilter, attack = this.attack, release = this.release;
+    let cap = this.cap;
+    for (let i = 0; i < n; ++i) {
+      const x = 0.5 * (left[i] + right[i]) + TINY;
+      const y = softClip(x * pre.next() * Math.exp(-cap), C06, 1); // runs into the rails on hard attacks
+
+      const over = (Math.abs(y) - RED_THRESHOLD) * RED_SIDE;
+      if (over > cap) cap += (over - cap) * attack;
+      else cap -= cap * release;
+
+      left[i] = right[i] = tone.lowPass(y) * level.next();
+    }
+    this.cap = cap < FLUSH_BELOW ? 0 : cap;
+  }
+
+  // Blue Comp / Blue Comp Treb (CS-1): photocoupler feedback loop, about 4:1, quicker release; treble switch = lift above 3 kHz.
+  processBlue(left, right, n) {
+    const pre = this.pre, level = this.level, shelf = this.blueTrebleShelf, attack = this.attack, release = this.release, lagStep = this.lagStep;
+    const trebleSwitch = this.variant === BLUE_COMP_TREB;
+    let env = this.env, lag = this.lag;
+    for (let i = 0; i < n; ++i) {
+      const x = 0.5 * (left[i] + right[i]) + TINY;
+      const y = softClip(x * pre.next() / (1 + lag * lag * lag), C06, 1);
+
+      const u = Math.abs(y) * BLUE_SIDE;
+      env += (u - env) * (u > env ? attack : release);
+      lag += (env - lag) * lagStep;
+
+      left[i] = right[i] = (trebleSwitch ? shelf.process(y) : y) * level.next();
+    }
+    this.env = env; this.lag = lag;
+  }
+
+  // Vetta Comp (fixed 2.35:1, Sensitivity = threshold) and Vetta Juice (fixed threshold, Amount = ratio): feed-forward.
+  processVetta(left, right, n) {
+    const side = this.side, slope = this.slope, level = this.level, attack = this.attack, release = this.release, lagStep = this.lagStep;
+    const knee = this.knee, halfKnee = 0.5 * knee;
+    let env = this.env, gainReduction = this.gainReduction;
+    for (let i = 0; i < n; ++i) {
+      const x = 0.5 * (left[i] + right[i]) + TINY;
+      const a = Math.abs(x);
+      env = a > env ? a : env - env * lagStep; // peak reading
+
+      const over = 20 * Math.log10(Math.max(env, 1e-6)) - side.next();
+      let above = 0;
+      if (over >= halfKnee) above = over;
+      else if (over > -halfKnee) above = (over + halfKnee) * (over + halfKnee) / (2 * knee);
+
+      const target = above * slope.next();
+      gainReduction += (target - gainReduction) * (target > gainReduction ? attack : release);
+
+      left[i] = right[i] = softClip(x * level.next() * Math.exp(-DB_TO_NEPER * gainReduction), 1, 2);
+    }
+    this.env = env; this.gainReduction = gainReduction < FLUSH_BELOW ? 0 : gainReduction;
+  }
+
+  // Boost Comp (Micro Amp): Dyna-style squash (Comp), clean gain of up to 26 dB (Drive), Bass / Treble shelves.
+  processBoost(left, right, n) {
+    const pre = this.pre, side = this.side, drive = this.drive, bass = this.bass, treble = this.treble, level = this.level;
+    const bassFilter = this.bassFilter, trebleFilter = this.trebleFilter, attack = this.attack, release = this.release;
+    let cap = this.cap;
+    for (let i = 0; i < n; ++i) {
+      const x = 0.5 * (left[i] + right[i]) + TINY;
+      let y = x * pre.next() * Math.exp(-cap);
+
+      const over = (Math.abs(y) - BOOST_THRESHOLD) * side.next();
+      if (over > cap) cap += (over - cap) * attack;
+      else cap -= cap * release;
+
+      y *= drive.next();
+      y += (bass.next() - 1) * bassFilter.lowPass(y);
+      y += (treble.next() - 1) * trebleFilter.highPass(y);
+
+      left[i] = right[i] = softClip(y, 1, C16) * level.next();
+    }
+    this.cap = cap < FLUSH_BELOW ? 0 : cap;
+  }
+}
+
+/** In the order of the variants. */
+const DYNAMICS_MODELS = [
+  model("hard_gate", "Hard Gate", CATEGORY.dynamics, ENGINE.dynamicsFx, HARD_GATE, "Line 6 original: gate with separate open / close thresholds, hold and decay",
+    [decibels("Open Threshold", -90, 0, -45, 0.5), decibels("Close Threshold", -90, 0, -55, 0.5), millis("Hold", 0, 1000, 50, 150), millis("Decay", 1, 2000, 80, 200)]),
+  model("tube_comp", "Tube Comp", CATEGORY.dynamics, ENGINE.dynamicsFx, TUBE_COMP, "Teletronix LA-2A",
+    [decibels("Threshold", -40, 0, -20, 0.5), decibels("Level", -30, 12, 0)]),
+  model("red_comp", "Red Comp", CATEGORY.dynamics, ENGINE.dynamicsFx, RED_COMP, "MXR Dyna Comp",
+    [percent("Sustain", 50), decibels("Level", -30, 12, 0)]),
+  model("blue_comp", "Blue Comp", CATEGORY.dynamics, ENGINE.dynamicsFx, BLUE_COMP, "Boss CS-1 Compression Sustainer, treble switch off",
+    [percent("Sustain", 50), decibels("Level", -30, 12, 0)]),
+  model("blue_comp_treb", "Blue Comp Treb", CATEGORY.dynamics, ENGINE.dynamicsFx, BLUE_COMP_TREB, "Boss CS-1 Compression Sustainer, treble switch on",
+    [percent("Sustain", 50), decibels("Level", -30, 12, 0)]),
+  model("vetta_comp", "Vetta Comp", CATEGORY.dynamics, ENGINE.dynamicsFx, VETTA_COMP, "Line 6 Vetta II compressor (fixed 2.35:1)",
+    [percent("Sensitivity", 50), decibels("Level", -30, 12, 5)]),
+  model("vetta_juice", "Vetta Juice", CATEGORY.dynamics, ENGINE.dynamicsFx, VETTA_JUICE, "Line 6 Vetta II compressor (variable ratio, 30 dB of gain)",
+    [percent("Amount", 50), decibels("Level", 0, 30, 13)]),
+  model("boost_comp", "Boost Comp", CATEGORY.dynamics, ENGINE.dynamicsFx, BOOST_COMP, "Inspired by the MXR Micro Amp, plus Dyna-style compression",
+    [percent("Drive", 20), percent("Bass", 50), percent("Comp", 25), percent("Treble", 50), decibels("Output", -30, 12, -5)]),
+];
+
+return { DynamicsFx, DYNAMICS_MODELS };
+})();
+// ---- dsp/mod.js
+const { ModFx, MOD_MODELS } = (() => {
+// The HD500X's 22 modulation models (Source/DSP/fx/Mod.h), ported line for line: see the C++ for what each
+// model is and what was modelled. LFO phases and everything that steers a filter or a delay are computed in
+// doubles on both sides and rounded to float at the same points (f32), so the two versions stay together.
+
+const STEP_NAMES = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "Mute", "Skip", "Full"];
+const PAN_NAMES = ["Left", "Center", "Right"];
+const SWEEP_NAMES = ["Up", "Down", "Stereo"];
+const STAGE_NAMES = ["4", "8", "12", "16"];
+const SWITCH_NAMES = ["Off", "On"];
+const CHORUS_NAMES = ["Chorus", "Vibrato"];
+const HARMONIC_NAMES = ["Even", "Odd"];
+const ROTOR_NAMES = ["Slow", "Fast"];
+
+const TWO_PI = 2 * PI;
+const STEP_MUTE = 16, STEP_SKIP = 17;
+const HILBERT_SECTIONS = 6;
+const BARBER_STAGES = 8;
+
+// variants (ModFx::Variant)
+const PATTERN_TREMOLO = 0, PANNER = 1, BIAS_TREMOLO = 2, OPTO_TREMOLO = 3, SCRIPT_PHASE = 4, PANNED_PHASER = 5, BARBERPOLE_PHASER = 6,
+  DUAL_PHASER = 7, U_VIBE = 8, PHASER = 9, PITCH_VIBRATO = 10, DIMENSION = 11, ANALOG_CHORUS = 12, TRI_CHORUS = 13, ANALOG_FLANGER = 14,
+  JET_FLANGER = 15, AC_FLANGER = 16, FLANGER_80A = 17, FREQUENCY_SHIFTER = 18, RING_MODULATOR = 19, ROTARY_DRUM = 20, ROTARY_DRUM_HORN = 21,
+  NUM_VARIANTS = 22;
+
+// smoothed values
+const SM_DEPTH = 0, SM_FEEDBACK = 1, SM_SHAPE = 2, SM_A = 3, SM_B = 4, SM_C = 5, SM_DRY = 6, SM_WET = 7, SM_DRY_R = 8, SM_WET_R = 9,
+  SM_TAP0 = 10, SM_DIR_L = 14, SM_DIR_R = 15, SM_TONE = 16, NUM_SMOOTHED = 17;
+
+const PANNED_FEEDBACK = 0.3, PANNED_FEEDBACK_F = f32(0.3);
+const BIAS_REST = 1, BIAS_SWING = 4, BIAS_SCALE = f32(0.1464466);
+const SOFT_CLIP_CUBIC = f32(4 / 27);
+const SQRT2 = 1.4142135623730951, SIN120 = 0.8660254037844386;
+const VIBE_RATIO = [0.3133, 0.02136, 10, 1]; // 4.7 nF / the stage's capacitor
+
+/** fx::Smoothed (linear), stepping in single precision exactly like the C++: the ramps steer delay times and
+    filter coefficients here, where the rounding of a double-precision ramp would be heard in the comparison. */
+const FLT_EPS = 1.1920929e-7, FLT_MIN = 1.17549435e-38;
+class Ramp {
+  constructor() { this.current = 0; this.target = 0; this.step = 0; this.countdown = 0; this.stepsToTarget = 0; }
+  reset(sampleRate, seconds) { this.stepsToTarget = Math.floor(seconds * sampleRate); this.setCurrentAndTarget(this.target); }
+  setCurrentAndTarget(v) { this.target = this.current = v; this.countdown = 0; }
+  /** v: already rounded to float */
+  setTarget(v) {
+    const d = Math.abs(f32(v - this.target));
+    if (d <= FLT_MIN || d <= f32(FLT_EPS * Math.max(Math.abs(v), Math.abs(this.target)))) return;
+    if (this.stepsToTarget <= 0) { this.setCurrentAndTarget(v); return; }
+    this.target = v;
+    this.countdown = this.stepsToTarget;
+    this.step = f32(f32(this.target - this.current) / this.countdown);
+  }
+  isSmoothing() { return this.countdown > 0; }
+  next() {
+    if (this.countdown <= 0) return this.target;
+    if (--this.countdown > 0) this.current = f32(this.current + this.step);
+    else this.current = this.target;
+    return this.current;
+  }
+}
+
+/** (tan w - 1) / (tan w + 1) with sin and cos as polynomials: first-order all-pass coefficient. */
+function allpassCoef(w) {
+  const w2 = w * w;
+  const s = w * (1 + w2 * (-1 / 6 + w2 * (1 / 120 + w2 * (-1 / 5040 + w2 * (1 / 362880)))));
+  const c = 1 + w2 * (-1 / 2 + w2 * (1 / 24 + w2 * (-1 / 720 + w2 * (1 / 40320 + w2 * (-1 / 3628800)))));
+  return (s - c) / (s + c);
+}
+
+const pct = (k, i) => k[i] / 100;
+const pick = (k, i, count) => clamp((k[i] + 0.5) | 0, 0, count - 1);
+
+const sineToSquare = (s, g) => (s * (1 + g)) / (1 + g * Math.abs(s));
+const squareEdge = (rateHz) => clamp(60 / rateHz, 1, 4000);
+
+/** Triangle (0) -> sine (0.5) -> square (1), -1..1, phase 0..1. */
+function morphLfo(p, shape, edge) {
+  const s = Math.sin(TWO_PI * p);
+  if (shape < 0.5) {
+    let q = p + 0.25;
+    if (q >= 1) q -= 1;
+    const tri = 1 - 4 * Math.abs(q - 0.5);
+    return tri + 2 * shape * (s - tri);
+  }
+  const amount = 2 * shape - 1;
+  return sineToSquare(s, amount * amount * edge);
+}
+
+/** A chain of identical first-order all-pass stages; states z[offset .. offset + count). */
+function allpassChain(x, a, z, offset, count) {
+  for (let s = offset; s < offset + count; ++s) {
+    const y = a * x + z[s];
+    z[s] = x - a * y;
+    x = y;
+  }
+  return x;
+}
+
+function softClip(x) {
+  x = x > 1.5 ? 1.5 : (x < -1.5 ? -1.5 : x);
+  return x - SOFT_CLIP_CUBIC * x * x * x;
+}
+
+function tubeClip(x) {
+  x = x > 3 ? 3 : (x < -3 ? -3 : x);
+  const x2 = x * x;
+  return (x * (27 + x2)) / (27 + 9 * x2);
+}
+
+function biasStage(x, b) {
+  const p = b + 2 * x, q = b - 2 * x;
+  return BIAS_SCALE * (p - q + Math.sqrt(p * p + 1) - Math.sqrt(q * q + 1));
+}
+
+function balance(x) {
+  const t = x < 0.5 ? 2 * x : 1;
+  return f32(t * (2 - t));
+}
+
+/** Power-of-two delay buffer, 4-point Hermite read. */
+class Line {
+  constructor() { this.buffer = new Float32Array(16); this.mask = 15; this.write = 0; }
+  prepare(samples) {
+    let size = 16;
+    while (size < samples + 8) size <<= 1;
+    this.buffer = new Float32Array(size);
+    this.mask = size - 1;
+    this.write = 0;
+  }
+  reset() { this.buffer.fill(0); this.write = 0; }
+  push(x) { this.buffer[this.write] = x; this.write = (this.write + 1) & this.mask; }
+  /** The sample pushed `delay` pushes ago (1 = the latest), delay >= 2. */
+  read(delay) {
+    const di = delay | 0, frac = delay - di, b = this.buffer, mask = this.mask, at = this.write - di;
+    const xm1 = b[(at + 1) & mask], x0 = b[at & mask], x1 = b[(at - 1) & mask], x2 = b[(at - 2) & mask];
+    const c1 = 0.5 * (x1 - xm1);
+    const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;
+    const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+    return ((c3 * frac + c2) * frac + c1) * frac + x0;
+  }
+}
+
+/** One path of the 90-degree phase splitter; h[o ..] holds the last two samples of the input and of every section. */
+function hilbertPath(x, c, h, o) {
+  for (let k = 0; k < HILBERT_SECTIONS; ++k) {
+    const y = c[k] * (x + h[o + 2 * k + 3]) - h[o + 2 * k + 1];
+    h[o + 2 * k + 1] = h[o + 2 * k];
+    h[o + 2 * k] = x;
+    x = y;
+  }
+  h[o + 2 * HILBERT_SECTIONS + 1] = h[o + 2 * HILBERT_SECTIONS];
+  h[o + 2 * HILBERT_SECTIONS] = x;
+  return x;
+}
+
+/** One microphone looking at a rotor (Doppler, loudness, brightness). */
+function rotorTap(line, facing, depth, baseSamples, swingSamples, split, state, index, shadowLow, shadowHigh) {
+  const s = line.read(f32(baseSamples + swingSamples * depth * (1 - facing)));
+  const low = state[index] + split * (s - state[index]);
+  state[index] = low;
+  const away = f32(0.5 * depth * (1 - facing));
+  return low * (1 - shadowLow * away) + (s - low) * (1 - shadowHigh * away);
+}
+
+// maxDelayMs, ratio, exponential, lowPassHz, drive, offset, compressor, mono
+const FLANGER_VOICINGS = [
+  { maxDelayMs: 10, ratio: 20, exponential: false, lowPassHz: 10000, drive: 0.5, offset: 0.25, compressor: false, mono: false },   // Analog Flanger
+  { maxDelayMs: 12.25, ratio: 35, exponential: true, lowPassHz: 9000, drive: 0.5, offset: 0.5, compressor: true, mono: false },    // Jet Flanger
+  { maxDelayMs: 10, ratio: 20, exponential: false, lowPassHz: 6500, drive: 1, offset: 0.125, compressor: false, mono: false },     // AC Flanger
+  { maxDelayMs: 12.25, ratio: 35, exponential: true, lowPassHz: 6000, drive: 1, offset: 0, compressor: true, mono: true },         // 80A Flanger
+];
+
+const COMP_THRESHOLD = f32(0.1), SHADOW = { drumLow: f32(0.45), drumHigh: f32(0.85), hornLow: f32(0.5), hornHigh: f32(0.9), bassLow: f32(0.4), bassHigh: f32(0.7) };
+
+class ModFx {
+  prepare(sampleRate, maxBlock) {
+    this.variant = this.variant || 0;
+    this.fs = sampleRate;
+    this.invFs = 1 / sampleRate;
+    const fs = this.fs;
+
+    if (!this.sm) {
+      // from the knobs
+      this.rateHz = 1; this.rate2Hz = 0; this.volSens = 0; this.riseStep = 1; this.drumTarget = 0.67; this.hornTarget = 0.8;
+      this.steps = new Int32Array(4);
+      this.toneCoef = 1; this.wetLowPass = 1;
+      this.sm = [];
+      for (let i = 0; i < NUM_SMOOTHED; ++i) this.sm.push(new Ramp());
+      this.lines = [new Line(), new Line()];
+      this.barberCoef = new Float32Array(BARBER_STAGES);
+      this.hilbertI = new Float32Array(HILBERT_SECTIONS); this.hilbertQ = new Float32Array(HILBERT_SECTIONS);
+      // state
+      this.apL = new Float32Array(16); this.apR = new Float32Array(16);
+      this.lp = new Float32Array(10);
+      this.hilbert = new Float32Array(4 * (2 * HILBERT_SECTIONS + 2));
+      this.hilbertDelay = new Float32Array(2);
+    }
+
+    for (const line of this.lines) line.prepare(Math.floor(0.026 * fs));
+    for (const s of this.sm) s.reset(fs, 0.04);
+
+    this.envAttack = f32(this.glide(0.005));
+    this.envRelease = f32(this.glide(0.25));
+    this.compAttack = f32(this.glide(0.005));
+    this.compRelease = f32(this.glide(0.12));
+    this.tremCoef = f32(this.glide(0.0012));
+    this.ldrFast = this.glide(0.004);
+    this.ldrSlow = this.glide(0.045);
+    this.cellUp = this.glide(0.008);
+    this.cellDown = this.glide(0.02);
+    this.lampUp = this.glide(0.012);
+    this.lampDown = this.glide(0.035);
+    this.fbLowPass = f32(this.lowPass(6000));
+    this.fbHighPass = f32(this.lowPass(100));
+
+    // Barberpole: eight fixed all-pass stages spread evenly (in octaves) from 100 Hz to 6.4 kHz
+    for (let i = 0; i < BARBER_STAGES; ++i) {
+      const t = Math.tan((PI * 100 * Math.pow(64, i / 7)) / fs);
+      this.barberCoef[i] = (t - 1) / (t + 1);
+    }
+
+    this.designHilbert();
+    this.reset();
+  }
+
+  reset() {
+    for (const s of this.sm) s.setCurrentAndTarget(s.target);
+    for (const line of this.lines) line.reset();
+
+    this.phase = this.phase2 = this.seqPhase = 0;
+    this.ldrA = this.ldrB = this.lamp = this.rise = 0;
+    this.drumAngle = this.hornAngle = 0;
+    this.drumSpeed = this.drumTarget;
+    this.hornSpeed = this.hornTarget;
+    this.env = this.compEnv = this.fbL = this.fbR = 0;
+    this.apL.fill(0); this.apR.fill(0); this.lp.fill(0); this.hilbert.fill(0); this.hilbertDelay.fill(0);
+
+    this.seqStep = this.steps[0] === STEP_SKIP ? this.nextStep(0) : 0;
+    this.trem1 = this.trem2 = ModFx.stepGain(this.steps[this.seqStep], 0);
+  }
+
+  setModel(variant) { this.variant = clamp(variant | 0, 0, NUM_VARIANTS - 1); }
+
+  setParameters(k) {
+    const variant = this.variant;
+    this.volSens = 0;
+
+    switch (variant) {
+      case PATTERN_TREMOLO:
+        this.rateHz = k[0];
+        for (let i = 0; i < 4; ++i) this.steps[i] = pick(k, 1 + i, 19);
+        break;
+
+      case PANNER:
+      case BIAS_TREMOLO:
+      case OPTO_TREMOLO:
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        this.set(SM_SHAPE, pct(k, 2));
+        this.volSens = 3 * pct(k, 3);
+        this.set(SM_DRY, 1 - pct(k, 4));
+        this.set(SM_WET, pct(k, 4));
+        break;
+
+      case SCRIPT_PHASE:
+        this.rateHz = k[0];
+        break;
+
+      case PANNED_PHASER: {
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        // the panner sweeps the left half, everything or the right half; with Pan Spd at 0 it parks there
+        const pan = pick(k, 2, 3);
+        this.rate2Hz = k[3];
+        const moving = Math.min(1, this.rate2Hz / 0.05);
+        this.set(SM_A, 0.5 * pan + moving * (0.25 - 0.25 * pan));
+        this.set(SM_B, moving * (pan === 1 ? 0.5 : 0.25));
+        this.setMix(pct(k, 4), PANNED_FEEDBACK, true);
+        break;
+      }
+
+      case BARBERPOLE_PHASER: {
+        this.rateHz = k[0];
+        const mode = pick(k, 2, 3);
+        const feedback = 0.8 * pct(k, 1) * Math.min(1, 2 * pct(k, 3));
+        this.set(SM_FEEDBACK, feedback);
+        this.set(SM_DIR_L, mode === 1 ? -1 : 1);
+        this.set(SM_DIR_R, mode === 0 ? 1 : -1);
+        this.setMix(pct(k, 3), feedback, true);
+        break;
+      }
+
+      case DUAL_PHASER:
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        this.set(SM_FEEDBACK, 0.8 * pct(k, 2));
+        this.set(SM_SHAPE, pct(k, 3));
+        this.setMix(pct(k, 4), 0.8 * pct(k, 2), true);
+        break;
+
+      case U_VIBE:
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        this.set(SM_FEEDBACK, 0.7 * pct(k, 2));
+        this.volSens = 3 * pct(k, 3);
+        this.setMix(pct(k, 4), 0.7 * pct(k, 2), true);
+        break;
+
+      case PHASER: {
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        this.set(SM_FEEDBACK, 0.8 * pct(k, 2));
+        const stages = pick(k, 3, 4);
+        for (let t = 0; t < 4; ++t) this.set(SM_TAP0 + t, t === stages ? 1 : 0);
+        this.setMix(pct(k, 4), 0.8 * pct(k, 2), true);
+        break;
+      }
+
+      case PITCH_VIBRATO: {
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        const slow = 1 - pct(k, 2);
+        this.riseStep = this.invFs / (0.02 + 3 * slow * slow);
+        this.volSens = 3 * pct(k, 3);
+        this.setMix(pct(k, 4), 0, false);
+        this.wetLowPass = f32(this.lowPass(5500));
+        break;
+      }
+
+      case DIMENSION: {
+        // the four mode buttons add up: more modulation with every button, and button 4 doubles the speed
+        const s1 = pick(k, 0, 2), s2 = pick(k, 1, 2), s3 = pick(k, 2, 2), s4 = pick(k, 3, 2);
+        const amount = s1 + 2 * s2 + 3 * s3 + 4 * s4;
+        this.set(SM_DEPTH, 0.002 * (1 - Math.exp(-amount / 3.5)));
+        this.rateHz = s4 !== 0 ? 0.5 : 0.25;
+        this.setMix(amount > 0 ? pct(k, 4) : 0, 0, false);
+        this.wetLowPass = f32(this.lowPass(9000));
+        this.toneCoef = f32(this.lowPass(200));
+        break;
+      }
+
+      case ANALOG_CHORUS: {
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        const vibrato = pick(k, 2, 2);
+        this.set(SM_A, vibrato);
+        this.set(SM_B, 0.0032 * Math.min(1, 1.2 / this.rateHz)); // chorus swing (s): held back at high speeds
+        this.set(SM_TONE, this.lowPass(1200 * Math.pow(10, pct(k, 3))));
+        this.wetLowPass = f32(this.lowPass(8000));
+        const mix = pct(k, 4);
+        if (vibrato !== 0) {
+          // the CE-1's vibrato has no dry signal: from 50 % up the Mix knob leaves it that way
+          const angle = 0.5 * PI * Math.min(1, 2 * mix);
+          this.set(SM_DRY, Math.cos(angle));
+          this.set(SM_WET, Math.sin(angle));
+          this.set(SM_DRY_R, Math.cos(angle));
+          this.set(SM_WET_R, Math.sin(angle));
+        } else {
+          // chorus on the left output, the untouched signal on the right (the CE-1's two jacks)
+          this.set(SM_DRY, Math.cos(0.5 * PI * mix));
+          this.set(SM_WET, Math.sin(0.5 * PI * mix));
+          this.set(SM_DRY_R, 1);
+          this.set(SM_WET_R, 0);
+        }
+        break;
+      }
+
+      case TRI_CHORUS:
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        this.set(SM_A, pct(k, 2));
+        this.set(SM_B, pct(k, 3));
+        this.set(SM_C, Math.min(1, 1.5 / this.rateHz)); // the swing is held back at high speeds
+        this.setMix(pct(k, 4), 0, false);
+        this.wetLowPass = f32(this.lowPass(9000));
+        break;
+
+      case ANALOG_FLANGER:
+      case JET_FLANGER:
+      case AC_FLANGER:
+      case FLANGER_80A: {
+        const voicing = FLANGER_VOICINGS[variant - ANALOG_FLANGER];
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        this.set(SM_A, pct(k, 3));
+        let feedback = (variant === ANALOG_FLANGER ? 0.85 : variant === FLANGER_80A ? 0.93 : 0.9) * pct(k, 2);
+        if (variant === FLANGER_80A && pick(k, 4, 2) === 1) feedback = -feedback; // Odd: the regeneration is inverted
+        this.set(SM_FEEDBACK, feedback);
+
+        // dry and delayed signal at equal power, turned down by what the regeneration adds
+        const mix = variant === ANALOG_FLANGER || variant === JET_FLANGER ? pct(k, 4) : 0.5;
+        const c = Math.cos(0.5 * PI * mix), s = Math.sin(0.5 * PI * mix);
+        const norm = 1 / Math.sqrt(c * c + (s * s) / (1 - feedback * feedback));
+        this.set(SM_DRY, c * norm);
+        this.set(SM_WET, s * norm);
+        this.set(SM_B, Math.min(1, 2 * mix));
+        this.wetLowPass = f32(this.lowPass(voicing.lowPassHz));
+        break;
+      }
+
+      case FREQUENCY_SHIFTER: {
+        this.rateHz = k[0];
+        const mode = pick(k, 1, 3);
+        this.set(SM_DIR_L, mode === 1 ? -1 : 1);
+        this.set(SM_DIR_R, mode === 0 ? 1 : -1);
+        this.setMix(pct(k, 2), 0, false);
+        break;
+      }
+
+      case RING_MODULATOR:
+        this.rateHz = k[0];
+        this.set(SM_DEPTH, pct(k, 1));
+        this.set(SM_SHAPE, pct(k, 2));
+        this.set(SM_A, pct(k, 3));
+        this.setMix(pct(k, 4), 0, false);
+        break;
+
+      case ROTARY_DRUM:
+      case ROTARY_DRUM_HORN: {
+        const fast = pick(k, 0, 2) === 1;
+        this.drumTarget = fast ? 5.7 : 0.67;
+        this.hornTarget = fast ? 6.8 : 0.8;
+        this.set(SM_DEPTH, pct(k, 1));
+        if (variant === ROTARY_DRUM) this.set(SM_TONE, this.lowPass(1500 * Math.pow(6, pct(k, 2))));
+        else this.set(SM_A, pct(k, 2));
+        // the tube amp: more gain into the clipping, turned back down so a full-level note stays where it was
+        const gain = 1 + 7 * pct(k, 3) * pct(k, 3);
+        this.set(SM_B, gain);
+        this.set(SM_C, 0.4 / tubeClip(0.4 * gain));
+        this.setMix(pct(k, 4), 0, false);
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  process(left, right, n) {
+    switch (this.variant) {
+      case PATTERN_TREMOLO: this.processPattern(left, right, n); break;
+      case PANNER: this.processPanner(left, right, n); break;
+      case BIAS_TREMOLO: this.processBias(left, right, n); break;
+      case OPTO_TREMOLO: this.processOpto(left, right, n); break;
+      case SCRIPT_PHASE: this.processScript(left, right, n); break;
+      case PANNED_PHASER: this.processPanned(left, right, n); break;
+      case BARBERPOLE_PHASER: this.processBarberpole(left, right, n); break;
+      case DUAL_PHASER: this.processDual(left, right, n); break;
+      case U_VIBE: this.processVibe(left, right, n); break;
+      case PHASER: this.processPhaser(left, right, n); break;
+      case PITCH_VIBRATO: this.processVibrato(left, right, n); break;
+      case DIMENSION: this.processDimension(left, right, n); break;
+      case ANALOG_CHORUS: this.processChorus(left, right, n); break;
+      case TRI_CHORUS: this.processTriChorus(left, right, n); break;
+      case ANALOG_FLANGER:
+      case JET_FLANGER:
+      case AC_FLANGER:
+      case FLANGER_80A: this.processFlanger(left, right, n, FLANGER_VOICINGS[this.variant - ANALOG_FLANGER]); break;
+      case FREQUENCY_SHIFTER: this.processShifter(left, right, n); break;
+      case RING_MODULATOR: this.processRing(left, right, n); break;
+      case ROTARY_DRUM: this.processDrum(left, right, n); break;
+      case ROTARY_DRUM_HORN: this.processLeslie(left, right, n); break;
+      default: break;
+    }
+  }
+
+  // ---- helpers
+  set(index, value) { this.sm[index].setTarget(f32(value)); }
+
+  glide(seconds) { return 1 - Math.exp(-1 / (seconds * this.fs)); }
+
+  /** Coefficient c of the one-pole low-pass y += c (x - y) that is 3 dB down at `hz` at any sample rate. */
+  lowPass(hz) {
+    const b = 2 - Math.cos((TWO_PI * Math.min(hz, 0.45 * this.fs)) / this.fs);
+    return 1 - (b - Math.sqrt(b * b - 1));
+  }
+
+  setMix(mix, feedback, makeUp) {
+    const c = Math.cos(0.5 * PI * mix), s = Math.sin(0.5 * PI * mix);
+    const wetGain = makeUp ? 1 + feedback : 1;
+    const norm = 1 / Math.sqrt(c * c + (s * s * (1 + feedback)) / (1 - feedback));
+    this.sm[SM_DRY].setTarget(f32(c * norm));
+    this.sm[SM_WET].setTarget(f32(s * wetGain * norm));
+  }
+
+  designHilbert() {
+    const count = 2 * HILBERT_SECTIONS, order = 2 * count + 1;
+    const transition = 60 / this.fs;
+    let k = Math.tan(((1 - transition * 2) * PI) / 4);
+    k *= k;
+    const root = Math.pow(1 - k * k, 0.25);
+    const e = (0.5 * (1 - root)) / (1 + root), e4 = e * e * e * e;
+    const q = e * (1 + e4 * (2 + e4 * (15 + 150 * e4)));
+
+    for (let index = 0; index < count; ++index) {
+      const c = index + 1;
+      let num = 0, den = 0.5, sign = 1;
+      for (let i = 0; i < 14; ++i) {
+        num += sign * Math.pow(q, i * (i + 1)) * Math.sin(((2 * i + 1) * c * PI) / order);
+        sign = -sign;
+      }
+      sign = -1;
+      for (let i = 1; i < 14; ++i) {
+        den += sign * Math.pow(q, i * i) * Math.cos((2 * i * c * PI) / order);
+        sign = -sign;
+      }
+      num *= Math.pow(q, 0.25);
+      const ww = (num / den) * (num / den);
+      const x = Math.sqrt((1 - ww * k) * (1 - ww / k)) / (1 + ww);
+      const coef = (1 - x) / (1 + x);
+      if ((index & 1) !== 0) this.hilbertQ[index >> 1] = coef;
+      else this.hilbertI[index >> 1] = coef;
+    }
+  }
+
+  /** VolSens: the louder the playing, the faster the LFO. Returns the phase step. */
+  sensedIncrement(mono) {
+    const a = Math.abs(mono), env = this.env;
+    this.env = f32(env + f32((a > env ? this.envAttack : this.envRelease) * f32(a - env)));
+    return this.rateHz * this.invFs * (1 + this.volSens * Math.min(1, 2.5 * this.env));
+  }
+
+  // ---- Pattern Tremolo
+  nextStep(from) {
+    for (let i = 1; i <= 4; ++i) if (this.steps[(from + i) & 3] !== STEP_SKIP) return (from + i) & 3;
+    return from;
+  }
+
+  static stepGain(step, position) {
+    if (step === STEP_MUTE) return 0;
+    if (step > STEP_MUTE) return 1; // Full (and a step switched to Skip while it plays)
+    const pulse = position * (step + 1);
+    return pulse - Math.floor(pulse) < 0.5 ? 1 : 0;
+  }
+
+  processPattern(l, r, n) {
+    const inc = this.rateHz * this.invFs, steps = this.steps, tremCoef = this.tremCoef;
+    let seqPhase = this.seqPhase, seqStep = this.seqStep, trem1 = this.trem1, trem2 = this.trem2;
+    for (let i = 0; i < n; ++i) {
+      seqPhase += inc;
+      if (seqPhase >= 1) {
+        seqPhase -= 1;
+        seqStep = this.nextStep(seqStep);
+      }
+      const target = ModFx.stepGain(steps[seqStep], seqPhase);
+      trem1 = f32(trem1 + tremCoef * (target - trem1));
+      trem2 = f32(trem2 + tremCoef * (trem1 - trem2));
+      l[i] *= trem2;
+      r[i] *= trem2;
+    }
+    this.seqPhase = seqPhase; this.seqStep = seqStep; this.trem1 = trem1; this.trem2 = trem2;
+  }
+
+  // ---- Panner
+  processPanner(l, r, n) {
+    const sm = this.sm, shapeS = sm[SM_SHAPE], depthS = sm[SM_DEPTH], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const edge = squareEdge(this.rateHz);
+    let phase = this.phase;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += this.sensedIncrement(f32(0.5 * (inL + inR)));
+      if (phase >= 1) phase -= 1;
+      const u = morphLfo(phase, shapeS.next(), edge);
+      const angle = 0.25 * PI * (1 + depthS.next() * u);
+      const gl = f32(SQRT2 * Math.cos(angle)), gr = f32(SQRT2 * Math.sin(angle));
+      const dry = dryS.next(), wet = wetS.next();
+      l[i] = inL * (dry + wet * gl);
+      r[i] = inR * (dry + wet * gr);
+    }
+    this.phase = phase;
+  }
+
+  // ---- Bias Tremolo
+  processBias(l, r, n) {
+    const sm = this.sm, shapeS = sm[SM_SHAPE], depthS = sm[SM_DEPTH], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const edge = squareEdge(this.rateHz);
+    let phase = this.phase;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += this.sensedIncrement(f32(0.5 * (inL + inR)));
+      if (phase >= 1) phase -= 1;
+      const amount = shapeS.next(), g = amount * amount * edge;
+      const swing = BIAS_SWING * depthS.next();
+      const uL = sineToSquare(Math.sin(TWO_PI * phase), g), uR = sineToSquare(Math.cos(TWO_PI * phase), g);
+      const bL = f32(BIAS_REST - swing * (0.5 - 0.5 * uL)), bR = f32(BIAS_REST - swing * (0.5 - 0.5 * uR));
+      const dry = dryS.next(), wet = wetS.next();
+      l[i] = dry * inL + wet * biasStage(inL, bL);
+      r[i] = dry * inR + wet * biasStage(inR, bR);
+    }
+    this.phase = phase;
+  }
+
+  // ---- Opto Tremolo
+  processOpto(l, r, n) {
+    const sm = this.sm, shapeS = sm[SM_SHAPE], depthS = sm[SM_DEPTH], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const edge = squareEdge(this.rateHz), ldrFast = this.ldrFast, ldrSlow = this.ldrSlow;
+    let phase = this.phase, ldrA = this.ldrA;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += this.sensedIncrement(f32(0.5 * (inL + inR)));
+      if (phase >= 1) phase -= 1;
+      const amount = shapeS.next();
+      const drive = sineToSquare(Math.sin(TWO_PI * phase), 2 + amount * amount * edge);
+      const light = drive > 0.25 ? (drive - 0.25) / 0.75 : 0;
+      ldrA += (light > ldrA ? ldrFast : ldrSlow) * (light - ldrA);
+      const level = depthS.next();
+      const gain = f32(1 / (1 + 24 * level * level * ldrA * ldrA));
+      const g = dryS.next() + wetS.next() * gain;
+      l[i] = inL * g;
+      r[i] = inR * g;
+    }
+    this.phase = phase; this.ldrA = ldrA;
+  }
+
+  // ---- Script Phase
+  processScript(l, r, n) {
+    const inc = this.rateHz * this.invFs, low = (PI * 200) / this.fs, apL = this.apL, apR = this.apR, gain = f32(0.6);
+    let phase = this.phase;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const tri = 1 - Math.abs(2 * phase - 1);
+      const bent = 0.5 * (tri + tri * tri * (3 - 2 * tri));
+      const a = f32(allpassCoef(low * Math.exp(2.1972245773362196 * bent))); // ln 9
+      l[i] = gain * (inL + allpassChain(inL, a, apL, 0, 4));
+      r[i] = gain * (inR + allpassChain(inR, a, apR, 0, 4));
+    }
+    this.phase = phase;
+  }
+
+  // ---- Panned Phaser
+  processPanned(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], aS = sm[SM_A], bS = sm[SM_B], dryS = sm[SM_DRY], wetS = sm[SM_WET], apL = this.apL;
+    const inc = this.rateHz * this.invFs, panInc = this.rate2Hz * this.invFs, centre = (PI * 550) / this.fs;
+    let phase = this.phase, phase2 = this.phase2, fbL = this.fbL;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      phase2 += panInc;
+      if (phase2 >= 1) phase2 -= 1;
+      const a = f32(allpassCoef(centre * Math.exp(1.1090354888959124 * depthS.next() * Math.sin(TWO_PI * phase)))); // +-1.6 octaves
+      fbL = f32(allpassChain(0.5 * (inL + inR) + PANNED_FEEDBACK_F * fbL, a, apL, 0, 4));
+      const pan = aS.next() + bS.next() * Math.sin(TWO_PI * phase2);
+      const dry = dryS.next(), wet = wetS.next() * fbL;
+      l[i] = dry * inL + wet * balance(1 - pan);
+      r[i] = dry * inR + wet * balance(pan);
+    }
+    this.phase = phase; this.phase2 = phase2; this.fbL = fbL;
+  }
+
+  // ---- Barberpole Phaser
+  processBarberpole(l, r, n) {
+    const sm = this.sm, fbS = sm[SM_FEEDBACK], dryS = sm[SM_DRY], wetS = sm[SM_WET], dirLS = sm[SM_DIR_L], dirRS = sm[SM_DIR_R];
+    const inc = this.rateHz * this.invFs, coef = this.barberCoef, apL = this.apL, apR = this.apR, lp = this.lp;
+    const hI = this.hilbertI, hQ = this.hilbertQ, h = this.hilbert, hd = this.hilbertDelay;
+    const fbLowPass = this.fbLowPass, fbHighPass = this.fbHighPass;
+    let phase = this.phase, fbL = this.fbL, fbR = this.fbR;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const c = f32(Math.cos(TWO_PI * phase)), s = f32(Math.sin(TWO_PI * phase));
+      const fb = fbS.next(), dry = dryS.next(), wet = wetS.next();
+      const dirL = dirLS.next(), dirR = dirRS.next();
+
+      let x = inL + fb * fbL;
+      for (let k = 0; k < BARBER_STAGES; ++k) {
+        const y = coef[k] * x + apL[k];
+        apL[k] = x - coef[k] * y;
+        x = y;
+      }
+      let si = hilbertPath(x, hI, h, 0);
+      let sq = hd[0];
+      hd[0] = hilbertPath(x, hQ, h, 14);
+      const wetL = si * c - dirL * sq * s;
+      lp[0] += fbLowPass * (wetL - lp[0]);
+      lp[1] += fbHighPass * (lp[0] - lp[1]);
+      fbL = f32(lp[0] - lp[1]);
+
+      x = inR + fb * fbR;
+      for (let k = 0; k < BARBER_STAGES; ++k) {
+        const y = coef[k] * x + apR[k];
+        apR[k] = x - coef[k] * y;
+        x = y;
+      }
+      si = hilbertPath(x, hI, h, 28);
+      sq = hd[1];
+      hd[1] = hilbertPath(x, hQ, h, 42);
+      const wetR = si * c - dirR * sq * s;
+      lp[2] += fbLowPass * (wetR - lp[2]);
+      lp[3] += fbHighPass * (lp[2] - lp[3]);
+      fbR = f32(lp[2] - lp[3]);
+
+      l[i] = dry * inL + wet * wetL;
+      r[i] = dry * inR + wet * wetR;
+    }
+    this.phase = phase; this.fbL = fbL; this.fbR = fbR;
+  }
+
+  // ---- Dual Phaser
+  processDual(l, r, n) {
+    const sm = this.sm, shapeS = sm[SM_SHAPE], depthS = sm[SM_DEPTH], fbS = sm[SM_FEEDBACK], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const inc = this.rateHz * this.invFs, centre = (PI * 420) / this.fs, edge = squareEdge(this.rateHz);
+    const cellUp = this.cellUp, cellDown = this.cellDown, apL = this.apL, apR = this.apR;
+    let phase = this.phase, ldrA = this.ldrA, ldrB = this.ldrB, fbL = this.fbL, fbR = this.fbR;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i], m = f32(0.5 * (inL + inR));
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const amount = shapeS.next();
+      const u = sineToSquare(Math.sin(TWO_PI * phase), amount * amount * edge);
+      ldrA += (u > ldrA ? cellUp : cellDown) * (u - ldrA);
+      ldrB += (-u > ldrB ? cellUp : cellDown) * (-u - ldrB);
+      const range = 1.178350206951907 * depthS.next(); // +-1.7 octaves
+      const aA = f32(allpassCoef(centre * Math.exp(range * ldrA))), aB = f32(allpassCoef(centre * Math.exp(range * ldrB)));
+      const fb = fbS.next(), dry = dryS.next(), wet = wetS.next();
+      fbL = f32(allpassChain(m + fb * fbL, aA, apL, 0, 6));
+      fbR = f32(allpassChain(m + fb * fbR, aB, apR, 0, 6));
+      l[i] = dry * inL + wet * fbL;
+      r[i] = dry * inR + wet * fbR;
+    }
+    this.phase = phase; this.ldrA = ldrA; this.ldrB = ldrB; this.fbL = fbL; this.fbR = fbR;
+  }
+
+  // ---- U-Vibe
+  processVibe(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], fbS = sm[SM_FEEDBACK], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const base = (PI * 600) / this.fs, lampUp = this.lampUp, lampDown = this.lampDown, apL = this.apL;
+    let phase = this.phase, lamp = this.lamp, fbL = this.fbL;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i], m = f32(0.5 * (inL + inR));
+      phase += this.sensedIncrement(m);
+      if (phase >= 1) phase -= 1;
+      const glow = 0.5 + 0.5 * Math.sin(TWO_PI * phase);
+      lamp += (glow > lamp ? lampUp : lampDown) * (glow - lamp);
+      const w = base * Math.exp(2.772588722239781 * depthS.next() * (lamp * lamp - 0.45)); // 4 octaves
+      const fb = fbS.next();
+      let x = m + fb * fbL;
+      for (let k = 0; k < 4; ++k) {
+        const a = f32(allpassCoef(Math.min(1.35, w * VIBE_RATIO[k])));
+        const y = a * x + apL[k];
+        apL[k] = x - a * y;
+        x = y;
+      }
+      fbL = x = f32(x);
+      const dry = dryS.next(), wet = wetS.next() * x;
+      l[i] = dry * inL + wet;
+      r[i] = dry * inR + wet;
+    }
+    this.phase = phase; this.lamp = lamp; this.fbL = fbL;
+  }
+
+  // ---- Phaser
+  processPhaser(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], fbS = sm[SM_FEEDBACK], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const inc = this.rateHz * this.invFs, centre = (PI * 600) / this.fs, apL = this.apL, apR = this.apR;
+    let taps = 1;
+    for (let t = 1; t < 4; ++t) if (sm[SM_TAP0 + t].target > 0 || sm[SM_TAP0 + t].isSmoothing()) taps = t + 1;
+
+    let phase = this.phase, fbL = this.fbL, fbR = this.fbR;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i], m = f32(0.5 * (inL + inR));
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const range = 1.1090354888959124 * depthS.next();
+      const aL = f32(allpassCoef(centre * Math.exp(range * Math.sin(TWO_PI * phase))));
+      const aR = f32(allpassCoef(centre * Math.exp(range * Math.cos(TWO_PI * phase))));
+      const fb = fbS.next(), dry = dryS.next(), wet = wetS.next();
+      let xl = m + fb * fbL, xr = m + fb * fbR, outL = 0, outR = 0;
+      for (let t = 0; t < 4; ++t) {
+        const gain = sm[SM_TAP0 + t].next();
+        if (t < taps) {
+          xl = allpassChain(xl, aL, apL, 4 * t, 4);
+          xr = allpassChain(xr, aR, apR, 4 * t, 4);
+          outL += gain * xl;
+          outR += gain * xr;
+        }
+      }
+      fbL = outL = f32(outL);
+      fbR = outR = f32(outR);
+      l[i] = dry * inL + wet * outL;
+      r[i] = dry * inR + wet * outR;
+    }
+    this.phase = phase; this.fbL = fbL; this.fbR = fbR;
+  }
+
+  // ---- Pitch Vibrato
+  processVibrato(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const fs = this.fs, line = this.lines[0], lp = this.lp, wetLowPass = this.wetLowPass, riseStep = this.riseStep;
+    let phase = this.phase, rise = this.rise;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i], m = f32(0.5 * (inL + inR));
+      rise = Math.min(1, rise + riseStep);
+      const ramp = rise * rise * (3 - 2 * rise);
+      phase += this.sensedIncrement(m) * (0.5 + 0.5 * ramp);
+      if (phase >= 1) phase -= 1;
+      const w = line.read(f32(fs * (0.005 + 0.0016 * depthS.next() * ramp * Math.sin(TWO_PI * phase))));
+      line.push(softClip(m));
+      lp[0] += wetLowPass * (w - lp[0]);
+      lp[1] += wetLowPass * (lp[0] - lp[1]);
+      const dry = dryS.next(), wet = wetS.next() * lp[1];
+      l[i] = dry * inL + wet;
+      r[i] = dry * inR + wet;
+    }
+    this.phase = phase; this.rise = rise;
+  }
+
+  // ---- Dimension
+  processDimension(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const inc = this.rateHz * this.invFs, fs = this.fs, line = this.lines[0], lp = this.lp;
+    const wetLowPass = this.wetLowPass, toneCoef = this.toneCoef, cross = f32(0.4);
+    let phase = this.phase;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i], m = f32(0.5 * (inL + inR));
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const swing = depthS.next() * (1 - 4 * Math.abs(phase - 0.5));
+      const a = line.read(f32(fs * (0.008 + swing))), b = line.read(f32(fs * (0.008 - swing)));
+      lp[4] += toneCoef * (m - lp[4]);
+      line.push(softClip(m - lp[4]));
+      lp[0] += wetLowPass * (a - lp[0]);
+      lp[1] += wetLowPass * (lp[0] - lp[1]);
+      lp[2] += wetLowPass * (b - lp[2]);
+      lp[3] += wetLowPass * (lp[2] - lp[3]);
+      const dry = dryS.next(), wet = wetS.next();
+      l[i] = dry * inL + wet * (lp[1] - cross * lp[3]);
+      r[i] = dry * inR + wet * (lp[3] - cross * lp[1]);
+    }
+    this.phase = phase;
+  }
+
+  // ---- Analog Chorus
+  processChorus(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], aS = sm[SM_A], bS = sm[SM_B], toneS = sm[SM_TONE];
+    const dryS = sm[SM_DRY], wetS = sm[SM_WET], dryRS = sm[SM_DRY_R], wetRS = sm[SM_WET_R];
+    const inc = this.rateHz * this.invFs, fs = this.fs, line = this.lines[0], lp = this.lp, wetLowPass = this.wetLowPass;
+    let phase = this.phase;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const vibrato = aS.next();
+      const tri = 1 - 4 * Math.abs(phase - 0.5);
+      const lfo = tri + vibrato * (-Math.cos(TWO_PI * phase) - tri);
+      const chorusSwing = bS.next();
+      const swing = depthS.next() * (chorusSwing + vibrato * (0.0024 - chorusSwing));
+      const w = line.read(f32(fs * (0.007 - 0.002 * vibrato + swing * lfo)));
+      line.push(softClip(f32(0.5 * (inL + inR))));
+      lp[0] += wetLowPass * (w - lp[0]);
+      lp[1] += wetLowPass * (lp[0] - lp[1]);
+      lp[2] += toneS.next() * (lp[1] - lp[2]);
+      l[i] = dryS.next() * inL + wetS.next() * lp[2];
+      r[i] = dryRS.next() * inR + wetRS.next() * lp[2];
+    }
+    this.phase = phase;
+  }
+
+  // ---- Tri Chorus
+  processTriChorus(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], aS = sm[SM_A], bS = sm[SM_B], cS = sm[SM_C], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const fs = this.fs, inc = this.rateHz * this.invFs, inc2 = 5.3 * inc, line = this.lines[0], lp = this.lp, wetLowPass = this.wetLowPass;
+    const slowSwing = 0.0022 * fs, quickSwing = 0.00012 * fs, side = f32(0.75), both = f32(0.7);
+    let phase = this.phase, phase2 = this.phase2;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      phase2 += inc2;
+      if (phase2 >= 1) phase2 -= 1;
+      const s1 = Math.sin(TWO_PI * phase), c1 = Math.cos(TWO_PI * phase);
+      const s2 = Math.sin(TWO_PI * phase2), c2 = Math.cos(TWO_PI * phase2);
+      const scale = cS.next(), slow = slowSwing * scale, quick = quickSwing * scale;
+      const d1 = depthS.next(), d2 = aS.next(), d3 = bS.next();
+      const t1 = line.read(f32(0.006 * fs + d1 * (slow * s1 + quick * s2)));
+      const t2 = line.read(f32(0.008 * fs + d2 * (slow * (-0.5 * s1 + SIN120 * c1) + quick * (-0.5 * s2 - SIN120 * c2))));
+      const t3 = line.read(f32(0.0105 * fs + d3 * (slow * (-0.5 * s1 - SIN120 * c1) + quick * (-0.5 * s2 + SIN120 * c2))));
+      line.push(softClip(f32(0.5 * (inL + inR))));
+      const wl = side * (t1 + both * t2), wr = side * (t3 + both * t2);
+      lp[0] += wetLowPass * (wl - lp[0]);
+      lp[1] += wetLowPass * (lp[0] - lp[1]);
+      lp[2] += wetLowPass * (wr - lp[2]);
+      lp[3] += wetLowPass * (lp[2] - lp[3]);
+      const dry = dryS.next(), wet = wetS.next();
+      l[i] = dry * inL + wet * lp[1];
+      r[i] = dry * inR + wet * lp[3];
+    }
+    this.phase = phase; this.phase2 = phase2;
+  }
+
+  // ---- the four flangers
+  processFlanger(l, r, n, v) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], aS = sm[SM_A], bS = sm[SM_B], fbS = sm[SM_FEEDBACK], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const inc = this.rateHz * this.invFs, maxDelay = 0.001 * v.maxDelayMs * this.fs, lnRatio = Math.log(v.ratio);
+    const drive = v.drive, invDrive = f32(1 / v.drive), lp = this.lp, wetLowPass = this.wetLowPass;
+    const line0 = this.lines[0], line1 = this.lines[1], compAttack = this.compAttack, compRelease = this.compRelease;
+    const exponential = v.exponential, ratio = v.ratio, makeUp = f32(1.25);
+    let phase = this.phase, compEnv = this.compEnv;
+    for (let i = 0; i < n; ++i) {
+      let inL = l[i], inR = r[i];
+      const m = f32(0.5 * (inL + inR));
+      let feed = m;
+      if (v.compressor) {
+        // the compressor in front: 2:1 above -20 dB, 2 dB of make-up (see the C++)
+        const a = Math.abs(m);
+        compEnv = f32(compEnv + f32((a > compEnv ? compAttack : compRelease) * f32(a - compEnv)));
+        const g = f32(makeUp * f32(Math.sqrt(f32(COMP_THRESHOLD / Math.max(compEnv, COMP_THRESHOLD)))));
+        const dryGain = f32(1 + f32(bS.next() * f32(g - 1)));
+        feed = f32(m * g);
+        inL = f32(inL * dryGain);
+        inR = f32(inR * dryGain);
+      }
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const depth = depthS.next(), manual = aS.next();
+      const fb = fbS.next(), dry = dryS.next(), wet = wetS.next();
+
+      let cv = manual + depth * (1 - Math.abs(2 * phase - 1) - manual);
+      let w = invDrive * line0.read(f32(exponential ? maxDelay * Math.exp(-lnRatio * cv) : maxDelay / (1 + (ratio - 1) * cv)));
+      lp[0] += wetLowPass * (w - lp[0]);
+      lp[1] += wetLowPass * (lp[0] - lp[1]);
+      line0.push(softClip(drive * (feed + fb * lp[1])));
+
+      if (v.mono) {
+        l[i] = r[i] = dry * 0.5 * (inL + inR) + wet * lp[1];
+        continue;
+      }
+
+      let pr = phase + v.offset;
+      if (pr >= 1) pr -= 1;
+      cv = manual + depth * (1 - Math.abs(2 * pr - 1) - manual);
+      w = invDrive * line1.read(f32(exponential ? maxDelay * Math.exp(-lnRatio * cv) : maxDelay / (1 + (ratio - 1) * cv)));
+      lp[2] += wetLowPass * (w - lp[2]);
+      lp[3] += wetLowPass * (lp[2] - lp[3]);
+      line1.push(softClip(drive * (feed + fb * lp[3])));
+
+      l[i] = dry * inL + wet * lp[1];
+      r[i] = dry * inR + wet * lp[3];
+    }
+    this.phase = phase; this.compEnv = compEnv;
+  }
+
+  // ---- Frequency Shifter
+  processShifter(l, r, n) {
+    const sm = this.sm, dryS = sm[SM_DRY], wetS = sm[SM_WET], dirLS = sm[SM_DIR_L], dirRS = sm[SM_DIR_R];
+    const inc = this.rateHz * this.invFs, hI = this.hilbertI, hQ = this.hilbertQ, h = this.hilbert, hd = this.hilbertDelay;
+    let phase = this.phase;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const c = f32(Math.cos(TWO_PI * phase)), s = f32(Math.sin(TWO_PI * phase));
+      const dry = dryS.next(), wet = wetS.next();
+      const dirL = dirLS.next(), dirR = dirRS.next();
+
+      let si = hilbertPath(inL, hI, h, 0);
+      let sq = hd[0];
+      hd[0] = hilbertPath(inL, hQ, h, 14);
+      l[i] = dry * inL + wet * (si * c - dirL * sq * s);
+
+      si = hilbertPath(inR, hI, h, 28);
+      sq = hd[1];
+      hd[1] = hilbertPath(inR, hQ, h, 42);
+      r[i] = dry * inR + wet * (si * c - dirR * sq * s);
+    }
+    this.phase = phase;
+  }
+
+  // ---- Ring Modulator
+  processRing(l, r, n) {
+    const sm = this.sm, shapeS = sm[SM_SHAPE], depthS = sm[SM_DEPTH], aS = sm[SM_A], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const inc = this.rateHz * this.invFs, fs = this.fs, line = this.lines[0];
+    let phase = this.phase;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      phase += inc;
+      if (phase >= 1) phase -= 1;
+      const amount = shapeS.next(), g = 12 * amount * amount, depth = depthS.next();
+      const carL = sineToSquare(Math.sin(TWO_PI * phase), g), carR = sineToSquare(Math.cos(TWO_PI * phase), g);
+      const fmL = line.read(f32(fs * (0.0006 + 0.00045 * depth * carL)));
+      const fmR = line.read(f32(fs * (0.0006 + 0.00045 * depth * carR)));
+      line.push(f32(0.5 * (inL + inR)));
+      const amL = inL * f32(1 - depth + depth * carL), amR = inR * f32(1 - depth + depth * carR);
+      const blend = aS.next(), dry = dryS.next(), wet = wetS.next();
+      l[i] = dry * inL + wet * (amL + blend * (fmL - amL));
+      r[i] = dry * inR + wet * (amR + blend * (fmR - amR));
+    }
+    this.phase = phase;
+  }
+
+  // ---- Rotary Drum
+  processDrum(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], bS = sm[SM_B], cS = sm[SM_C], toneS = sm[SM_TONE], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const fs = this.fs, invFs = this.invFs, line = this.lines[0], lp = this.lp, target = this.drumTarget;
+    const up = this.glide(0.5), down = this.glide(0.8), base = 0.001 * fs, swing = 0.00035 * fs;
+    const band = f32(this.lowPass(5000)), split = f32(this.lowPass(1200));
+    let speed = this.drumSpeed, angle = this.drumAngle;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      const x = tubeClip(f32(0.5 * (inL + inR)) * bS.next()) * cS.next();
+      lp[0] += band * (x - lp[0]);
+      lp[1] += band * (lp[0] - lp[1]);
+      line.push(lp[1]);
+      speed += (target > speed ? up : down) * (target - speed);
+      angle += speed * invFs;
+      if (angle >= 1) angle -= 1;
+      const depth = depthS.next();
+      const c = Math.cos(TWO_PI * angle), s = Math.sin(TWO_PI * angle);
+      const micL = rotorTap(line, c, depth, base, swing, split, lp, 4, SHADOW.drumLow, SHADOW.drumHigh);
+      const micR = rotorTap(line, -s, depth, base, swing, split, lp, 5, SHADOW.drumLow, SHADOW.drumHigh);
+      const tone = toneS.next();
+      lp[2] += tone * (micL - lp[2]);
+      lp[3] += tone * (micR - lp[3]);
+      const dry = dryS.next(), wet = wetS.next() * f32(1 + 0.3 * depth);
+      l[i] = dry * inL + wet * lp[2];
+      r[i] = dry * inR + wet * lp[3];
+    }
+    this.drumSpeed = speed; this.drumAngle = angle;
+  }
+
+  // ---- Rotary Drm/Hrn
+  processLeslie(l, r, n) {
+    const sm = this.sm, depthS = sm[SM_DEPTH], aS = sm[SM_A], bS = sm[SM_B], cS = sm[SM_C], dryS = sm[SM_DRY], wetS = sm[SM_WET];
+    const fs = this.fs, invFs = this.invFs, line0 = this.lines[0], line1 = this.lines[1], lp = this.lp;
+    const hornTarget = this.hornTarget, drumTarget = this.drumTarget;
+    const hornUp = this.glide(0.3), hornDown = this.glide(0.5), drumUp = this.glide(1.5), drumDown = this.glide(1.2);
+    const base = 0.001 * fs, hornSwing = 0.0005 * fs, drumSwing = 0.00025 * fs;
+    const cross = f32(this.lowPass(800)), top = f32(this.lowPass(7000));
+    const hornSplit = f32(this.lowPass(2500)), drumSplit = f32(this.lowPass(400));
+    let hornSpeed = this.hornSpeed, hornAngle = this.hornAngle, drumSpeed = this.drumSpeed, drumAngle = this.drumAngle;
+    for (let i = 0; i < n; ++i) {
+      const inL = l[i], inR = r[i];
+      const x = f32(tubeClip(f32(0.5 * (inL + inR)) * bS.next()) * cS.next());
+      // 12 dB per octave both ways; the horn is wired out of phase, as such a crossover needs to add up flat
+      lp[0] += cross * (x - lp[0]);
+      lp[1] += cross * (lp[0] - lp[1]);
+      const h1 = f32(x - lp[8]);
+      lp[8] += cross * h1;
+      const h2 = f32(h1 - lp[9]);
+      lp[9] += cross * h2;
+      lp[2] += top * (-h2 - lp[2]);
+      line0.push(lp[2]);
+      line1.push(lp[1]);
+      hornSpeed += (hornTarget > hornSpeed ? hornUp : hornDown) * (hornTarget - hornSpeed);
+      hornAngle += hornSpeed * invFs;
+      if (hornAngle >= 1) hornAngle -= 1;
+      drumSpeed += (drumTarget > drumSpeed ? drumUp : drumDown) * (drumTarget - drumSpeed);
+      drumAngle += drumSpeed * invFs;
+      if (drumAngle >= 1) drumAngle -= 1;
+      const drumDepth = depthS.next(), hornDepth = aS.next();
+      const hc = Math.cos(TWO_PI * hornAngle), hs = Math.sin(TWO_PI * hornAngle);
+      const dc = Math.cos(TWO_PI * drumAngle), ds = Math.sin(TWO_PI * drumAngle);
+      const hornGain = f32(1 + 0.35 * hornDepth), drumGain = f32(1 + 0.2 * drumDepth);
+      const micL = hornGain * rotorTap(line0, hc, hornDepth, base, hornSwing, hornSplit, lp, 4, SHADOW.hornLow, SHADOW.hornHigh)
+                 + drumGain * rotorTap(line1, dc, drumDepth, base, drumSwing, drumSplit, lp, 6, SHADOW.bassLow, SHADOW.bassHigh);
+      const micR = hornGain * rotorTap(line0, -hs, hornDepth, base, hornSwing, hornSplit, lp, 5, SHADOW.hornLow, SHADOW.hornHigh)
+                 + drumGain * rotorTap(line1, ds, drumDepth, base, drumSwing, drumSplit, lp, 7, SHADOW.bassLow, SHADOW.bassHigh);
+      const dry = dryS.next(), wet = wetS.next();
+      l[i] = dry * inL + wet * micL;
+      r[i] = dry * inR + wet * micR;
+    }
+    this.hornSpeed = hornSpeed; this.hornAngle = hornAngle; this.drumSpeed = drumSpeed; this.drumAngle = drumAngle;
+  }
+}
+
+const speed = (def) => hertz("Speed", 0.05, 10, def, 1);
+const mod = (key, name, variant, basedOn, knobs) => model(key, name, CATEGORY.modulation, ENGINE.modFx, variant, basedOn, knobs);
+
+/** In the order of the variants. */
+const MOD_MODELS = [
+  mod("pattern_tremolo", "Pattern Tremolo", PATTERN_TREMOLO, "Inspired by Lightfoot Labs Goatkeeper",
+    [speed(2), choice("Step 1", STEP_NAMES, 0), choice("Step 2", STEP_NAMES, 1), choice("Step 3", STEP_NAMES, 3), choice("Step 4", STEP_NAMES, 1)]),
+  mod("panner", "Panner", PANNER, "Auto-panner",
+    [speed(1.5), percent("Depth", 100), percent("Shape", 50), percent("VolSens", 0), percent("Mix", 100)]),
+  mod("bias_tremolo", "Bias Tremolo", BIAS_TREMOLO, "1960 Vox AC-15 tremolo",
+    [speed(4), percent("Level", 50), percent("Shape", 0), percent("VolSens", 0), percent("Mix", 100)]),
+  mod("opto_tremolo", "Opto Tremolo", OPTO_TREMOLO, "Blackface Fender optical tremolo",
+    [speed(5), percent("Level", 60), percent("Shape", 30), percent("VolSens", 0), percent("Mix", 100)]),
+  mod("script_phase", "Script Phase", SCRIPT_PHASE, "MXR Phase 90 (script logo)",
+    [speed(0.7)]),
+  mod("panned_phaser", "Panned Phaser", PANNED_PHASER, "Ibanez Flying Pan",
+    [speed(0.5), percent("Depth", 70), choice("Pan", PAN_NAMES, 1), hertz("Pan Spd", 0, 10, 0.3, 1), percent("Mix", 50)]),
+  mod("barberpole_phaser", "Barberpole Phaser", BARBERPOLE_PHASER, "Modular-synth barberpole phaser",
+    [speed(0.3), percent("Fdbk", 40), choice("Mode", SWEEP_NAMES, 0), percent("Mix", 50)]),
+  mod("dual_phaser", "Dual Phaser", DUAL_PHASER, "Mu-Tron Bi-Phase",
+    [speed(0.35), percent("Depth", 75), percent("Fdbk", 45), percent("LFO Shp", 0), percent("Mix", 50)]),
+  mod("u_vibe", "U-Vibe", U_VIBE, "Uni-Vibe",
+    [speed(1.6), percent("Depth", 80), percent("Fdbk", 0), percent("VolSens", 0), percent("Mix", 50)]),
+  mod("phaser_hd", "Phaser", PHASER, "Inspired by MXR Phase 90",
+    [speed(0.5), percent("Depth", 70), percent("Fdbk", 40), choice("Stages", STAGE_NAMES, 0), percent("Mix", 50)]),
+  mod("pitch_vibrato", "Pitch Vibrato", PITCH_VIBRATO, "Boss VB-2",
+    [speed(5), percent("Depth", 40), percent("Rise", 75), percent("VolSens", 0), percent("Mix", 100)]),
+  mod("dimension", "Dimension", DIMENSION, "Roland Dimension D",
+    [choice("Sw1", SWITCH_NAMES, 0), choice("Sw2", SWITCH_NAMES, 0), choice("Sw3", SWITCH_NAMES, 1), choice("Sw4", SWITCH_NAMES, 0), percent("Mix", 50)]),
+  mod("analog_chorus", "Analog Chorus", ANALOG_CHORUS, "Boss CE-1 Chorus Ensemble",
+    [speed(0.6), percent("Depth", 50), choice("Ch Vib", CHORUS_NAMES, 0), percent("Tone", 50), percent("Mix", 50)]),
+  mod("tri_chorus", "Tri Chorus", TRI_CHORUS, "Song Bird / DyTronics Tri-Stereo Chorus",
+    [speed(0.5), percent("Depth", 60), percent("Depth2", 50), percent("Depth3", 60), percent("Mix", 50)]),
+  mod("analog_flanger", "Analog Flanger", ANALOG_FLANGER, "Inspired by MXR Flanger",
+    [speed(0.3), percent("Depth", 70), percent("Fdbk", 50), percent("Manual", 30), percent("Mix", 50)]),
+  mod("jet_flanger", "Jet Flanger", JET_FLANGER, "Inspired by A/DA Flanger",
+    [speed(0.2), percent("Depth", 85), percent("Fdbk", 65), percent("Manual", 30), percent("Mix", 50)]),
+  mod("ac_flanger", "AC Flanger", AC_FLANGER, "MXR Flanger",
+    [speed(0.35), percent("Width", 60), percent("Regen", 55), percent("Manual", 25)]),
+  mod("80a_flanger", "80A Flanger", FLANGER_80A, "A/DA Flanger",
+    [speed(0.25), percent("Range", 80), percent("Enhance", 60), percent("Manual", 30), choice("Even Odd", HARMONIC_NAMES, 0)]),
+  mod("frequency_shifter", "Frequency Shifter", FREQUENCY_SHIFTER, "Modular-synth frequency shifter",
+    [hertz("Freq", 0, 2000, 12, 40), choice("Mode", SWEEP_NAMES, 0), percent("Mix", 50)]),
+  mod("ring_modulator", "Ring Modulator", RING_MODULATOR, "Ring modulator",
+    [hertz("Speed", 1, 2000, 120, 100), percent("Depth", 100), percent("Shape", 0), percent("AM/FM", 0), percent("Mix", 50)]),
+  mod("rotary_drum", "Rotary Drum", ROTARY_DRUM, "Fender Vibratone",
+    [choice("Speed", ROTOR_NAMES, 1), percent("Depth", 70), percent("Tone", 60), percent("Drive", 25), percent("Mix", 80)]),
+  mod("rotary_drm_hrn", "Rotary Drm/Hrn", ROTARY_DRUM_HORN, "Leslie 145",
+    [choice("Speed", ROTOR_NAMES, 0), percent("Depth", 70), percent("Horn Dep", 70), percent("Drive", 30), percent("Mix", 100)]),
+];
+
+return { ModFx, MOD_MODELS };
+})();
+// ---- dsp/filter.js
+const { FilterFx, FILTER_MODELS } = (() => {
+// The HD500X's filter models and guitar synths (Source/DSP/fx/Filter.h), 16 of 17: the Vocoder needs the
+// hardware's microphone input. Ported line for line; see the C++ header for what each model is.
+
+// Names of the choice knobs
+const VOWEL_NAMES = ["A", "E", "I", "O", "U"];
+const AUTO_NAMES = ["Sine", "Hold", "Ramp", "Random"];
+const SWEEP_NAMES = ["Up", "Up-Down"];
+const TYPE_NAMES = ["LP", "BP", "HP"];
+const PATTERN_NAMES = ["Rise", "Fall", "Peak", "Zigzag", "Hi-Lo", "Pairs", "Random 1", "Random 2"];
+const STEP_NAMES = ["2", "3", "4", "5", "6", "7", "8", "9"];
+const RANGE_NAMES = ["Hi", "Lo"];
+const LFO_NAMES = ["Ramp Up", "Ramp Down", "Triangle", "Square"];
+const MODE_NAMES = ["Up", "Down"];
+const SYNTH_WAVE_NAMES = ["Saw", "Square", "Pulse", "Triangle", "Saw+Sqr", "Detune", "Octave", "Sub"];
+const ATTACK_WAVE_NAMES = ["Square", "PWM", "Ramp"];
+
+const TWO_PI = 2 * PI;
+
+// Formants F1..F3 of the vowels A E I O U, the level of each formant and the resonators' Q
+const VOWEL_HZ = [[730, 1090, 2440], [530, 1840, 2480], [270, 2290, 3010], [570, 840, 2410], [300, 870, 2240]];
+const VOWEL_GAIN = [[1, 0.70, 0.25], [1, 0.45, 0.30], [1, 0.35, 0.25], [1, 0.60, 0.15], [1, 0.40, 0.12]];
+const VOWEL_Q = [6, 9, 10];
+
+// The Seeker's step patterns 3..8 (0 = lowest, 1 = highest filter position); "Rise" and "Fall" are computed
+const SEEKER_TABLE = [
+  [0.00, 0.35, 0.70, 1.00, 0.70, 0.35, 0.00, 0.50, 1.00], // Peak
+  [0.00, 0.60, 0.20, 0.80, 0.40, 1.00, 0.30, 0.70, 0.50], // Zigzag
+  [0.10, 0.90, 0.10, 0.90, 0.30, 0.70, 0.30, 0.70, 0.50], // Hi-Lo
+  [0.00, 0.00, 0.50, 0.50, 1.00, 1.00, 0.50, 0.50, 0.25], // Pairs
+  [0.62, 0.11, 0.87, 0.35, 0.05, 0.74, 0.48, 0.96, 0.23], // Random 1
+  [0.30, 0.95, 0.55, 0.00, 0.80, 0.18, 0.68, 0.42, 1.00], // Random 2
+];
+
+function seekerPosition(pattern, step, steps) {
+  if (pattern === 0) return step / (steps - 1);
+  if (pattern === 1) return 1 - step / (steps - 1);
+  return SEEKER_TABLE[pattern - 2][step];
+}
+const seekerHz = (position) => 300 * Math.pow(8, position);
+
+function smooth01(x) {
+  x = clamp(x, 0, 1);
+  return x * x * (3 - 2 * x);
+}
+const choiceOf = (value, maxIndex) => clamp(Math.floor(value + 0.5), 0, maxIndex);
+
+const F04 = f32(0.4);
+function softLimit(x) {
+  const a = Math.abs(x);
+  if (a <= 1.5) return x;
+  const y = 1.5 + 2.5 * Math.tanh((a - 1.5) * F04);
+  return x < 0 ? -y : y;
+}
+
+const lowPassNorm = (k) => 1 / Math.sqrt(1 + 0.25 / k);
+const bandPassNorm = (k) => 1.4 * Math.sqrt(k);
+
+// ============================================================================
+// A value that moves in a straight line to a new target during each control interval (a float in the C++)
+class Ramp {
+  constructor() { this.v = 0; this.dv = 0; }
+  clear() { this.v = 0; this.dv = 0; }
+  aim(target, invSteps, snap) {
+    if (snap) { this.v = f32(target); this.dv = 0; }
+    else this.dv = f32(f32(f32(target) - this.v) * invSteps);
+  }
+  step() { this.v = f32(this.v + this.dv); return this.v; }
+}
+
+// Coefficients of a state-variable filter, interpolated per sample (floats in the C++)
+const G_DEFAULT = f32(0.1);
+class SvfCoef {
+  constructor() { this.clear(); }
+  clear() { this.g = G_DEFAULT; this.k = 1; this.dg = 0; this.dk = 0; this.a1 = 0; this.a2 = 0; this.a3 = 0; }
+  aim(gTarget, kTarget, invSteps, snap) {
+    if (snap) { this.g = f32(gTarget); this.k = f32(kTarget); this.dg = this.dk = 0; }
+    else {
+      this.dg = f32(f32(f32(gTarget) - this.g) * invSteps);
+      this.dk = f32(f32(f32(kTarget) - this.k) * invSteps);
+    }
+  }
+  step() {
+    this.g = f32(this.g + this.dg);
+    this.k = f32(this.k + this.dk);
+    this.a1 = f32(1 / f32(1 + f32(this.g * f32(this.g + this.k))));
+    this.a2 = f32(this.g * this.a1);
+    this.a3 = f32(this.g * this.a2);
+  }
+}
+
+// Topology-preserving state-variable filter
+class Svf {
+  constructor() { this.s1 = 0; this.s2 = 0; this.lp = 0; this.bp = 0; this.hp = 0; }
+  reset() { this.s1 = this.s2 = this.lp = this.bp = this.hp = 0; }
+  process(x, c) {
+    const v3 = x - this.s2;
+    this.bp = c.a1 * this.s1 + c.a2 * v3;
+    this.lp = this.s2 + c.a2 * this.s1 + c.a3 * v3;
+    this.s1 = 2 * this.bp - this.s1;
+    this.s2 = 2 * this.lp - this.s2;
+    this.hp = x - c.k * this.bp - this.lp;
+  }
+  flush() {
+    if (Math.abs(this.s1) < 1e-20) this.s1 = 0;
+    if (Math.abs(this.s2) < 1e-20) this.s2 = 0;
+  }
+}
+
+// One-pole smoothing at the control rate
+class Slew {
+  constructor() { this.v = 0; }
+  next(target, coef, snap) {
+    this.v = snap ? target : this.v + coef * (target - this.v);
+    return this.v;
+  }
+}
+
+class Lcg {
+  constructor() { this.state = 1; }
+  next01() {
+    this.state = (Math.imul(this.state, 1664525) + 1013904223) >>> 0;
+    return (this.state >>> 8) * (1 / 16777216);
+  }
+}
+
+// ============================================================================
+// Finds pick attacks: the peak level jumps well above what it has been lately
+class AttackDetector {
+  prepare(fs) {
+    this.fastRelease = 1 - 1 / (0.020 * fs);
+    this.slowRise = 1 / (0.010 * fs);
+    this.slowFall = 1 / (0.100 * fs);
+    this.holdSamples = Math.floor(0.06 * fs);
+    this.reset();
+  }
+  reset() { this.fast = this.slow = 0; this.hold = 0; this.armed = true; }
+  /** `a` = |input|. True on the sample where a new note starts. */
+  process(a) {
+    this.fast = a > this.fast ? a : this.fast * this.fastRelease;
+    if (this.fast < 1e-20) this.fast = 0;
+    this.slow += (this.fast > this.slow ? this.slowRise : this.slowFall) * (this.fast - this.slow);
+    if (this.slow < 1e-20) this.slow = 0;
+
+    if (this.hold > 0) {
+      --this.hold;
+    } else if (this.armed) {
+      if (this.fast > 0.01 && this.fast > 1.7 * this.slow) {
+        this.armed = false;
+        this.hold = this.holdSamples;
+        return true;
+      }
+    } else if (this.fast < 1.25 * this.slow) {
+      this.armed = true;
+    }
+    return false;
+  }
+}
+
+// The playing level for the synths' amplifiers: the highest peak of the last 13.5 ms
+class LevelMeter {
+  prepare(numBlocks) { this.ring = new Float64Array(Math.max(1, numBlocks)); this.reset(); }
+  reset() { this.ring.fill(0); this.pos = 0; this.blockMax = 0; }
+  push(a) { if (a > this.blockMax) this.blockMax = a; }
+  /** Once per control interval. */
+  endBlock() {
+    const ring = this.ring;
+    ring[this.pos] = this.blockMax;
+    this.blockMax = 0;
+    if (++this.pos >= ring.length) this.pos = 0;
+
+    let level = 0;
+    for (let i = 0; i < ring.length; ++i) if (ring[i] > level) level = ring[i];
+    return level;
+  }
+}
+
+// ============================================================================
+// Monophonic pitch tracker for the guitar synths (see the C++ for how it works). Everything is double
+// precision with only + - * / and comparisons, so it takes exactly the same decisions as the C++ one.
+const FINE_LAGS = 64, CURVE_SIZE = 172, REFINE_LAG = 160, MIN_LAG = 9, MAX_KEYS = 24;
+const MIN_WINDOW = 64; // in coarse samples: 8 ms
+const FINE_WINDOW = 2 * MIN_WINDOW + FINE_LAGS + 1, COARSE_WINDOW = 2 * REFINE_LAG, FINE_RING = 256, COARSE_RING = 512;
+const HOP = 48; // fine samples between two analyses
+const OPEN_LEVEL = 0.006, CLOSE_LEVEL = 0.003, CLARITY = 0.7;
+
+const onePole = (fc, fs) => { const w = (TWO_PI * fc) / fs; return w / (1 + w); };
+
+/** NSDF at one lag over the newest samples (`lin`: newest first, `prefix`: their running energy). */
+function nsdfAt(lin, prefix, lag, minLength) {
+  const length = lag >= minLength ? lag : minLength;
+
+  // four running sums (the same four as in the C++): about three times as fast as one
+  let c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+  let j = 0;
+  for (; j + 3 < length; j += 4) {
+    c0 += lin[j] * lin[j + lag];
+    c1 += lin[j + 1] * lin[j + 1 + lag];
+    c2 += lin[j + 2] * lin[j + 2 + lag];
+    c3 += lin[j + 3] * lin[j + 3 + lag];
+  }
+  for (; j < length; ++j) c0 += lin[j] * lin[j + lag];
+
+  const cross = (c0 + c1) + (c2 + c3);
+  const energy = prefix[length] + prefix[length + lag] - prefix[lag];
+  return energy > 1e-14 ? (2 * cross) / energy : 0;
+}
+
+function peakOffset(before, at, after) {
+  const bend = before - 2 * at + after;
+  return bend < 0 ? clamp((0.5 * (before - after)) / bend, -0.5, 0.5) : 0;
+}
+
+class PitchTracker {
+  prepare(fs) {
+    this.decimation = Math.max(1, Math.floor(fs / 16000 + 0.5));
+    this.invDecimation = 1 / this.decimation;
+    this.rate = fs / this.decimation;
+    this.preCoef = onePole(2500, fs);
+    this.lowCoef = onePole(1000, this.rate);
+    this.dcCoef = onePole(45, this.rate);
+    this.fineRing = new Float64Array(FINE_RING);
+    this.coarseRing = new Float64Array(COARSE_RING);
+    this.fineLin = new Float64Array(FINE_WINDOW);
+    this.finePrefix = new Float64Array(FINE_WINDOW + 1);
+    this.coarseLin = new Float64Array(COARSE_WINDOW);
+    this.coarsePrefix = new Float64Array(COARSE_WINDOW + 1);
+    this.curve = new Float64Array(CURVE_SIZE);
+    this.keyIndex = new Int32Array(MAX_KEYS);
+    this.keyValue = new Float64Array(MAX_KEYS);
+    this.reset();
+  }
+
+  reset() {
+    this.fineRing.fill(0);
+    this.coarseRing.fill(0);
+    this.pre1 = this.pre2 = this.sum = this.dc = this.low1 = this.low2 = this.previous = 0;
+    this.decimationCount = this.hopCount = this.finePos = this.coarsePos = 0;
+    this.level = 0; // set by the owner once per control interval
+    this.gate = this.voiced = false;
+    this.period = this.pendingPeriod = 120;
+    this.pendingCount = this.steadyCount = 0;
+    this.freq = this.rate / this.period; // Hz, valid while `voiced`
+  }
+
+  process(x) {
+    this.pre1 += this.preCoef * (x - this.pre1) + 1e-25;
+    this.pre2 += this.preCoef * (this.pre1 - this.pre2);
+    this.sum += this.pre2;
+    if (++this.decimationCount < this.decimation) return;
+
+    this.decimationCount = 0;
+    const decimated = this.sum * this.invDecimation;
+    this.sum = 0;
+    this.dc += this.dcCoef * (decimated - this.dc);
+    const fine = decimated - this.dc;
+    this.fineRing[this.finePos] = fine;
+    this.finePos = (this.finePos + 1) & (FINE_RING - 1);
+
+    this.low1 += this.lowCoef * (fine - this.low1) + 1e-25;
+    this.low2 += this.lowCoef * (this.low1 - this.low2);
+    if ((this.finePos & 1) === 0) {
+      this.coarseRing[this.coarsePos] = 0.5 * (this.low2 + this.previous);
+      this.coarsePos = (this.coarsePos + 1) & (COARSE_RING - 1);
+    }
+    this.previous = this.low2;
+
+    if (++this.hopCount < HOP) return;
+
+    this.hopCount = 0;
+    this.analyse();
+  }
+
+  fineNsdf(lag) { return nsdfAt(this.fineLin, this.finePrefix, lag, 2 * MIN_WINDOW); }
+  coarseNsdf(lag) { return nsdfAt(this.coarseLin, this.coarsePrefix, lag, MIN_WINDOW); }
+
+  analyse() {
+    if (this.gate) {
+      if (this.level < CLOSE_LEVEL) {
+        this.gate = this.voiced = false;
+        this.pendingCount = this.steadyCount = 0;
+      }
+    } else if (this.level > OPEN_LEVEL) {
+      this.gate = true;
+    }
+
+    if (!this.gate) return;
+
+    // the newest samples first, and their running energy
+    const fineLin = this.fineLin, finePrefix = this.finePrefix, fineRing = this.fineRing;
+    finePrefix[0] = 0;
+    for (let i = 0; i < FINE_WINDOW; ++i) {
+      const v = fineRing[(this.finePos - 1 - i) & (FINE_RING - 1)];
+      fineLin[i] = v;
+      finePrefix[i + 1] = finePrefix[i] + v * v;
+    }
+
+    const coarseLin = this.coarseLin, coarsePrefix = this.coarsePrefix, coarseRing = this.coarseRing;
+    coarsePrefix[0] = 0;
+    for (let i = 0; i < COARSE_WINDOW; ++i) {
+      const v = coarseRing[(this.coarsePos - 1 - i) & (COARSE_RING - 1)];
+      coarseLin[i] = v;
+      coarsePrefix[i + 1] = coarsePrefix[i] + v * v;
+    }
+
+    const curve = this.curve;
+    for (let i = 1; i < FINE_LAGS; ++i) curve[i] = nsdfAt(fineLin, finePrefix, i, 2 * MIN_WINDOW);
+    for (let i = FINE_LAGS; i < CURVE_SIZE; ++i) curve[i] = nsdfAt(coarseLin, coarsePrefix, i - FINE_LAGS / 2, MIN_WINDOW);
+    // where the two lag grids meet, each side is compared with its own signal's next point
+    const aboveLastFine = this.fineNsdf(FINE_LAGS), belowFirstCoarse = this.coarseNsdf(FINE_LAGS / 2 - 1);
+
+    // "key maxima": the highest point of each positive stretch after the curve first went negative
+    const keyIndex = this.keyIndex, keyValue = this.keyValue;
+    let numKeys = 0, best = 0;
+    let bestValue = 0, highest = 0;
+    let seenNegative = false, positive = false;
+
+    for (let i = 1; i < CURVE_SIZE - 1; ++i) {
+      const v = curve[i];
+      if (!seenNegative) {
+        seenNegative = v < 0;
+        continue;
+      }
+
+      if (v > 0) {
+        if (!positive) {
+          positive = true;
+          best = 0;
+          bestValue = 0;
+        }
+        if (v > bestValue && v >= (i === FINE_LAGS ? belowFirstCoarse : curve[i - 1])
+                          && v >= (i === FINE_LAGS - 1 ? aboveLastFine : curve[i + 1])) {
+          bestValue = v;
+          best = i;
+        }
+      }
+
+      if (positive && (v <= 0 || i === CURVE_SIZE - 2)) {
+        positive = false;
+        if (best >= MIN_LAG && numKeys < MAX_KEYS) {
+          keyIndex[numKeys] = best;
+          keyValue[numKeys] = bestValue;
+          ++numKeys;
+          if (bestValue > highest) highest = bestValue;
+        }
+      }
+    }
+
+    // the first one that is nearly as high as the highest: the shortest period that fits
+    let chosen = -1;
+    for (let i = 0; i < numKeys && chosen < 0; ++i)
+      if (keyValue[i] >= 0.85 * highest) chosen = i;
+
+    if (chosen < 0 || keyValue[chosen] < CLARITY) {
+      this.pendingCount = 0;
+      return;
+    }
+
+    // parabola through the peak ...
+    const index = keyIndex[chosen];
+    const offset = peakOffset(index === FINE_LAGS ? belowFirstCoarse : curve[index - 1], curve[index],
+                              index === FINE_LAGS - 1 ? aboveLastFine : curve[index + 1]);
+    let found = index < FINE_LAGS ? index + offset : 2 * (index - FINE_LAGS / 2 + offset);
+    let multiple = 1;
+
+    // ... then the same on multiples of the period for a finer reading
+    for (;;) {
+      const coarse = 2 * found >= FINE_LAGS - 2.5;
+      const lag = Math.floor((coarse ? found : 2 * found) + 0.5);
+      if (coarse && lag + 2 > REFINE_LAG) break;
+
+      const peak = this.peakNear(coarse, lag);
+      if (peak < 0) break;
+
+      found = coarse ? 2 * peak : peak;
+      multiple *= 2;
+    }
+
+    const candidate = found / multiple;
+
+    if (this.voiced && Math.abs(candidate - this.period) <= 0.06 * this.period) {
+      this.period += 0.4 * (candidate - this.period); // the same note: follow it, a little smoothed
+      this.pendingCount = 0;
+      if (this.steadyCount < 1000) ++this.steadyCount;
+    } else {
+      this.pendingCount = (this.pendingCount > 0 && Math.abs(candidate - this.pendingPeriod) <= 0.06 * this.pendingPeriod) ? this.pendingCount + 1 : 1;
+      this.pendingPeriod = candidate;
+
+      // a settled note needs more evidence before it jumps an octave (the usual tracking error)
+      const ratio = candidate / this.period;
+      const octave = this.voiced && this.steadyCount > 8 && ((ratio > 1.88 && ratio < 2.12) || (ratio > 0.47 && ratio < 0.53));
+      if (this.pendingCount >= (octave ? 4 : 2)) {
+        this.period = candidate;
+        this.voiced = true;
+        this.pendingCount = this.steadyCount = 0;
+      }
+    }
+
+    this.freq = this.rate / this.period;
+  }
+
+  /** The NSDF peak at `lag` or one step beside it, on the fine or the coarse signal; -1 if there is no clear peak. */
+  peakNear(coarse, lag) {
+    let before = coarse ? this.coarseNsdf(lag - 1) : this.fineNsdf(lag - 1);
+    let at = coarse ? this.coarseNsdf(lag) : this.fineNsdf(lag);
+    let after = coarse ? this.coarseNsdf(lag + 1) : this.fineNsdf(lag + 1);
+
+    if (after > at) {
+      ++lag;
+      before = at;
+      at = after;
+      after = coarse ? this.coarseNsdf(lag + 1) : this.fineNsdf(lag + 1);
+    } else if (before > at) {
+      --lag;
+      after = at;
+      at = before;
+      before = coarse ? this.coarseNsdf(lag - 1) : this.fineNsdf(lag - 1);
+    }
+
+    if (at < CLARITY || at < before || at < after) return -1;
+
+    return lag + peakOffset(before, at, after);
+  }
+}
+
+// ============================================================================
+// Oscillators: `p` = phase 0..1, `dt` = phase step per sample, with polyBLEP / polyBLAMP
+function polyBlep(t, dt) {
+  if (t < dt) {
+    const x = t / dt;
+    return x + x - x * x - 1;
+  }
+  if (t > 1 - dt) {
+    const x = (t - 1) / dt;
+    return x * x + x + x + 1;
+  }
+  return 0;
+}
+
+function polyBlamp(t, dt) {
+  if (t < dt) {
+    const x = t / dt - 1;
+    return (-x * x * x) / 3;
+  }
+  if (t > 1 - dt) {
+    const x = (t - 1) / dt + 1;
+    return (x * x * x) / 3;
+  }
+  return 0;
+}
+
+const sawWave = (p, dt) => 2 * p - 1 - polyBlep(p, dt);
+
+function pulseWave(p, dt, width) {
+  let p2 = p + 1 - width;
+  if (p2 >= 1) p2 -= 1;
+  return sawWave(p, dt) - sawWave(p2, dt);
+}
+
+function triangleWave(p, dt) {
+  let p2 = p + 0.5;
+  if (p2 >= 1) p2 -= 1;
+  return 1 - 4 * Math.abs(p - 0.5) + 8 * dt * (polyBlamp(p2, dt) - polyBlamp(p, dt));
+}
+
+// ============================================================================
+const VOICE_BOX = 0, V_TRON = 1, Q_FILTER = 2, SEEKER = 3, OBI_WAH = 4, TRON_UP = 5, TRON_DOWN = 6, THROBBER = 7, SLOW_FILTER = 8,
+      SPIN_CYCLE = 9, COMET_TRAILS = 10, OCTISYNTH = 11, SYNTH_O_MATIC = 12, ATTACK_SYNTH = 13, SYNTH_STRING = 14, GROWLER = 15, NUM_VARIANTS = 16;
+const NUM_COMETS = 7;
+const COMET_LEFT = Float32Array.of(1.0, 0.43, 0.72, 0.31, 0.52, 0.22, 0.38);
+const COMET_RIGHT = Float32Array.of(0.5, 0.85, 0.36, 0.61, 0.26, 0.44, 0.19);
+const F001 = f32(0.01);
+
+// make-up gains: every model about as loud as its input at the default knobs
+const VOWEL_MAKE_UP = 3.0, COMET_MAKE_UP = 0.7, OCTI_MAKE_UP = 0.15, SYNTH_MAKE_UP = 0.35,
+      ATTACK_MAKE_UP = 0.17, STRING_MAKE_UP = 0.22, GROWLER_MAKE_UP = 0.28;
+
+class FilterFx {
+  prepare(sampleRate, maxBlock) {
+    this.variant = this.variant || 0;
+    this.knobs = this.knobs || Float32Array.of(0, 0, 0, 0, 100);
+    this.mixTarget = this.mixTarget === undefined ? 1 : this.mixTarget;
+    this.fs = sampleRate;
+    this.ctl = 16 * Math.max(1, Math.floor(this.fs / 48000 + 0.5));
+    this.invCtl = f32(1 / this.ctl);
+    this.ctlTime = this.ctl / this.fs;
+    this.fcMax = Math.min(16000, 0.42 * this.fs);
+    this.c2 = this.slewCoef(0.002);
+    this.c5 = this.slewCoef(0.005);
+    this.c10 = this.slewCoef(0.010);
+    this.c20 = this.slewCoef(0.020);
+    this.c40 = this.slewCoef(0.040);
+    this.c120 = this.slewCoef(0.120);
+    this.envAttack = 1 / (1 + 0.004 * this.fs);
+    this.envRelease = 1 / (1 + 0.120 * this.fs);
+
+    this.svfL = []; this.svfR = []; this.coef = []; this.ramp = []; this.slew = [];
+    for (let i = 0; i < NUM_COMETS; ++i) { this.svfL.push(new Svf()); this.svfR.push(new Svf()); this.coef.push(new SvfCoef()); }
+    for (let i = 0; i < 3; ++i) this.ramp.push(new Ramp());
+    for (let i = 0; i < 7; ++i) this.slew.push(new Slew());
+    this.mixRamp = new Ramp();
+    this.mixSlew = new Slew();
+
+    this.attack = new AttackDetector();
+    this.tracker = new PitchTracker();
+    this.meter = new LevelMeter();
+    this.lcg = new Lcg();
+    this.attack.prepare(this.fs);
+    this.tracker.prepare(this.fs);
+    this.meter.prepare(Math.ceil(0.0135 / this.ctlTime));
+    this.reset();
+  }
+
+  reset() {
+    this.first = true;
+    this.ctlCount = 0;
+
+    for (let i = 0; i < NUM_COMETS; ++i) {
+      this.svfL[i].reset();
+      this.svfR[i].reset();
+      this.coef[i].clear();
+    }
+    for (const r of this.ramp) r.clear();
+    for (const s of this.slew) s.v = 0;
+    this.mixRamp.clear();
+    this.mixSlew.v = 0;
+
+    this.attack.reset();
+    this.tracker.reset();
+    this.meter.reset();
+    this.lcg.state = 20260930;
+    this.randPrev = this.lcg.next01();
+    this.randNext = this.lcg.next01();
+    this.phase = 0;
+    this.sweep = 1;
+    this.env = 0;
+    this.step = 0;
+    this.ph1 = this.ph2 = 0;
+    this.inc1 = this.inc2 = 0;
+    this.oscHz = 110;
+    this.width1 = this.width2 = 0.5;
+    this.amp = this.fade = 0;
+    this.wave = 0;
+    this.wasVoiced = false;
+  }
+
+  setModel(variant) { this.variant = clamp(variant | 0, 0, NUM_VARIANTS - 1); }
+
+  setParameters(k) {
+    for (let i = 0; i < 5; ++i) this.knobs[i] = k[i];
+
+    this.mixTarget = clamp(f32(this.knobs[4] * F001), 0, 1);
+  }
+
+  process(left, right, numSamples) {
+    switch (this.variant) {
+      case VOICE_BOX:    this.processVowel(left, right, numSamples, false); break;
+      case V_TRON:       this.processVowel(left, right, numSamples, true); break;
+      case Q_FILTER:     this.processSingle(left, right, numSamples, true, false); break;
+      case SEEKER:       this.processSingle(left, right, numSamples, true, false); break;
+      case OBI_WAH:      this.processSingle(left, right, numSamples, false, false); break;
+      case TRON_UP:      this.processSingle(left, right, numSamples, true, true); break;
+      case TRON_DOWN:    this.processSingle(left, right, numSamples, true, true); break;
+      case THROBBER:     this.processLowPass(left, right, numSamples, false); break;
+      case SLOW_FILTER:  this.processLowPass(left, right, numSamples, true); break;
+      case SPIN_CYCLE:   this.processSpin(left, right, numSamples); break;
+      case COMET_TRAILS: this.processComet(left, right, numSamples); break;
+      case OCTISYNTH:    this.processOcti(left, right, numSamples); break;
+      default:           this.processSynth(left, right, numSamples); break;
+    }
+  }
+
+  /** Coefficient of a one-pole smoother that runs once per control interval. */
+  slewCoef(seconds) {
+    const x = this.ctlTime / seconds;
+    return x / (1 + x);
+  }
+
+  gOf(hz) { return Math.tan((PI * clamp(hz, 20, this.fcMax)) / this.fs); }
+
+  /** True when a control interval starts: time for the model's control code. Moves the Mix knob on the way. */
+  controlDue() {
+    if (this.ctlCount > 0) {
+      --this.ctlCount;
+      return false;
+    }
+    this.ctlCount = this.ctl - 1;
+    this.mixRamp.aim(this.mixSlew.next(this.mixTarget, this.c10, this.first), this.invCtl, this.first);
+    return true;
+  }
+
+  // ==========================================================================
+  // Voice Box and V-Tron: three parallel formant resonators morphing from the Start to the End vowel
+  controlVowel(snap) {
+    const knobs = this.knobs, slew = this.slew, invCtl = this.invCtl, c10 = this.c10;
+    let start = 0, end = 0;
+    let pos = 0;
+
+    if (this.variant === VOICE_BOX) {
+      start = choiceOf(knobs[1], 4);
+      end = choiceOf(knobs[2], 4);
+      this.phase += knobs[0] * this.ctlTime;
+      if (this.phase >= 1) {
+        this.phase -= 1;
+        this.randPrev = this.randNext;
+        this.randNext = this.lcg.next01();
+      }
+
+      const phase = this.phase;
+      switch (choiceOf(knobs[3], 3)) {
+        case 0:  pos = 0.5 - 0.5 * Math.cos(TWO_PI * phase); break;
+        case 1:  pos = smooth01((0.7 - Math.abs(2 * phase - 1)) * 2.5); break;
+        case 2:  pos = phase < 0.85 ? phase / 0.85 : (1 - phase) / 0.15; break;
+        default: pos = this.randPrev + (this.randNext - this.randPrev) * smooth01(2 * phase); break;
+      }
+    } else {
+      start = choiceOf(knobs[0], 4);
+      end = choiceOf(knobs[1], 4);
+      if (this.sweep < 1) this.sweep = Math.min(1, this.sweep + knobs[2] * this.ctlTime);
+
+      pos = choiceOf(knobs[3], 1) === 0 ? smooth01(this.sweep) : 0.5 - 0.5 * Math.cos(TWO_PI * this.sweep);
+    }
+
+    pos = slew[0].next(pos, this.c5, snap);
+
+    for (let j = 0; j < 3; ++j) {
+      const hz = slew[1 + j].next(VOWEL_HZ[start][j] * Math.pow(VOWEL_HZ[end][j] / VOWEL_HZ[start][j], pos), c10, snap);
+      const gain = slew[4 + j].next(VOWEL_GAIN[start][j] + (VOWEL_GAIN[end][j] - VOWEL_GAIN[start][j]) * pos, c10, snap);
+      const k = 1 / VOWEL_Q[j];
+      this.coef[j].aim(this.gOf(hz), k, invCtl, snap);
+      this.ramp[j].aim((j === 1 ? -VOWEL_MAKE_UP : VOWEL_MAKE_UP) * gain * k, invCtl, snap);
+    }
+  }
+
+  processVowel(left, right, numSamples, triggered) {
+    const mix = this.mixRamp, attack = this.attack;
+    const c0 = this.coef[0], c1 = this.coef[1], c2 = this.coef[2], r0 = this.ramp[0], r1 = this.ramp[1], r2 = this.ramp[2];
+    const l0 = this.svfL[0], l1 = this.svfL[1], l2 = this.svfL[2], q0 = this.svfR[0], q1 = this.svfR[1], q2 = this.svfR[2];
+
+    for (let i = 0; i < numSamples; ++i) {
+      const inL = left[i], inR = right[i];
+      const mono = f32(0.5 * (inL + inR));
+
+      if (triggered && attack.process(Math.abs(mono))) this.sweep = 0;
+
+      if (this.controlDue()) {
+        this.controlVowel(this.first);
+        this.first = false;
+        for (let j = 0; j < 3; ++j) { this.svfL[j].flush(); this.svfR[j].flush(); }
+      }
+
+      c0.step();
+      c1.step();
+      c2.step();
+      const w0 = r0.step(), w1 = r1.step(), w2 = r2.step();
+      const mixNow = mix.step();
+
+      if (triggered) { // V-Tron: true stereo
+        l0.process(inL, c0);
+        l1.process(inL, c1);
+        l2.process(inL, c2);
+        q0.process(inR, c0);
+        q1.process(inR, c1);
+        q2.process(inR, c2);
+        const wetL = softLimit(w0 * l0.bp + w1 * l1.bp + w2 * l2.bp);
+        const wetR = softLimit(w0 * q0.bp + w1 * q1.bp + w2 * q2.bp);
+        left[i] = inL + mixNow * (wetL - inL);
+        right[i] = inR + mixNow * (wetR - inR);
+      } else { // Voice Box: mono effect
+        l0.process(mono, c0);
+        l1.process(mono, c1);
+        l2.process(mono, c2);
+        const wet = softLimit(w0 * l0.bp + w1 * l1.bp + w2 * l2.bp);
+        left[i] = inL + mixNow * (wet - inL);
+        right[i] = inR + mixNow * (wet - inR);
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Q Filter, Seeker, Obi Wah, Tron Up / Down: one two-pole state-variable filter with LP / BP / HP outputs
+  controlSingle(snap) {
+    const knobs = this.knobs, slew = this.slew, invCtl = this.invCtl, c5 = this.c5, c10 = this.c10, c20 = this.c20;
+    let hz = 1000, q = 1, gain = 1;
+    let type = 1;
+
+    switch (this.variant) {
+      case Q_FILTER:
+        hz = 80 * Math.pow(100, slew[0].next(knobs[0] * 0.01, c20, snap));
+        q = 0.5 * Math.pow(32, slew[1].next(knobs[1] * 0.01, c20, snap));
+        gain = slew[2].next(Math.pow(10, knobs[2] * 0.05), c20, snap);
+        type = choiceOf(knobs[3], 2);
+        break;
+
+      case SEEKER: {
+        const steps = 2 + choiceOf(knobs[3], 7);
+        this.phase += knobs[0] * this.ctlTime;
+        if (this.phase >= 1) {
+          this.phase -= 1;
+          ++this.step;
+        }
+        if (this.step >= steps) this.step = 0;
+
+        hz = seekerHz(slew[0].next(seekerPosition(choiceOf(knobs[1], 7), this.step, steps), c5, snap));
+        q = 1.5 * Math.pow(10, slew[1].next(knobs[2] * 0.01, c20, snap));
+        break;
+      }
+
+      case OBI_WAH:
+        this.phase += knobs[0] * this.ctlTime;
+        if (this.phase >= 1) {
+          this.phase -= 1;
+          this.randPrev = this.lcg.next01();
+        }
+        hz = 200 * Math.pow(10, slew[3].next(knobs[1] * 0.01, c20, snap)) * Math.pow(8, slew[0].next(this.randPrev - 0.5, c5, snap));
+        q = 1.5 * Math.pow(10, slew[1].next(knobs[2] * 0.01, c20, snap));
+        type = choiceOf(knobs[3], 2);
+        break;
+
+      default: { // Tron Up / Tron Down
+        const drive = this.env / (this.env + 0.2); // 0..1: how hard the strings are picked
+        const bottom = slew[3].next(choiceOf(knobs[2], 1) === 0 ? 150 : 60, c20, snap)
+                         * Math.pow(10, slew[0].next(knobs[0] * 0.01, c20, snap));
+        hz = bottom * Math.pow(2, 3.5 * (this.variant === TRON_UP ? drive : 1 - drive));
+        q = 0.7 * Math.pow(20, slew[1].next(knobs[1] * 0.01, c20, snap));
+        type = choiceOf(knobs[3], 2);
+        break;
+      }
+    }
+
+    const k = 1 / q;
+    this.coef[0].aim(this.gOf(hz), k, invCtl, snap);
+    this.ramp[0].aim(slew[4].next(type === 0 ? 1 : 0, c10, snap) * lowPassNorm(k) * gain, invCtl, snap);
+    this.ramp[1].aim(slew[5].next(type === 1 ? 1 : 0, c10, snap) * bandPassNorm(k) * gain, invCtl, snap);
+    this.ramp[2].aim(slew[6].next(type === 2 ? 1 : 0, c10, snap) * lowPassNorm(k) * gain, invCtl, snap);
+  }
+
+  processSingle(left, right, numSamples, stereo, follow) {
+    const mix = this.mixRamp, c0 = this.coef[0], r0 = this.ramp[0], r1 = this.ramp[1], r2 = this.ramp[2];
+    const l0 = this.svfL[0], q0 = this.svfR[0];
+    const envAttack = this.envAttack, envRelease = this.envRelease;
+
+    for (let i = 0; i < numSamples; ++i) {
+      const inL = left[i], inR = right[i];
+      const mono = f32(0.5 * (inL + inR));
+
+      if (follow) {
+        const a = Math.abs(mono);
+        this.env += (a > this.env ? envAttack : envRelease) * (a - this.env);
+      }
+
+      if (this.controlDue()) {
+        this.controlSingle(this.first);
+        this.first = false;
+        l0.flush();
+        q0.flush();
+        if (this.env < 1e-20) this.env = 0;
+      }
+
+      c0.step();
+      const wl = r0.step(), wb = r1.step(), wh = r2.step();
+      const mixNow = mix.step();
+
+      if (stereo) {
+        l0.process(inL, c0);
+        q0.process(inR, c0);
+        const wetL = softLimit(wl * l0.lp + wb * l0.bp + wh * l0.hp);
+        const wetR = softLimit(wl * q0.lp + wb * q0.bp + wh * q0.hp);
+        left[i] = inL + mixNow * (wetL - inL);
+        right[i] = inR + mixNow * (wetR - inR);
+      } else {
+        l0.process(mono, c0);
+        const wet = softLimit(wl * l0.lp + wb * l0.bp + wh * l0.hp);
+        left[i] = inL + mixNow * (wet - inL);
+        right[i] = inR + mixNow * (wet - inR);
+      }
+    }
+  }
+
+  // ==========================================================================
+  // Throbber (LFO) and Slow Filter (attack-triggered sweep): four-pole low-pass
+  controlLowPass(snap) {
+    const knobs = this.knobs, slew = this.slew, invCtl = this.invCtl, c20 = this.c20;
+    let hz = 1000;
+
+    if (this.variant === THROBBER) {
+      this.phase += knobs[0] * this.ctlTime;
+      if (this.phase >= 1) this.phase -= 1;
+
+      const phase = this.phase;
+      let lfo = 0;
+      switch (choiceOf(knobs[3], 3)) {
+        case 0:  lfo = 2 * phase - 1; break;
+        case 1:  lfo = 1 - 2 * phase; break;
+        case 2:  lfo = 1 - 4 * Math.abs(phase - 0.5); break;
+        default: lfo = phase < 0.5 ? 1 : -1; break;
+      }
+
+      hz = 150 * Math.pow(20, slew[0].next(knobs[1] * 0.01, c20, snap)) * Math.pow(2, 1.5 * slew[2].next(lfo, this.c5, snap));
+    } else {
+      if (this.sweep < 1) this.sweep = Math.min(1, this.sweep + knobs[2] * this.ctlTime);
+
+      const pos = slew[2].next(this.sweep, this.c10, snap);
+      const up = slew[3].next(choiceOf(knobs[3], 1) === 0 ? 1 : 0, c20, snap);
+      const dark = 100 * Math.pow(20, slew[0].next(knobs[0] * 0.01, c20, snap));
+      hz = dark * Math.pow(10000 / dark, up * pos + (1 - up) * (1 - pos));
+    }
+
+    const k = 1 / (0.7 * Math.pow(16, slew[1].next(knobs[this.variant === THROBBER ? 2 : 1] * 0.01, c20, snap)));
+    const g = this.gOf(hz);
+    this.coef[0].aim(g, k, invCtl, snap);
+    this.coef[1].aim(g, 1.4142, invCtl, snap);
+    this.ramp[0].aim(lowPassNorm(k), invCtl, snap);
+  }
+
+  processLowPass(left, right, numSamples, triggered) {
+    const mix = this.mixRamp, attack = this.attack, c0 = this.coef[0], c1 = this.coef[1], r0 = this.ramp[0];
+    const l0 = this.svfL[0], l1 = this.svfL[1], q0 = this.svfR[0], q1 = this.svfR[1];
+
+    for (let i = 0; i < numSamples; ++i) {
+      const inL = left[i], inR = right[i];
+
+      if (triggered && attack.process(Math.abs(f32(0.5 * (inL + inR))))) this.sweep = 0;
+
+      if (this.controlDue()) {
+        this.controlLowPass(this.first);
+        this.first = false;
+        for (let j = 0; j < 2; ++j) { this.svfL[j].flush(); this.svfR[j].flush(); }
+      }
+
+      c0.step();
+      c1.step();
+      const gain = r0.step();
+      const mixNow = mix.step();
+
+      l0.process(inL, c0);
+      l1.process(l0.lp, c1);
+      q0.process(inR, c0);
+      q1.process(q0.lp, c1);
+      const wetL = softLimit(gain * l1.lp);
+      const wetR = softLimit(gain * q1.lp);
+      left[i] = inL + mixNow * (wetL - inL);
+      right[i] = inR + mixNow * (wetR - inR);
+    }
+  }
+
+  // ==========================================================================
+  // Spin Cycle: two wah band-passes, left and right, swept in opposite directions
+  controlSpin(snap) {
+    const knobs = this.knobs, slew = this.slew, invCtl = this.invCtl, c20 = this.c20;
+    this.phase += knobs[0] * (1 + 0.06 * knobs[3] * this.env / (this.env + 0.1)) * this.ctlTime;
+    if (this.phase >= 1) this.phase -= 1;
+
+    const lfo = 1.2 * Math.sin(TWO_PI * this.phase);
+    const centre = 300 * Math.pow(9, slew[0].next(knobs[1] * 0.01, c20, snap));
+    const k = 1 / (1.5 * Math.pow(10, slew[1].next(knobs[2] * 0.01, c20, snap)));
+    this.coef[0].aim(this.gOf(centre * Math.pow(2, lfo)), k, invCtl, snap);
+    this.coef[1].aim(this.gOf(centre * Math.pow(2, -lfo)), k, invCtl, snap);
+    this.ramp[0].aim(bandPassNorm(k), invCtl, snap);
+  }
+
+  processSpin(left, right, numSamples) {
+    const mix = this.mixRamp, c0 = this.coef[0], c1 = this.coef[1], r0 = this.ramp[0], l0 = this.svfL[0], q0 = this.svfR[0];
+    const envAttack = this.envAttack, envRelease = this.envRelease;
+
+    for (let i = 0; i < numSamples; ++i) {
+      const inL = left[i], inR = right[i];
+      const a = Math.abs(f32(0.5 * (inL + inR)));
+      this.env += (a > this.env ? envAttack : envRelease) * (a - this.env);
+
+      if (this.controlDue()) {
+        this.controlSpin(this.first);
+        this.first = false;
+        l0.flush();
+        q0.flush();
+        if (this.env < 1e-20) this.env = 0;
+      }
+
+      c0.step();
+      c1.step();
+      const gain = r0.step();
+      const mixNow = mix.step();
+
+      l0.process(inL, c0);
+      q0.process(inR, c1);
+      const wetL = softLimit(gain * l0.bp);
+      const wetR = softLimit(gain * q0.bp);
+      left[i] = inL + mixNow * (wetL - inL);
+      right[i] = inR + mixNow * (wetR - inR);
+    }
+  }
+
+  // ==========================================================================
+  // Comet Trails: seven band-passes chasing each other along one sine sweep
+  controlComet(snap) {
+    const knobs = this.knobs, slew = this.slew, invCtl = this.invCtl, c20 = this.c20;
+    this.phase += knobs[0] * this.ctlTime;
+    if (this.phase >= 1) this.phase -= 1;
+
+    const centre = 300 * Math.pow(10, slew[0].next(knobs[1] * 0.01, c20, snap));
+    const k = 1 / (2 * Math.pow(10, slew[1].next(knobs[2] * 0.01, c20, snap)));
+    for (let j = 0; j < NUM_COMETS; ++j)
+      this.coef[j].aim(this.gOf(centre * Math.pow(2, 1.5 * Math.sin(TWO_PI * (this.phase - 0.06 * j)))), k, invCtl, snap);
+
+    this.ramp[0].aim(COMET_MAKE_UP * bandPassNorm(k) * slew[2].next(Math.pow(10, knobs[3] * 0.05), c20, snap), invCtl, snap);
+  }
+
+  processComet(left, right, numSamples) {
+    const mix = this.mixRamp, coef = this.coef, svfL = this.svfL, svfR = this.svfR, r0 = this.ramp[0];
+
+    for (let i = 0; i < numSamples; ++i) {
+      const inL = left[i], inR = right[i];
+
+      if (this.controlDue()) {
+        this.controlComet(this.first);
+        this.first = false;
+        for (let j = 0; j < NUM_COMETS; ++j) { svfL[j].flush(); svfR[j].flush(); }
+      }
+
+      let sumL = 0, sumR = 0;
+      for (let j = 0; j < NUM_COMETS; ++j) {
+        const c = coef[j], l = svfL[j], r = svfR[j];
+        c.step();
+        l.process(inL, c);
+        r.process(inR, c);
+        sumL += COMET_LEFT[j] * l.bp;
+        sumR += COMET_RIGHT[j] * r.bp;
+      }
+
+      const gain = r0.step();
+      const mixNow = mix.step();
+      const wetL = softLimit(gain * sumL);
+      const wetR = softLimit(gain * sumR);
+      left[i] = inL + mixNow * (wetL - inL);
+      right[i] = inR + mixNow * (wetR - inR);
+    }
+  }
+
+  // ==========================================================================
+  // Octisynth: the playing level sets an oscillator's frequency; ring modulator, vibrato, second harmonic
+  controlOcti(snap) {
+    const knobs = this.knobs, slew = this.slew, invCtl = this.invCtl, c20 = this.c20, env = this.env;
+    this.phase += knobs[0] * this.ctlTime;
+    if (this.phase >= 1) this.phase -= 1;
+
+    const drive = env / (env + 0.1);
+    const hz = 80 * Math.pow(2, 4.5 * drive + 0.005 * knobs[3] * Math.sin(TWO_PI * this.phase));
+    this.inc1 = Math.min(0.2, hz / this.fs);
+
+    const k = 1 / (0.7 * Math.pow(16, slew[1].next(knobs[2] * 0.01, c20, snap)));
+    this.coef[0].aim(this.gOf(2 * hz), k, invCtl, snap);
+    this.ramp[0].aim(OCTI_MAKE_UP * lowPassNorm(k) * drive * smooth01((env - 0.002) / 0.006), invCtl, snap); // the oscillator's level
+    this.ramp[1].aim(slew[0].next(knobs[1] * 0.01, c20, snap), invCtl, snap);                               // second harmonic
+    this.ramp[2].aim(OCTI_MAKE_UP * lowPassNorm(k) * 6, invCtl, snap);                                      // ring modulator
+  }
+
+  processOcti(left, right, numSamples) {
+    const mix = this.mixRamp, c0 = this.coef[0], r0 = this.ramp[0], r1 = this.ramp[1], r2 = this.ramp[2], l0 = this.svfL[0];
+    const envAttack = this.envAttack, envRelease = this.envRelease;
+
+    for (let i = 0; i < numSamples; ++i) {
+      const inL = left[i], inR = right[i];
+      const mono = f32(0.5 * (inL + inR));
+      const a = Math.abs(mono);
+      this.env += (a > this.env ? envAttack : envRelease) * (a - this.env);
+
+      if (this.controlDue()) {
+        this.controlOcti(this.first);
+        this.first = false;
+        l0.flush();
+        if (this.env < 1e-20) this.env = 0;
+      }
+
+      this.ph1 += this.inc1;
+      if (this.ph1 >= 1) this.ph1 -= 1;
+
+      const level = r0.step(), second = r1.step(), ring = r2.step();
+      const osc = f32(Math.sin(TWO_PI * this.ph1)) + second * f32(Math.sin(2 * TWO_PI * this.ph1));
+      c0.step();
+      l0.process(osc * (level + ring * mono), c0);
+
+      const wet = softLimit(l0.lp);
+      const mixNow = mix.step();
+      left[i] = inL + mixNow * (wet - inL);
+      right[i] = inR + mixNow * (wet - inR);
+    }
+  }
+
+  // ==========================================================================
+  // Synth O Matic, Attack Synth, Synth String, Growler: pitch-tracked oscillators, gated by the playing level
+  controlSynth(snap) {
+    const knobs = this.knobs, slew = this.slew, invCtl = this.invCtl, c2 = this.c2, c20 = this.c20, tracker = this.tracker;
+    const level = this.meter.endBlock();
+    tracker.level = level;
+
+    const voiced = tracker.voiced;
+    const target = tracker.freq * Math.pow(2, knobs[3] / 12);
+    if (voiced) this.oscHz = (snap || !this.wasVoiced) ? target : this.oscHz + this.c5 * (target - this.oscHz);
+    this.wasVoiced = voiced;
+
+    const open = smooth01((level - 0.003) / 0.009); // fades out before the tracker's gate closes
+    let wanted = voiced ? open * level / (level + 0.1) : 0, rise = c2, fall = this.c40, gain = 1;
+    let waveKnob = -1;
+
+    switch (this.variant) {
+      case SYNTH_O_MATIC: {
+        const k = 1 / (0.7 * Math.pow(16, slew[1].next(knobs[1] * 0.01, c20, snap)));
+        this.coef[0].aim(this.gOf(100 * Math.pow(80, slew[0].next(knobs[0] * 0.01, c20, snap))), k, invCtl, snap);
+        gain = SYNTH_MAKE_UP * lowPassNorm(k);
+        waveKnob = choiceOf(knobs[2], 7);
+        break;
+      }
+
+      case ATTACK_SYNTH: {
+        if (!voiced) this.sweep = 0;
+        else if (this.sweep < 1) this.sweep = Math.min(1, this.sweep + this.ctlTime / (1.5 * Math.pow(1 / 300, knobs[2] * 0.01)));
+
+        const stop = 200 * Math.pow(40, slew[0].next(knobs[0] * 0.01, c20, snap));
+        const g = this.gOf(90 * Math.pow(stop / 90, slew[1].next(this.sweep, this.c5, snap)));
+        this.coef[0].aim(g, 0.4, invCtl, snap);
+        this.coef[1].aim(g, 1.4142, invCtl, snap);
+        gain = ATTACK_MAKE_UP;
+        waveKnob = choiceOf(knobs[1], 2);
+
+        this.phase += 0.8 * this.ctlTime;
+        if (this.phase >= 1) this.phase -= 1;
+        this.width1 = waveKnob === 1 ? 0.5 + 0.4 * Math.sin(TWO_PI * this.phase) : 0.5;
+        break;
+      }
+
+      case SYNTH_STRING: {
+        this.phase += knobs[0] * this.ctlTime;
+        if (this.phase >= 1) this.phase -= 1;
+
+        this.width1 = 0.5 + 0.38 * Math.sin(TWO_PI * this.phase);
+        this.width2 = 0.5 + 0.38 * Math.sin(TWO_PI * this.phase + 1.9);
+        this.coef[0].aim(this.gOf(300 * Math.pow(27, slew[0].next(knobs[1] * 0.01, c20, snap))), 1.25, invCtl, snap);
+
+        const x = this.ctlTime / (0.005 * Math.pow(400, knobs[2] * 0.01));
+        rise = x / (1 + x);
+        fall = this.c120;
+        wanted = voiced ? open * level / (level + 0.04) : 0;
+        gain = STRING_MAKE_UP;
+        break;
+      }
+
+      default: { // Growler
+        this.phase += knobs[0] * this.ctlTime;
+        if (this.phase >= 1) this.phase -= 1;
+
+        this.width1 = 0.5 + 0.42 * Math.sin(TWO_PI * this.phase);
+        const k = 1 / (0.7 * Math.pow(20, slew[1].next(knobs[2] * 0.01, c20, snap)));
+        this.coef[0].aim(this.gOf(80 * Math.pow(10, slew[0].next(knobs[1] * 0.01, c20, snap)) * Math.pow(16, this.env / (this.env + 0.1))), k, invCtl, snap);
+        gain = GROWLER_MAKE_UP * lowPassNorm(k);
+        break;
+      }
+    }
+
+    // a wave switch fades the oscillator out, changes it and fades back in
+    if (waveKnob >= 0) {
+      if (snap) { this.wave = waveKnob; this.fade = 1; }
+      else if (waveKnob !== this.wave) { this.fade += c2 * (0 - this.fade); if (this.fade < 0.003) this.wave = waveKnob; }
+      else this.fade += c2 * (1 - this.fade);
+      gain *= this.fade;
+    }
+
+    this.amp = snap ? wanted : this.amp + (wanted > this.amp ? rise : fall) * (wanted - this.amp);
+    if (this.amp < 1e-20) this.amp = 0;
+    this.ramp[0].aim(this.amp * gain, invCtl, snap);
+
+    this.inc1 = Math.min(0.2, this.oscHz / this.fs);
+    this.inc2 = this.inc1;
+    if (this.variant === SYNTH_O_MATIC) this.inc2 = this.wave === 5 ? 1.007 * this.inc1 : 0.5 * this.inc1;
+    else if (this.variant === SYNTH_STRING) { this.inc1 *= 0.998; this.inc2 *= 1.002; }
+  }
+
+  processSynth(left, right, numSamples) {
+    const mix = this.mixRamp, tracker = this.tracker, meter = this.meter, attack = this.attack, variant = this.variant;
+    const c0 = this.coef[0], c1 = this.coef[1], r0 = this.ramp[0], l0 = this.svfL[0], l1 = this.svfL[1];
+    const envAttack = this.envAttack, envRelease = this.envRelease;
+
+    for (let i = 0; i < numSamples; ++i) {
+      const inL = left[i], inR = right[i];
+      const mono = f32(0.5 * (inL + inR));
+      const a = Math.abs(mono);
+      tracker.process(mono);
+      meter.push(a);
+
+      if (variant === ATTACK_SYNTH) {
+        if (attack.process(a)) this.sweep = 0;
+      } else if (variant === GROWLER) {
+        this.env += (a > this.env ? envAttack : envRelease) * (a - this.env);
+      }
+
+      if (this.controlDue()) {
+        this.controlSynth(this.first);
+        this.first = false;
+        l0.flush();
+        l1.flush();
+        if (this.env < 1e-20) this.env = 0;
+      }
+
+      const inc1 = this.inc1, inc2 = this.inc2;
+      let ph1 = this.ph1 + inc1;
+      if (ph1 >= 1) ph1 -= 1;
+      let ph2 = this.ph2 + inc2;
+      if (ph2 >= 1) ph2 -= 1;
+      this.ph1 = ph1;
+      this.ph2 = ph2;
+
+      let osc = 0;
+      if (variant === SYNTH_O_MATIC) {
+        switch (this.wave) {
+          case 0:  osc = sawWave(ph1, inc1); break;
+          case 1:  osc = pulseWave(ph1, inc1, 0.5); break;
+          case 2:  osc = pulseWave(ph1, inc1, 0.2); break;
+          case 3:  osc = 1.6 * triangleWave(ph1, inc1); break;
+          case 4:  osc = 0.6 * (sawWave(ph1, inc1) + pulseWave(ph1, inc1, 0.5)); break;
+          case 5:  osc = 0.6 * (sawWave(ph1, inc1) + sawWave(ph2, inc2)); break;
+          case 6: {
+            let octave = ph1 + ph1;
+            if (octave >= 1) octave -= 1;
+            osc = 0.65 * sawWave(ph1, inc1) + 0.5 * sawWave(octave, inc1 + inc1);
+            break;
+          }
+          default: osc = 0.6 * (pulseWave(ph1, inc1, 0.5) + pulseWave(ph2, inc2, 0.5)); break;
+        }
+      } else if (variant === ATTACK_SYNTH) {
+        osc = this.wave === 2 ? sawWave(ph1, inc1) : pulseWave(ph1, inc1, this.width1);
+      } else if (variant === SYNTH_STRING) {
+        osc = 0.6 * (pulseWave(ph1, inc1, this.width1) + pulseWave(ph2, inc2, this.width2));
+      } else {
+        osc = 0.6 * pulseWave(ph1, inc1, this.width1) + 0.5 * sawWave(ph1, inc1);
+      }
+
+      c0.step();
+      l0.process(f32(osc) * r0.step(), c0);
+      let out = l0.lp;
+
+      if (variant === ATTACK_SYNTH) {
+        c1.step();
+        l1.process(out, c1);
+        out = l1.lp;
+      }
+
+      const wet = softLimit(out);
+      const mixNow = mix.step();
+      left[i] = inL + mixNow * (wet - inL);
+      right[i] = inR + mixNow * (wet - inR);
+    }
+  }
+}
+
+// In the order of the variants
+const speed = (def) => hertz("Speed", 0.05, 10, def, 1);
+const mixKnob = () => percent("Mix", 100);
+const pitch = () => semitones("Pitch", -12, 12, 0);
+const type = (def) => choice("Type", TYPE_NAMES, def);
+const make = (key, name, variant, basedOn, knobs) => model(key, name, CATEGORY.filter, ENGINE.filterFx, variant, basedOn, knobs);
+
+const FILTER_MODELS = [
+  make("voice_box", "Voice Box", VOICE_BOX, "Talk box: vocoders, vocal tracts and surgical tubing",
+    [speed(1.5), choice("Start", VOWEL_NAMES, 0), choice("End", VOWEL_NAMES, 2), choice("Auto", AUTO_NAMES, 0), mixKnob()]),
+  make("v_tron", "V-Tron", V_TRON, "Voice Box triggered like a Mu-Tron III",
+    [choice("Start", VOWEL_NAMES, 4), choice("End", VOWEL_NAMES, 0), hertz("Speed", 0.2, 20, 5, 3), choice("Mode", SWEEP_NAMES, 0), mixKnob()]),
+  make("q_filter", "Q Filter", Q_FILTER, "Parked wah",
+    [percent("Freq", 50), percent("Q", 60), decibels("Gain", -12, 12, 0), type(1), mixKnob()]),
+  make("seeker", "Seeker", SEEKER, "Z.Vex Seek Wah",
+    [hertz("Speed", 0.5, 20, 6, 5), choice("Freq", PATTERN_NAMES, 3), percent("Q", 60), choice("Steps", STEP_NAMES, 6), mixKnob()]),
+  make("obi_wah", "Obi Wah", OBI_WAH, "Oberheim voltage-controlled sample & hold filter",
+    [hertz("Speed", 0.5, 20, 6, 5), percent("Freq", 50), percent("Q", 60), type(1), mixKnob()]),
+  make("tron_up", "Tron Up", TRON_UP, "Mu-Tron III, drive switch up",
+    [percent("Freq", 30), percent("Q", 60), choice("Range", RANGE_NAMES, 0), type(1), mixKnob()]),
+  make("tron_down", "Tron Down", TRON_DOWN, "Mu-Tron III, drive switch down",
+    [percent("Freq", 30), percent("Q", 60), choice("Range", RANGE_NAMES, 0), type(1), mixKnob()]),
+  make("throbber", "Throbber", THROBBER, "Electrix Filter Factory, LFO section",
+    [speed(2), percent("Freq", 50), percent("Q", 50), choice("Wave", LFO_NAMES, 2), mixKnob()]),
+  make("slow_filter", "Slow Filter", SLOW_FILTER, "Line 6 original: attack-triggered low-pass sweep",
+    [percent("Freq", 30), percent("Q", 35), hertz("Speed", 0.1, 10, 1.5, 1.5), choice("Mode", MODE_NAMES, 0), mixKnob()]),
+  make("spin_cycle", "Spin Cycle", SPIN_CYCLE, "Craig Anderton's Wah/Anti-Wah",
+    [speed(1), percent("Freq", 50), percent("Q", 60), percent("VolSens", 30), mixKnob()]),
+  make("comet_trails", "Comet Trails", COMET_TRAILS, "Line 6 original: seven filters chasing each other",
+    [speed(0.5), percent("Freq", 50), percent("Q", 70), decibels("Gain", -12, 12, 0), mixKnob()]),
+  make("octisynth", "Octisynth", OCTISYNTH, "Line 6 original: level-controlled oscillator, ring modulator and vibrato",
+    [hertz("Speed", 0.1, 15, 5, 3), percent("Freq", 40), percent("Q", 50), percent("Depth", 30), mixKnob()]),
+  make("synth_o_matic", "Synth O Matic", SYNTH_O_MATIC, "Moog modular and Oberheim SEM waveforms",
+    [percent("Freq", 60), percent("Q", 45), choice("Wave", SYNTH_WAVE_NAMES, 0), pitch(), mixKnob()]),
+  make("attack_synth", "Attack Synth", ATTACK_SYNTH, "Korg X911 guitar synthesizer",
+    [percent("Freq", 65), choice("Wave", ATTACK_WAVE_NAMES, 0), percent("Speed", 50), pitch(), mixKnob()]),
+  make("synth_string", "Synth String", SYNTH_STRING, "Roland GR-700 guitar synthesizer (strings)",
+    [speed(3), percent("Freq", 60), percent("Attack", 50), pitch(), mixKnob()]),
+  make("growler", "Growler", GROWLER, "Roland GR-700 tone into a Mu-Tron III",
+    [speed(1.5), percent("Freq", 35), percent("Q", 65), pitch(), mixKnob()]),
+];
+
+return { FilterFx, FILTER_MODELS };
+})();
+// ---- dsp/pitch.js
+const { PitchFx, PITCH_MODELS } = (() => {
+// The HD500X's Pitch models (Source/DSP/fx/Pitch.h): Bass Octaver, Pitch Glide, Smart Harmony. Mono.
+//
+// Ported line by line. Everything that leads to a decision (tracker, octaver, read-head positions, ratios) is
+// double precision arithmetic with + - * / only in both versions, in the same order, so the JavaScript takes
+// exactly the decisions of the C++; keep it that way when editing. Only the audio itself differs in precision.
+
+const KEY_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+const SHIFT_NAMES = ["-8th", "-7th", "-6th", "-5th", "-4th", "-3rd", "-2nd", "+2nd", "+3rd", "+4th", "+5th", "+6th", "+7th", "+8th"];
+const SCALE_NAMES = ["Major", "Minor", "Pent Major", "Pent Minor", "Harm Minor", "Mel Minor", "Whole Tone", "Diminished"];
+
+/** The interval number of each Shift choice (-3 = a third below, 8 = an octave above). */
+const SHIFT_INTERVALS = [-8, -7, -6, -5, -4, -3, -2, 2, 3, 4, 5, 6, 7, 8];
+const SCALE_NOTES = [
+  [0, 2, 4, 5, 7, 9, 11],     // major
+  [0, 2, 3, 5, 7, 8, 10],     // natural minor
+  [0, 2, 4, 7, 9],            // major pentatonic
+  [0, 3, 5, 7, 10],           // minor pentatonic
+  [0, 2, 3, 5, 7, 8, 11],     // harmonic minor
+  [0, 2, 3, 5, 7, 9, 11],     // melodic minor (ascending)
+  [0, 2, 4, 6, 8, 10],        // whole tone
+  [0, 2, 3, 5, 6, 8, 9, 11],  // diminished (whole-half)
+];
+const PREFERRED = [[2, 1, 3, 0], [4, 3, 5, 2], [5, 6, 4, 7], [7, 6, 8, 5], [9, 8, 10, 7], [11, 10, 9, 12]];
+
+/** Semitones to shift a played note by so that the harmony stays inside the scale (see Pitch.h). */
+function harmonySemitones(scale, interval, pitchClass) {
+  const notes = SCALE_NOTES[scale], count = notes.length;
+  let pc = pitchClass, degree = notes.indexOf(pc);
+  for (let distance = 1; degree < 0 && distance <= 6; ++distance) {
+    pc = (pitchClass + 12 - distance) % 12;
+    degree = notes.indexOf(pc);
+    if (degree < 0) { pc = (pitchClass + distance) % 12; degree = notes.indexOf(pc); }
+  }
+
+  const size = interval < 0 ? -interval : interval, direction = interval < 0 ? -1 : 1;
+  if (size >= 8) return 12 * direction;
+  if (size <= 1 || degree < 0) return 0;
+
+  if (count === 7) {
+    const target = degree + direction * (size - 1);
+    const octave = target >= 7 ? 1 : (target < 0 ? -1 : 0);
+    return notes[target - 7 * octave] + 12 * octave - notes[degree];
+  }
+
+  for (let i = 0; i < 4; ++i) {
+    const shiftBy = direction * PREFERRED[size - 2][i];
+    if (notes.indexOf(((pc + shiftBy) % 12 + 12) % 12) >= 0) return shiftBy;
+  }
+  return direction * PREFERRED[size - 2][0];
+}
+
+// ============================================================================
+// Maths built from + - * / only: the same bits as the C++ (Math.pow / std::pow may differ)
+
+/** 2^x */
+function exp2Exact(x) {
+  const whole = Math.floor(x + 0.5);
+  const f = (x - whole) * 0.6931471805599453;
+  let term = 1, sum = 1;
+  for (let i = 1; i <= 13; ++i) { term *= f / i; sum += term; }
+  let n = whole;
+  for (; n > 0; --n) sum *= 2;
+  for (; n < 0; ++n) sum *= 0.5;
+  return sum;
+}
+
+/** log2 (v), v > 0 */
+function log2Exact(v) {
+  let exponent = 0;
+  while (v >= 1.4142135623730951) { v *= 0.5; exponent += 1; }
+  while (v < 0.7071067811865476) { v *= 2; exponent -= 1; }
+  const z = (v - 1) / (v + 1), z2 = z * z;
+  let sum = 0;
+  for (let k = 12; k >= 0; --k) sum = sum * z2 + 1 / (2 * k + 1);
+  return exponent + 2 * z * sum * 1.4426950408889634;
+}
+
+/** tan (x) for 0 <= x <= 0.8 */
+function tanExact(x) {
+  const q = x * x;
+  const s = x * (1 - q / 6 * (1 - q / 20 * (1 - q / 42 * (1 - q / 72 * (1 - q / 110 * (1 - q / 156))))));
+  const c = 1 - q / 2 * (1 - q / 12 * (1 - q / 30 * (1 - q / 56 * (1 - q / 90 * (1 - q / 132 * (1 - q / 182))))));
+  return s / c;
+}
+
+const TINY = 1e-30; // states below this are set to zero (before they become denormals)
+const BUTTERWORTH_K1 = 1.8477590650225735, BUTTERWORTH_K2 = 0.7653668647301796; // 1/Q of a 4-pole
+
+/** Two-pole low-pass (trapezoidal state-variable filter) in double precision: part of the decision path. */
+class Svf {
+  constructor() { this.a1 = 1; this.a2 = 0; this.a3 = 0; this.s1 = 0; this.s2 = 0; }
+  set(g, k) { this.a1 = 1 / (1 + g * (g + k)); this.a2 = g * this.a1; this.a3 = g * this.a2; }
+  reset() { this.s1 = this.s2 = 0; }
+  flushTiny() {
+    if (Math.abs(this.s1) < TINY) this.s1 = 0;
+    if (Math.abs(this.s2) < TINY) this.s2 = 0;
+  }
+  lowPass(x) {
+    const v3 = x - this.s2;
+    const v1 = this.a1 * this.s1 + this.a2 * v3;
+    const v2 = this.s2 + this.a2 * this.s1 + this.a3 * v3;
+    this.s1 = 2 * v1 - this.s1;
+    this.s2 = 2 * v2 - this.s2;
+    return v2;
+  }
+}
+
+/** The same filter on the audio (float coefficients as in the C++): the shifter's anti-alias filter. */
+class AudioSvf extends Svf {
+  set(g, k) {
+    const d = 1 / (1 + g * (g + k));
+    this.a1 = f32(d); this.a2 = f32(g * d); this.a3 = f32(g * g * d);
+  }
+}
+
+// ============================================================================
+/** Follows the period of the input (see Pitch.h): fundamental with hysteresis, best splice lag, pick attacks. */
+class Tracker {
+  constructor() {
+    this.period = 0; this.locked = false; this.tracking = false;
+    this.jump = 0; this.jumpCorr = 0; this.onset = false; this.onsetAge = 0;
+  }
+
+  prepare(sampleRate) {
+    this.decim = Math.max(1, Math.floor(sampleRate / 8000 + 0.5));
+    this.rate = sampleRate / this.decim;
+    this.maxLag = Math.floor(this.rate / 38 + 0.5);
+    this.minLag = Math.max(2, Math.floor(this.rate / 1600));
+    this.minWindow = Math.floor(this.rate * 0.004 + 0.5);
+    this.hop = Math.floor(this.rate * 0.003 + 0.5);
+    this.jumpMinLag = Math.floor(this.rate * 0.007 + 0.5);
+    this.span = 2 * this.maxLag;
+
+    this.ring = new Float64Array(this.span * 2);
+    this.cumulative = new Float64Array(this.span + 1);
+    this.nsdf = new Float64Array(this.maxLag + 2);
+    this.peakLags = new Int32Array(this.maxLag + 1);
+    this.numHopLevels = 12;
+    this.bright = new Float64Array(this.span * 2);
+    this.hopLevels = new Float64Array(this.numHopLevels);
+    this.hopBrightLevels = new Float64Array(this.numHopLevels);
+
+    const wh = 2 * PI * 30 / sampleRate, wl = 2 * PI * 1200 / sampleRate, wb = 2 * PI * 2000 / sampleRate;
+    this.highPassCoef = wh / (1 + wh);
+    this.lowPassCoef = wl / (1 + wl);
+    this.brightCoef = wb / (1 + wb);
+    this.defaultPeriod = sampleRate / 110;
+    this.defaultJump = sampleRate * 0.010;
+    this.reset();
+  }
+
+  reset() {
+    this.ring.fill(0); this.nsdf.fill(0); this.bright.fill(0); this.hopLevels.fill(0); this.hopBrightLevels.fill(0);
+    this.highPass = this.lowPass1 = this.lowPass2 = this.sum = this.brightLow = this.brightSum = 0;
+    this.phase = this.hopCount = this.pos = this.hopLevelPos = 0;
+    this.sinceOnset = 1000;
+    this.gateOpen = this.locked = this.tracking = this.onset = false;
+    this.onsetAge = 0;
+    this.period = this.defaultPeriod;
+    this.candidate = 0;
+    this.candidateCount = this.disagreed = 0;
+    this.jump = this.defaultJump;
+    this.jumpCorr = 0;
+  }
+
+  /** Takes one input sample. Returns 0, 1 (a tick: one decimated sample later) or 2 (a tick with new results). */
+  push(x) {
+    this.highPass += this.highPassCoef * (x - this.highPass);
+    this.lowPass1 += this.lowPassCoef * (x - this.highPass - this.lowPass1);
+    this.lowPass2 += this.lowPassCoef * (this.lowPass1 - this.lowPass2);
+    this.sum += this.lowPass2;
+
+    // what is above 2 kHz, as energy: a pick attack shows there even while other notes ring on
+    this.brightLow += this.brightCoef * (x - this.brightLow);
+    this.brightSum += (x - this.brightLow) * (x - this.brightLow);
+
+    if (++this.phase < this.decim) return 0;
+
+    this.phase = 0;
+    const v = this.sum / this.decim, e = this.brightSum / this.decim;
+    this.sum = this.brightSum = 0;
+    this.ring[this.pos] = v;
+    this.ring[this.pos + this.span] = v;
+    this.bright[this.pos] = e;
+    this.bright[this.pos + this.span] = e;
+    if (++this.pos === this.span) this.pos = 0;
+
+    if (++this.hopCount < this.hop) return 1;
+
+    this.hopCount = 0;
+    this.analyse();
+    return 2;
+  }
+
+  noPitch() {
+    this.candidateCount = 0;
+    if (++this.disagreed >= 3) { this.disagreed = 3; this.locked = false; }
+    this.tracking = this.locked && this.disagreed < 2;
+  }
+
+  /** The peak position between the lags around `lag` (parabola through three points). */
+  refine(lag) {
+    if (lag <= 1 || lag >= this.maxLag) return lag;
+    const a = this.nsdf[lag - 1], b = this.nsdf[lag], c = this.nsdf[lag + 1];
+    const curve = a - 2 * b + c;
+    if (curve > -1e-12) return lag;
+    let d = 0.5 * (a - c) / curve;
+    if (d > 0.5) d = 0.5;
+    if (d < -0.5) d = -0.5;
+    return lag + d;
+  }
+
+  /** Looks for a sudden rise at the end of `values` (one per tick; `samples`: they are samples, not energies):
+      the last 3 ms are 3 times (5 dB) stronger than any 3 ms of the 36 ms before. Sets `riseAge`: how many
+      ticks ago it began (the first value that stands out from those 36 ms). */
+  rise(values, samples, lowest, history) {
+    const hop = this.hop, span = this.span, newest = this.pos + span - 1;
+    this.riseAge = hop;
+
+    let recent = 0;
+    for (let k = 0; k < hop; ++k) {
+      const v = values[newest - k];
+      recent += samples ? v * v : v;
+    }
+    recent /= hop;
+
+    let loudest = 0;
+    for (let i = 0; i < this.numHopLevels; ++i) if (history[i] > loudest) loudest = history[i];
+
+    history[this.hopLevelPos] = recent;
+    if (recent <= 3 * loudest + lowest) return false;
+
+    let peak = 0;
+    for (let k = 2 * hop; k < 14 * hop && k < span; ++k) {
+      const v = values[newest - k], e = samples ? v * v : v;
+      if (e > peak) peak = e;
+    }
+
+    const threshold = Math.max(1.5 * peak, 3 * loudest + lowest);
+    for (let k = 2 * hop - 1; k >= 0; --k) {
+      const v = values[newest - k];
+      if ((samples ? v * v : v) > threshold) { this.riseAge = k; break; }
+    }
+    return true;
+  }
+
+  analyse() {
+    if (Math.abs(this.brightLow) < TINY) this.brightLow = 0;
+    if (Math.abs(this.highPass) < TINY) this.highPass = 0;
+    if (Math.abs(this.lowPass1) < TINY) this.lowPass1 = 0;
+    if (Math.abs(this.lowPass2) < TINY) this.lowPass2 = 0;
+
+    const a = this.ring, base = this.pos; // a[base] is the oldest of the last `span` samples, a[base + span - 1] the newest
+    const span = this.span, maxLag = this.maxLag, hop = this.hop, decim = this.decim;
+    const cumulative = this.cumulative, nsdf = this.nsdf, peakLags = this.peakLags, hopLevels = this.hopLevels;
+    const newest = base + span - 1;
+
+    let energy = 0;
+    cumulative[0] = 0;
+    for (let k = 0; k < span; ++k) {
+      const s = a[newest - k];
+      energy += s * s;
+      cumulative[k + 1] = energy;
+    }
+
+    // A pick attack: a sudden rise of the level, or of the treble only (a note picked while others ring).
+    // Not again within 30 ms: the first periods of a note can look like more attacks.
+    {
+      const low = this.rise(a, true, 4e-6, hopLevels), lowAge = this.riseAge;
+      const high = this.rise(this.bright, false, 1e-7, this.hopBrightLevels), brightAge = this.riseAge;
+      if (++this.hopLevelPos === this.numHopLevels) this.hopLevelPos = 0;
+
+      this.onset = (low || high) && this.sinceOnset >= 10;
+      this.sinceOnset = this.onset ? 0 : (this.sinceOnset < 1000 ? this.sinceOnset + 1 : this.sinceOnset);
+      if (this.onset) this.onsetAge = (high ? brightAge + 1 : lowAge + 3) * decim; // + the delay of the filters in front
+    }
+
+    // nothing to track below about -60 dB (closes again at -66 dB)
+    const level = cumulative[maxLag] / maxLag;
+    this.gateOpen = level >= (this.gateOpen ? 2.5e-7 : 1e-6);
+    if (!this.gateOpen) {
+      this.noPitch();
+      this.jump = this.defaultJump;
+      this.jumpCorr = 0;
+      return;
+    }
+
+    const minWindow = this.minWindow;
+    for (let lag = 1; lag <= maxLag; ++lag) {
+      const n = lag > minWindow ? lag : minWindow;
+      const u = base + span - n, v = u - lag;
+      let s0 = 0, s1 = 0, s2 = 0, s3 = 0, i = 0;
+      for (; i + 3 < n; i += 4) {
+        s0 += a[u + i] * a[v + i];
+        s1 += a[u + i + 1] * a[v + i + 1];
+        s2 += a[u + i + 2] * a[v + i + 2];
+        s3 += a[u + i + 3] * a[v + i + 3];
+      }
+      for (; i < n; ++i) s0 += a[u + i] * a[v + i];
+
+      const power = cumulative[n] + (cumulative[n + lag] - cumulative[lag]);
+      nsdf[lag] = power > TINY ? 2 * ((s0 + s1) + (s2 + s3)) / power : 0;
+    }
+
+    // the peak of every positive stretch after the one around lag 0
+    let t = 1;
+    while (t <= maxLag && nsdf[t] > 0) ++t;
+
+    let numPeaks = 0, highest = 0;
+    while (t <= maxLag) {
+      while (t <= maxLag && nsdf[t] <= 0) ++t;
+      if (t > maxLag) break;
+
+      let top = t;
+      for (; t <= maxLag && nsdf[t] > 0; ++t) if (nsdf[t] > nsdf[top]) top = t;
+
+      if (top >= this.minLag && top < maxLag) { // at the very end of the range it is not a peak yet
+        peakLags[numPeaks++] = top;
+        if (nsdf[top] > highest) highest = nsdf[top];
+      }
+    }
+
+    // ---- where the signal repeats best (at least 7 ms away), for the shifter's splices
+    {
+      const jumpMinLag = this.jumpMinLag;
+      let best = 0;
+      for (let p = 0; p < numPeaks; ++p) if (peakLags[p] >= jumpMinLag && nsdf[peakLags[p]] > best) best = nsdf[peakLags[p]];
+
+      let chosen = -1;
+      for (let p = 0; p < numPeaks && chosen < 0; ++p)
+        if (peakLags[p] >= jumpMinLag && nsdf[peakLags[p]] >= 0.97 * best) chosen = peakLags[p]; // the shortest of the good ones
+
+      if (chosen < 0) {
+        chosen = jumpMinLag;
+        for (let lag = jumpMinLag + 1; lag < maxLag; ++lag) if (nsdf[lag] > nsdf[chosen]) chosen = lag;
+      }
+
+      // right after a pick attack nothing repeats yet: short jumps smear an attack the least
+      if (best < 0.5 && this.sinceOnset < 10) chosen = jumpMinLag;
+
+      const value = nsdf[chosen];
+      this.jump = this.refine(chosen) * decim;
+      this.jumpCorr = value < 0 ? 0 : (value > 1 ? 1 : value);
+    }
+
+    // ---- the fundamental
+    if (numPeaks === 0 || highest < 0.5) { this.noPitch(); return; }
+
+    let chosen = -1;
+    for (let p = 0; p < numPeaks && chosen < 0; ++p) {
+      const lag = peakLags[p];
+      // a shorter period only replaces the current one when it is clearly a period too (an octave up has
+      // even harmonics only); the current one stays as long as its peak is reasonable
+      const current = this.locked && Math.abs(this.refine(lag) * decim - this.period) <= 0.06 * this.period;
+      if (nsdf[lag] >= (current ? 0.80 : 0.93) * highest) chosen = lag;
+    }
+
+    if (chosen < 0) { this.noPitch(); return; }
+
+    const measured = this.refine(chosen) * decim;
+    if (this.locked && Math.abs(measured - this.period) <= 0.06 * this.period) {
+      this.period = measured;
+      this.candidateCount = this.disagreed = 0;
+    } else {
+      this.candidateCount = this.candidateCount > 0 && Math.abs(measured - this.candidate) <= 0.03 * this.candidate ? this.candidateCount + 1 : 1;
+      this.candidate = measured;
+      if (this.disagreed < 3) ++this.disagreed;
+
+      if (this.candidateCount >= 2 && nsdf[chosen] >= 0.8) { // seen twice in a row, and clearly periodic: a new note
+        this.period = measured;
+        this.locked = true;
+        this.candidateCount = this.disagreed = 0;
+      }
+    }
+    this.tracking = this.locked && this.disagreed < 2;
+  }
+}
+
+// ============================================================================
+/** Delay-line pitch shifter with splices a whole number of periods apart (see Pitch.h). */
+class Shifter {
+  constructor() {
+    this.antiAlias1 = new AudioSvf(); this.antiAlias2 = new AudioSvf();
+    this.ratio = 1; this.target = 1; this.glide = 1; this.filterRatio = -1;
+    this.buffer = new Float32Array(64); this.mask = 63; this.fs = 48000;
+  }
+
+  prepare(sampleRate) {
+    this.fs = sampleRate;
+    let size = 64;
+    while (size < Math.floor(0.08 * sampleRate) + 64) size *= 2; // 80 ms: the longest delay is about 55 ms
+
+    this.buffer = new Float32Array(size);
+    this.mask = size - 1;
+    this.minDelay = Math.floor(0.0005 * sampleRate) + 2;
+    this.maxDelay = size - 8;
+    this.startDelay = this.minDelay + Math.floor(0.005 * sampleRate);
+    this.fadeMin = Math.floor(0.001 * sampleRate);
+    this.fadeMax = Math.floor(0.010 * sampleRate);
+    this.upDelay = this.minDelay + Math.floor(0.0035 * sampleRate);
+    this.onsetMargin = Math.floor(0.0005 * sampleRate);
+    this.onsetRoom = Math.floor(0.0025 * sampleRate);
+    this.attackLength = Math.floor(0.004 * sampleRate);
+    this.shortJump = Math.floor(0.002 * sampleRate);
+    this.longestDelay = Math.floor(0.045 * sampleRate);
+    this.reset();
+  }
+
+  /** How fast the ratio follows its target (time constant in seconds). */
+  setGlide(seconds) { this.glide = 1 / (1 + seconds * this.fs); }
+  setRatio(newRatio) { this.target = newRatio; }
+
+  reset() {
+    this.buffer.fill(0);
+    this.antiAlias1.reset(); this.antiAlias2.reset();
+    this.writePos = 0;
+    this.ratio = this.target;
+    this.filterRatio = -1;
+    this.updateAntiAlias();
+    this.delay = this.oldDelay = this.startDelay;
+    this.fadeLeft = 0;
+    this.fadeLength = 1;
+    this.fadeLoss = 0;
+    this.onsetPending = this.onsetForced = false;
+    this.sinceAttack = 1e9;
+  }
+
+  startFade(length, correlation) {
+    this.fadeLength = Math.max(1, Math.floor(length));
+    this.fadeLeft = this.fadeLength;
+    this.fadeLoss = f32(1 - correlation);
+  }
+
+  /** Low-pass in front of the delay line: reading faster than the input was written would alias. */
+  updateAntiAlias() {
+    this.filterRatio = this.ratio;
+    const cutoff = Math.min(0.45, 0.40 / Math.max(1, this.ratio)); // as a fraction of the sample rate
+    const g = Math.tan(PI * cutoff);
+    this.antiAlias1.set(g, BUTTERWORTH_K1);
+    this.antiAlias2.set(g, BUTTERWORTH_K2);
+  }
+
+  /** The input `d` samples ago (4-point Hermite). */
+  read(d) {
+    if (d < 2) d = 2;
+    if (d > this.maxDelay) d = this.maxDelay;
+
+    const buffer = this.buffer, mask = this.mask;
+    const p = this.writePos + mask + 1 - d;
+    const i = Math.floor(p);
+    const frac = f32(p - i);
+    const xm1 = buffer[(i - 1) & mask], x0 = buffer[i & mask], x1 = buffer[(i + 1) & mask], x2 = buffer[(i + 2) & mask];
+
+    const c1 = 0.5 * (x1 - xm1);
+    const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;
+    const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+    return ((c3 * frac + c2) * frac + c1) * frac + x0;
+  }
+
+  /** `event`: what Tracker.push returned for this sample (filter updates are done on its ticks). */
+  process(x, tracker, event) {
+    if (this.ratio !== this.target) {
+      this.ratio += (this.target - this.ratio) * this.glide;
+      if (Math.abs(this.target - this.ratio) < 1e-9) this.ratio = this.target;
+    }
+    const ratio = this.ratio;
+
+    if (event !== 0 && ratio !== this.filterRatio) this.updateAntiAlias();
+
+    this.writePos = (this.writePos + 1) & this.mask;
+    this.buffer[this.writePos] = this.antiAlias2.lowPass(this.antiAlias1.lowPass(x));
+
+    const drift = 1 - ratio;
+    this.delay += drift;
+    if (this.fadeLeft > 0) this.oldDelay += drift;
+
+    // A pick attack (the tracker reports it a few ms late): go to just before it, so that it is heard at
+    // once and in full. `sinceAttack` then keeps the splices from skipping or repeating it.
+    if (this.sinceAttack < 1e8) this.sinceAttack += 1;
+
+    const fadeMin = this.fadeMin, fadeMax = this.fadeMax;
+    if (event === 2 && tracker.onset) {
+      this.onsetPending = true;
+      this.onsetForced = false;
+      this.sinceAttack = tracker.onsetAge;
+
+      // Shifting down, in a crossfade to a head that has jumped ahead: if that head was (or will be) still
+      // quiet in the middle of the attack's first 2 ms, the attack is as good as skipped, because the old
+      // head never gets there. Then finish the crossfade within 1 ms, and go back if half of them is over.
+      const past = this.sinceAttack - this.delay;
+      if (ratio <= 1 && this.fadeLeft > 0 && this.fadeLeft + (past - 0.5 * this.shortJump) / ratio > 0.5 * this.fadeLength) {
+        this.onsetForced = past > 0.5 * this.shortJump;
+        if (this.fadeLeft > fadeMin) {
+          this.fadeLength *= fadeMin / this.fadeLeft;
+          this.fadeLeft = fadeMin;
+        }
+      }
+    }
+    if (this.onsetPending) {
+      if (this.fadeLeft === 0) {
+        const lead = this.onsetMargin + ratio * fadeMin; // the head fades in before it gets to the attack
+        let wanted = this.sinceAttack + lead;
+        if (wanted < this.minDelay) wanted = this.minDelay;
+        let go;
+
+        if (ratio > 1) {
+          // far enough back that the head does not have to return before the attack is over
+          const room = this.upDelay + this.onsetRoom + (ratio - 1) / ratio * (lead + this.attackLength + 2 * this.shortJump);
+          if (wanted < room) wanted = room;
+          go = this.delay > this.sinceAttack && Math.abs(this.delay - wanted) > fadeMin; // (not if it has been played)
+        } else {
+          go = this.onsetForced || this.delay > wanted + fadeMin;
+        }
+
+        if (go) {
+          this.oldDelay = this.delay;
+          this.delay = wanted;
+          this.startFade(fadeMin, 0);
+        }
+        this.onsetPending = false;
+      } else if (this.sinceAttack > 2 * fadeMax) {
+        this.onsetPending = false;
+      }
+    }
+
+    if (this.fadeLeft > 0) {
+      // one splice at a time
+    } else if (ratio > 1) {
+      // shifting up: the head catches up with the input, so it has to go back. It turns 3.5 ms before it
+      // gets there: an attack is known that much later, and by then it should not have been played.
+      const speed = ratio - 1, lag = tracker.jump;
+      const past = this.sinceAttack - this.delay; // how far the head is beyond the start of the last attack
+      let room = 0.35 * lag; // what the old head still travels during the crossfade
+      if (room > speed * fadeMax) room = speed * fadeMax;
+      if (room < speed * fadeMin || past < this.attackLength) room = speed * fadeMin; // (an attack is played first)
+
+      if (this.delay <= this.upDelay + room) {
+        let back = lag, match = tracker.jumpCorr, length = room / speed;
+        if (past > 0 && past - back < this.attackLength) {
+          // not as far back: the attack should not be played twice
+          back = past - this.attackLength;
+          if (back < this.shortJump) back = this.shortJump;
+          match = 0;
+          if (length > 0.5 * back / speed) length = 0.5 * back / speed;
+          if (length < fadeMin) length = fadeMin;
+        }
+
+        this.oldDelay = this.delay;
+        this.delay += back;
+        this.startFade(length, match);
+      }
+    } else {
+      // shifting down: the head falls behind, so it has to skip ahead (not shifting: it stays close);
+      // not across an attack, though: that is played to its end first
+      const lag = tracker.jump;
+      if (this.delay >= this.minDelay + lag && (this.sinceAttack - this.delay >= this.attackLength || this.delay >= this.longestDelay)) {
+        let length = ratio < 1 ? 0.35 * lag / (1 - ratio) : fadeMax;
+        if (length > fadeMax) length = fadeMax;
+        if (length < fadeMin) length = fadeMin;
+
+        this.oldDelay = this.delay;
+        this.delay -= lag;
+        this.startFade(length, tracker.jumpCorr);
+      }
+    }
+
+    let out = this.read(this.delay);
+    if (this.fadeLeft > 0) {
+      const t = f32(this.fadeLeft / this.fadeLength); // the old head's share: 1 -> 0
+      const b = t * t * (3 - 2 * t), a = 1 - b;
+      out = (a * out + b * this.read(this.oldDelay)) / Math.sqrt(1 - 2 * a * b * this.fadeLoss);
+      --this.fadeLeft;
+    }
+    return out;
+  }
+}
+
+// ============================================================================
+/** Analog-style octave divider: flips the low-passed fundamental every other cycle (see Pitch.h). */
+class Octaver {
+  constructor() {
+    this.extract1 = new Svf(); this.extract2 = new Svf(); this.tone1 = new Svf(); this.tone2 = new Svf();
+    this.fs = 48000; this.tone = 2; this.toneTarget = 2; this.filterFrequency = 0; this.filterTone = 0;
+  }
+
+  prepare(sampleRate, tickRate) {
+    this.fs = sampleRate;
+    const w = 2 * PI * 15 / sampleRate;
+    this.highPassCoef = w / (1 + w);
+    this.glide = 1 / (1 + 0.006 * tickRate);
+    this.gateUp = 1 / (0.006 * sampleRate);
+    this.gateDown = 1 / (0.004 * sampleRate);
+    this.reset();
+  }
+
+  /** 0..1: the octave voice's low-pass, from 1x to 5x the octave's frequency. */
+  setTone(tone01) { this.toneTarget = exp2Exact(tone01 * 2.321928094887362); }
+
+  reset() {
+    this.extract1.reset(); this.extract2.reset(); this.tone1.reset(); this.tone2.reset();
+    this.highPass = this.envelope = this.previous = this.gate = this.gateTarget = 0;
+    this.sign = 1;
+    this.armed = false;
+    this.sinceToggle = 0;
+    this.frequency = this.frequencyTarget = 110;
+    this.tone = this.toneTarget;
+    this.holdOff = 0.62 * this.fs / 110;
+    this.envelopeDecay = 1 - 110 / (2 * this.fs);
+    this.updateFilters();
+  }
+
+  /** Once per tracker tick; `analysed`: the tracker has new results. */
+  tick(tracker, analysed) {
+    if (analysed) {
+      if (tracker.locked) {
+        this.frequencyTarget = this.fs / tracker.period;
+        this.holdOff = 0.62 * tracker.period;
+        this.envelopeDecay = 1 - 1 / (2 * tracker.period);
+      }
+      this.gateTarget = tracker.tracking ? 1 : 0;
+
+      if (Math.abs(this.highPass) < TINY) this.highPass = 0;
+      if (Math.abs(this.envelope) < TINY) this.envelope = 0;
+      this.extract1.flushTiny(); this.extract2.flushTiny(); this.tone1.flushTiny(); this.tone2.flushTiny();
+    }
+
+    if (this.frequency !== this.frequencyTarget) {
+      this.frequency += (this.frequencyTarget - this.frequency) * this.glide;
+      if (Math.abs(this.frequencyTarget - this.frequency) < 1e-6) this.frequency = this.frequencyTarget;
+    }
+    if (this.tone !== this.toneTarget) {
+      this.tone += (this.toneTarget - this.tone) * this.glide;
+      if (Math.abs(this.toneTarget - this.tone) < 1e-6) this.tone = this.toneTarget;
+    }
+    if (this.frequency !== this.filterFrequency || this.tone !== this.filterTone) this.updateFilters();
+  }
+
+  process(x) {
+    this.highPass += this.highPassCoef * (x - this.highPass);
+    const y = this.extract2.lowPass(this.extract1.lowPass(x - this.highPass));
+
+    const magnitude = Math.abs(y);
+    this.envelope = magnitude > this.envelope ? magnitude : this.envelope * this.envelopeDecay;
+
+    if (this.sinceToggle < 1000000000) ++this.sinceToggle;
+
+    // Schmitt trigger: a rising zero crossing counts once the signal has been clearly negative
+    if (this.previous < 0 && y >= 0) {
+      if (this.armed && this.sinceToggle >= this.holdOff) {
+        this.sign = -this.sign;
+        this.sinceToggle = 0;
+      }
+      this.armed = false;
+    }
+    if (y < -0.2 * this.envelope - 1e-9) this.armed = true;
+    this.previous = y;
+
+    if (this.gate < this.gateTarget) { this.gate += this.gateUp; if (this.gate > this.gateTarget) this.gate = this.gateTarget; }
+    else if (this.gate > this.gateTarget) { this.gate -= this.gateDown; if (this.gate < this.gateTarget) this.gate = this.gateTarget; }
+
+    return this.gate * this.tone2.lowPass(this.tone1.lowPass(this.sign * y));
+  }
+
+  updateFilters() {
+    this.filterFrequency = this.frequency;
+    this.filterTone = this.tone;
+
+    const limit = 0.2 * this.fs;
+    let cutoff = 1.25 * this.frequency; // keeps the fundamental, 16 dB less of the second harmonic
+    if (cutoff > limit) cutoff = limit;
+    let g = tanExact(PI * cutoff / this.fs);
+    this.extract1.set(g, BUTTERWORTH_K1);
+    this.extract2.set(g, BUTTERWORTH_K2);
+
+    cutoff = this.tone * 0.5 * this.frequency;
+    if (cutoff > limit) cutoff = limit;
+    g = tanExact(PI * cutoff / this.fs);
+    this.tone1.set(g, BUTTERWORTH_K1);
+    this.tone2.set(g, BUTTERWORTH_K2);
+  }
+}
+
+// ============================================================================
+const BASS_OCTAVER = 0, PITCH_GLIDE = 1, SMART_HARMONY = 2;
+
+class PitchFx {
+  constructor() {
+    this.variant = BASS_OCTAVER;
+    this.fs = 48000;
+    this.tracker = new Tracker(); this.shifter = new Shifter(); this.octaver = new Octaver();
+    this.dryGain = new Smoothed(1); this.wetGain = new Smoothed(1);
+    this.harmonyKey = -1; this.harmonyShift = -1; this.harmonyScale = -1;
+    this.ratios = new Float64Array(12).fill(1);
+    this.note = 0; this.pitchClass = 0; this.haveNote = false;
+  }
+
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    this.tracker.prepare(sampleRate);
+    this.shifter.prepare(sampleRate);
+    this.octaver.prepare(sampleRate, this.tracker.rate);
+    this.dryGain.reset(sampleRate, 0.03);
+    this.wetGain.reset(sampleRate, 0.03);
+    this.reset();
+  }
+
+  reset() {
+    this.tracker.reset();
+    this.octaver.reset();
+    this.note = 0;
+    this.haveNote = false;
+    this.pitchClass = 0;
+    if (this.variant === SMART_HARMONY) this.shifter.setRatio(this.ratios[0]);
+    this.shifter.reset();
+    this.dryGain.setCurrentAndTarget(this.dryGain.target);
+    this.wetGain.setCurrentAndTarget(this.wetGain.target);
+  }
+
+  setModel(variant) { this.variant = clamp(variant | 0, 0, 2); }
+
+  setParameters(k) {
+    if (this.variant === BASS_OCTAVER) {
+      // Bass Octaver - EBS OctaBass: flip-flop octave divider on the low-passed fundamental, Normal and Octave
+      // levels, the octave's tone filter
+      const tone = f32(clamp(f32(k[0]), 0, 100) / 100);
+      const normal = f32(clamp(f32(k[1]), 0, 100) / 100), octave = f32(clamp(f32(k[2]), 0, 100) / 100);
+      this.octaver.setTone(tone);
+      this.dryGain.setTarget(f32(normal * normal));
+      this.wetGain.setTarget(f32(f32(f32(2.4) * octave) * octave));
+      return;
+    }
+
+    let mix;
+    if (this.variant === PITCH_GLIDE) {
+      // Pitch Glide - Digitech Whammy: one shifted voice that glides between intervals, chord-tolerant splicing
+      const pitch = clamp(f32(k[0]), -24, 24);
+      this.shifter.setGlide(0.012);
+      this.shifter.setRatio(exp2Exact(pitch / 12));
+      mix = k[1];
+    } else {
+      // Smart Harmony - Eventide H3000 diatonic shift: the interval follows the played note, key and scale
+      const key = clamp(Math.floor(f32(f32(k[0]) + 0.5)), 0, KEY_NAMES.length - 1);
+      const shift = clamp(Math.floor(f32(f32(k[1]) + 0.5)), 0, SHIFT_NAMES.length - 1);
+      const scale = clamp(Math.floor(f32(f32(k[2]) + 0.5)), 0, SCALE_NAMES.length - 1);
+
+      if (key !== this.harmonyKey || shift !== this.harmonyShift || scale !== this.harmonyScale) {
+        this.harmonyKey = key; this.harmonyShift = shift; this.harmonyScale = scale;
+        for (let pc = 0; pc < 12; ++pc) this.ratios[pc] = exp2Exact(harmonySemitones(scale, SHIFT_INTERVALS[shift], pc) / 12);
+        this.pitchClass = this.haveNote ? ((this.note - key) % 12 + 12) % 12 : 0;
+      }
+      this.shifter.setGlide(0.008);
+      this.shifter.setRatio(this.ratios[this.pitchClass]);
+      mix = k[3];
+    }
+
+    // equal-power mix: a harmony and the dry note together stay at about the input's loudness
+    const angle = f32(f32(clamp(f32(mix), 0, 100) / 100) * f32(0.5 * PI));
+    this.dryGain.setTarget(f32(Math.cos(angle)));
+    this.wetGain.setTarget(f32(Math.sin(angle)));
+  }
+
+  /** Smart Harmony: which note is being played (A = 440 Hz), with hysteresis. */
+  followNote() {
+    const tracker = this.tracker;
+    if (!tracker.tracking) return;
+
+    const midi = 69 + 12 * log2Exact(this.fs / (tracker.period * 440));
+    if (!this.haveNote || Math.abs(midi - this.note) > 0.6) {
+      this.note = Math.floor(midi + 0.5);
+      this.haveNote = true;
+      this.pitchClass = ((this.note - this.harmonyKey) % 12 + 12) % 12;
+      this.shifter.setRatio(this.ratios[this.pitchClass]);
+    }
+  }
+
+  process(left, right, n) {
+    const tracker = this.tracker, dryGain = this.dryGain, wetGain = this.wetGain;
+
+    if (this.variant === BASS_OCTAVER) {
+      const octaver = this.octaver;
+      for (let i = 0; i < n; ++i) {
+        const x = 0.5 * f32(left[i] + right[i]);
+        const event = tracker.push(x);
+        if (event !== 0) octaver.tick(tracker, event === 2);
+
+        const octave = octaver.process(x);
+        left[i] = right[i] = dryGain.next() * x + wetGain.next() * octave;
+      }
+      return;
+    }
+
+    const shifter = this.shifter, harmony = this.variant === SMART_HARMONY;
+    for (let i = 0; i < n; ++i) {
+      const x = 0.5 * f32(left[i] + right[i]);
+      const event = tracker.push(x);
+      if (harmony && event === 2) this.followNote();
+
+      const wet = shifter.process(x, tracker, event);
+      left[i] = right[i] = dryGain.next() * x + wetGain.next() * wet;
+    }
+  }
+}
+
+/** In the order of the variants. */
+const PITCH_MODELS = [
+  model("bass_octaver", "Bass Octaver", CATEGORY.pitch, ENGINE.pitchFx, BASS_OCTAVER, "EBS OctaBass",
+        [percent("Tone", 50), percent("Normal", 100), percent("Octave", 70)]),
+  model("pitch_glide", "Pitch Glide", CATEGORY.pitch, ENGINE.pitchFx, PITCH_GLIDE, "Digitech Whammy",
+        [semitones("Pitch", -24, 24, 12, 0.1), percent("Mix", 100)]),
+  model("smart_harmony", "Smart Harmony", CATEGORY.pitch, ENGINE.pitchFx, SMART_HARMONY, "Eventide H3000",
+        [choice("Key", KEY_NAMES, 0), choice("Shift", SHIFT_NAMES, 8), choice("Scale", SCALE_NAMES, 0), percent("Mix", 50)]),
+];
+
+return { PitchFx, PITCH_MODELS };
+})();
+// ---- dsp/eq.js
+const { EqFx, EQ_MODELS } = (() => {
+// The HD500X's Preamp+EQ models (Source/DSP/fx/Eq.h). Stereo (each side filtered on its own), except the mono Vintage Pre.
+//   Graphic EQ: 80Hz, 220Hz, 480Hz, 1.1kHz, 2.2kHz         |   Parametric EQ: Lows, Highs, Freq, Q, Gain
+//   Studio EQ: Low Freq, Low Gain, Hi Freq, Hi Gain, Gain   |   4 Band Shift EQ: Low, Low Mid, Hi Mid, Hi, Shift
+//   Mid Focus EQ: Hi Pass Freq, Hi Pass Q, Low Pass Freq, Low Pass Q, Gain
+//   Vintage Pre: Gain, Output, Phase, Hi Pass Filter, Lo Pass Filter
+
+const GRAPHIC_EQ = 0, PARAMETRIC_EQ = 1, STUDIO_EQ = 2, FOUR_BAND_SHIFT_EQ = 3, MID_FOCUS_EQ = 4, VINTAGE_PRE = 5;
+const SECTION_COUNTS = [5, 3, 2, 4, 2, 2];
+
+const TICK = 16; // samples between filter updates (the filters glide in between)
+const MAX_SECTIONS = 5, NUM_PARAMS = 5;
+const TINY = f32(1e-20);
+
+// Graphic EQ: the HD500X's five bands, each as wide as its distance to its neighbours
+const GRAPHIC_HZ = [80, 220, 480, 1100, 2200], GRAPHIC_Q = [0.9, 1.0, 1.3, 1.5, 1.6];
+// Parametric EQ: fixed shelves, Q knob 0 ... 100 % = 0.4 ... 10
+const PARAMETRIC_LOW_HZ = 150, PARAMETRIC_HIGH_HZ = 3500, PARAMETRIC_MIN_Q = 0.4, PARAMETRIC_Q_RANGE = 25;
+// Studio EQ (API 550B's two mid bands)
+const STUDIO_Q = 1.2, STUDIO_KNEE = 1, STUDIO_CEILING = 2;
+// 4 Band Shift EQ: band centres at Shift 50 %, and how many octaves each moves per half turn of Shift
+const SHIFT_LOW_HZ = 120, SHIFT_LOW_MID_HZ = 400, SHIFT_HI_MID_HZ = 1600, SHIFT_HI_HZ = 5000, SHIFT_MID_Q = 0.9;
+const SHIFT_LOW_OCTAVES = -0.7, SHIFT_LOW_MID_OCTAVES = 0.7, SHIFT_HI_MID_OCTAVES = 0.8, SHIFT_HI_OCTAVES = 0.8;
+// Mid Focus EQ: Q knobs 0 ... 100 % = 0.35 ... 5.6 (25 % = Butterworth)
+const FOCUS_MIN_Q = 0.35, FOCUS_Q_RANGE = 16;
+// Vintage Pre: the tube stage
+const PRE_MAX_DRIVE_DB = f32(30), PRE_HEADROOM = f32(2), PRE_BIAS = f32(0.2), PRE_MAKEUP = f32(0.7);
+const PERCENT = f32(0.01);
+
+// ---- one second-order filter as a state-variable filter: out = m0 * in + m1 * band-pass + m2 * low-pass.
+// Coefficients [g, k, m0, m1, m2] are written into a Float32Array (rounded to float like the C++).
+// The responses are the RBJ cookbook's; identity is m0 = 1, m1 = m2 = 0.
+function makeCoefs(out, g, k, m0, m1, m2) { out[0] = g; out[1] = k; out[2] = m0; out[3] = m1; out[4] = m2; }
+const warp = (fs, hz) => Math.tan((PI * clamp(hz, 1, 0.49 * fs)) / fs);
+
+/** Peaking band, boost and cut mirror images; the band gets narrower as the gain grows (Q = width at half the gain in dB). */
+function peak(out, fs, hz, q, gainDb) {
+  const A = Math.pow(10, gainDb / 40), k = 1 / (q * A);
+  makeCoefs(out, warp(fs, hz), k, 1, k * (A * A - 1), 0);
+}
+/** Constant-Q peaking band: the poles keep the same Q at every boost (the zeros at every cut). */
+function constantQPeak(out, fs, hz, q, gainDb) {
+  const G = Math.pow(10, gainDb / 20), k = G >= 1 ? 1 / q : 1 / (q * G);
+  makeCoefs(out, warp(fs, hz), k, 1, k * (G - 1), 0);
+}
+const SHELF_K = 1.41421356; // 1 / Q of the shelves (slope 1)
+/** `hz` is where the shelf has reached half its gain (in dB). */
+function lowShelf(out, fs, hz, gainDb) {
+  const A = Math.pow(10, gainDb / 40);
+  makeCoefs(out, warp(fs, hz) / Math.sqrt(A), SHELF_K, 1, SHELF_K * (A - 1), A * A - 1);
+}
+function highShelf(out, fs, hz, gainDb) {
+  const A = Math.pow(10, gainDb / 40);
+  makeCoefs(out, warp(fs, hz) * Math.sqrt(A), SHELF_K, A * A, SHELF_K * (1 - A) * A, 1 - A * A);
+}
+function highPass(out, fs, hz, q) { makeCoefs(out, warp(fs, hz), 1 / q, 1, -1 / q, -1); }
+function lowPass(out, fs, hz, q) { makeCoefs(out, warp(fs, hz), 1 / q, 0, 0, 1); }
+
+const IDENTITY = new Float32Array(5);
+
+/** One filter for both sides; a new setting glides in over one tick, sample by sample. */
+class Section {
+  constructor() {
+    this.c = new Float32Array(5); this.target = new Float32Array(5); this.step = new Float32Array(5);
+    this.a1 = 1; this.a2 = 0; this.a3 = 0; // from g and k
+    this.gliding = false;
+    this.ic1 = new Float32Array(2); this.ic2 = new Float32Array(2);
+    this.setIdentity();
+  }
+  set(now) {
+    const c = this.c;
+    c.set(now); this.target.set(now);
+    this.a1 = f32(1 / f32(1 + f32(c[0] * f32(c[0] + c[1]))));
+    this.a2 = f32(c[0] * this.a1);
+    this.a3 = f32(c[0] * this.a2);
+    this.gliding = false;
+  }
+  setIdentity() { IDENTITY[0] = 0.1; IDENTITY[1] = 1; IDENTITY[2] = 1; IDENTITY[3] = IDENTITY[4] = 0; this.set(IDENTITY); }
+  clear() { this.ic1[0] = this.ic1[1] = this.ic2[0] = this.ic2[1] = 0; }
+  glideTo(next) {
+    const c = this.c, step = this.step, scale = 1 / TICK;
+    this.target.set(next);
+    for (let i = 0; i < 5; ++i) step[i] = f32(next[i] - c[i]) * scale;
+    this.gliding = true;
+  }
+  /** End of a tick: be exactly where the glide was heading. */
+  land() { if (this.gliding) this.set(this.target); }
+  process(x, offset, n, ch) {
+    const c = this.c, end = offset + n;
+    let s1 = this.ic1[ch], s2 = this.ic2[ch];
+    if (this.gliding) {
+      const st = this.step, dg = st[0], dk = st[1], d0 = st[2], d1 = st[3], d2 = st[4];
+      let g = c[0], k = c[1], m0 = c[2], m1 = c[3], m2 = c[4];
+      for (let i = offset; i < end; ++i) {
+        g = f32(g + dg); k = f32(k + dk); m0 = f32(m0 + d0); m1 = f32(m1 + d1); m2 = f32(m2 + d2);
+        const b1 = 1 / (1 + g * (g + k));
+        const b2 = g * b1;
+        const b3 = g * b2;
+
+        const input = x[i];
+        const v3 = (input + TINY) - s2;
+        const v1 = b1 * s1 + b2 * v3;
+        const v2 = s2 + b2 * s1 + b3 * v3;
+        s1 = 2 * v1 - s1;
+        s2 = 2 * v2 - s2;
+        x[i] = m0 * input + m1 * v1 + m2 * v2;
+      }
+    } else {
+      const a1 = this.a1, a2 = this.a2, a3 = this.a3, m0 = c[2], m1 = c[3], m2 = c[4];
+      for (let i = offset; i < end; ++i) {
+        const input = x[i];
+        const v3 = (input + TINY) - s2; // (TINY: keeps the states out of the denormals in silence)
+        const v1 = a1 * s1 + a2 * v3;
+        const v2 = s2 + a2 * s1 + a3 * v3;
+        s1 = 2 * v1 - s1;
+        s2 = 2 * v2 - s2;
+        x[i] = m0 * input + m1 * v1 + m2 * v2;
+      }
+    }
+    this.ic1[ch] = s1; this.ic2[ch] = s2;
+  }
+  /** After both sides have been processed: move the glide on by `n` samples. */
+  advance(n) {
+    if (!this.gliding) return;
+    const c = this.c, st = this.step;
+    for (let i = 0; i < n; ++i) { c[0] += st[0]; c[1] += st[1]; c[2] += st[2]; c[3] += st[3]; c[4] += st[4]; }
+  }
+}
+/** Linear up to `knee`, then bends over smoothly towards `ceiling`. */
+function softClip(v, knee, ceiling) {
+  const a = Math.abs(v);
+  if (a <= knee) return v;
+  const range = ceiling - knee;
+  const s = knee + range * Math.tanh((a - knee) / range);
+  return v < 0 ? -s : s;
+}
+
+const logHz = (hz) => f32(Math.log(Math.max(1, hz))); // frequencies glide in octaves
+
+class EqFx {
+  constructor() {
+    this.fs = 48000; this.variant = GRAPHIC_EQ;
+    this.param = Array.from({ length: NUM_PARAMS }, () => new Smoothed(0));
+    this.value = new Float32Array(NUM_PARAMS);
+    this.newTarget = new Float32Array(NUM_PARAMS);
+    this.outGain = new Smoothed(1); this.drive = new Smoothed(1); this.makeup = new Smoothed(1);
+    this.section = Array.from({ length: MAX_SECTIONS }, () => new Section());
+    this.coefs = Array.from({ length: MAX_SECTIONS }, () => new Float32Array(5));
+    this.tickCount = 0; this.modelChanged = true;
+    this.oversampler = new Oversampler4x(TICK);
+    this.dc = new DcBlocker();
+    this.mono = new Float32Array(TICK);
+    this.tubeOffset = 0; this.tubeNorm = 1;
+  }
+
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    for (const p of this.param) p.reset(this.fs, 0.05);
+    this.outGain.reset(this.fs, 0.03); this.drive.reset(this.fs, 0.03); this.makeup.reset(this.fs, 0.03);
+    this.oversampler.reset();
+    this.dc.prepare(this.fs);
+    this.tubeOffset = f32(Math.tanh(PRE_BIAS));
+    this.tubeNorm = f32(1 / f32(1 - f32(this.tubeOffset * this.tubeOffset))); // slope 1 for small signals
+    this.reset();
+  }
+
+  reset() {
+    for (let p = 0; p < NUM_PARAMS; ++p) {
+      this.param[p].setCurrentAndTarget(this.param[p].target);
+      this.value[p] = this.param[p].target;
+    }
+    this.outGain.setCurrentAndTarget(this.outGain.target);
+    this.drive.setCurrentAndTarget(this.drive.target);
+    this.makeup.setCurrentAndTarget(this.makeup.target);
+
+    for (const s of this.section) { s.setIdentity(); s.clear(); }
+    this.computeSections(false);
+
+    this.oversampler.reset();
+    this.dc.reset();
+    this.tickCount = 0;
+    this.modelChanged = false;
+  }
+
+  setModel(variant) {
+    this.variant = clamp(variant | 0, 0, 5);
+    this.modelChanged = true;
+  }
+
+  setParameters(k) {
+    const v = this.newTarget;
+    const k0 = f32(k[0]), k1 = f32(k[1]), k2 = f32(k[2]), k3 = f32(k[3]), k4 = f32(k[4]);
+    v[0] = k0; v[1] = k1; v[2] = k2; v[3] = k3; v[4] = k4;
+
+    switch (this.variant) {
+      case PARAMETRIC_EQ:
+        v[2] = logHz(k2);
+        v[3] = k3 * PERCENT;
+        break;
+      case STUDIO_EQ:
+        v[0] = logHz(k0);
+        v[2] = logHz(k2);
+        v[4] = 0;
+        this.outGain.setTarget(f32(dbToGain(k4)));
+        break;
+      case FOUR_BAND_SHIFT_EQ:
+        v[4] = k4 * PERCENT;
+        break;
+      case MID_FOCUS_EQ:
+        v[0] = logHz(k0);
+        v[1] = k1 * PERCENT;
+        v[2] = logHz(k2);
+        v[3] = k3 * PERCENT;
+        v[4] = 0;
+        this.outGain.setTarget(f32(dbToGain(k4)));
+        break;
+      case VINTAGE_PRE: {
+        // Gain drives the tube harder; most of the extra level is taken off again behind it. Phase flips the output.
+        const driveDb = f32(f32(PRE_MAX_DRIVE_DB * k0) * PERCENT);
+        this.drive.setTarget(f32(f32(dbToGain(driveDb)) / PRE_HEADROOM));
+        this.makeup.setTarget(f32(PRE_HEADROOM * f32(dbToGain(f32(-PRE_MAKEUP * driveDb)))));
+        this.outGain.setTarget(k2 >= 0.5 ? -f32(dbToGain(k1)) : f32(dbToGain(k1)));
+        v[0] = v[1] = v[2] = 0;
+        v[3] = logHz(k3);
+        v[4] = logHz(k4);
+        break;
+      }
+      default: break;
+    }
+
+    for (let p = 0; p < NUM_PARAMS; ++p) this.param[p].setTarget(v[p]);
+  }
+
+  process(left, right, numSamples) {
+    const variant = this.variant, section = this.section, count = SECTION_COUNTS[variant], outGain = this.outGain;
+
+    for (let pos = 0; pos < numSamples;) {
+      if (this.tickCount === 0) this.nextTick();
+
+      const n = Math.min(this.tickCount, numSamples - pos);
+
+      if (variant === VINTAGE_PRE) {
+        this.processPre(left, right, pos, n);
+      } else {
+        for (let s = 0; s < count; ++s) {
+          section[s].process(left, pos, n, 0);
+          section[s].process(right, pos, n, 1);
+          section[s].advance(n);
+        }
+
+        if (variant === STUDIO_EQ) {
+          // the output stage: clean up to full scale, rounds the peaks off when pushed beyond it
+          for (let i = pos; i < pos + n; ++i) {
+            const gain = outGain.next();
+            left[i] = softClip(left[i] * gain, STUDIO_KNEE, STUDIO_CEILING);
+            right[i] = softClip(right[i] * gain, STUDIO_KNEE, STUDIO_CEILING);
+          }
+        } else if (variant === MID_FOCUS_EQ) {
+          for (let i = pos; i < pos + n; ++i) {
+            const gain = outGain.next();
+            left[i] *= gain;
+            right[i] *= gain;
+          }
+        }
+      }
+
+      pos += n;
+      this.tickCount -= n;
+    }
+  }
+
+  /** Filter coefficients for the current (gliding) knob values. */
+  computeSections(glide) {
+    const c = this.coefs, fs = this.fs, v = this.value;
+
+    switch (this.variant) {
+      case GRAPHIC_EQ: // five gyrator-style bands, boost and cut symmetrical, +-12 dB
+        for (let b = 0; b < 5; ++b) peak(c[b], fs, GRAPHIC_HZ[b], GRAPHIC_Q[b], v[b]);
+        break;
+      case PARAMETRIC_EQ: // low shelf, high shelf and one band with free frequency, width and gain
+        lowShelf(c[0], fs, PARAMETRIC_LOW_HZ, v[0]);
+        highShelf(c[1], fs, PARAMETRIC_HIGH_HZ, v[1]);
+        peak(c[2], fs, Math.exp(v[2]), PARAMETRIC_MIN_Q * Math.pow(PARAMETRIC_Q_RANGE, v[3]), v[4]);
+        break;
+      case STUDIO_EQ: // the API 550B's two mid bands, constant-Q, reciprocal boost / cut
+        constantQPeak(c[0], fs, Math.exp(v[0]), STUDIO_Q, v[1]);
+        constantQPeak(c[1], fs, Math.exp(v[2]), STUDIO_Q, v[3]);
+        break;
+      case FOUR_BAND_SHIFT_EQ: { // shelves at both ends, two peaking bands between; Shift slides the low band down, the others up
+        const turn = 2 * v[4] - 1;
+        lowShelf(c[0], fs, SHIFT_LOW_HZ * Math.pow(2, SHIFT_LOW_OCTAVES * turn), v[0]);
+        peak(c[1], fs, SHIFT_LOW_MID_HZ * Math.pow(2, SHIFT_LOW_MID_OCTAVES * turn), SHIFT_MID_Q, v[1]);
+        peak(c[2], fs, SHIFT_HI_MID_HZ * Math.pow(2, SHIFT_HI_MID_OCTAVES * turn), SHIFT_MID_Q, v[2]);
+        highShelf(c[3], fs, SHIFT_HI_HZ * Math.pow(2, SHIFT_HI_OCTAVES * turn), v[3]);
+        break;
+      }
+      case MID_FOCUS_EQ: // 12 dB/octave high-pass and low-pass, each with its own resonance
+        highPass(c[0], fs, Math.exp(v[0]), FOCUS_MIN_Q * Math.pow(FOCUS_Q_RANGE, v[1]));
+        lowPass(c[1], fs, Math.exp(v[2]), FOCUS_MIN_Q * Math.pow(FOCUS_Q_RANGE, v[3]));
+        break;
+      default: // Vintage Pre: the filters in front of and behind the tube
+        highPass(c[0], fs, Math.exp(v[3]), 0.70710678);
+        lowPass(c[1], fs, Math.exp(v[4]), 0.70710678);
+        break;
+    }
+
+    const count = SECTION_COUNTS[this.variant];
+    for (let s = 0; s < count; ++s) {
+      if (glide) this.section[s].glideTo(c[s]);
+      else this.section[s].set(c[s]);
+    }
+  }
+
+  nextTick() {
+    this.tickCount = TICK;
+    for (const s of this.section) s.land();
+
+    let moved = this.modelChanged;
+    for (let p = 0; p < NUM_PARAMS; ++p) {
+      if (this.modelChanged || this.param[p].isSmoothing()) {
+        this.value[p] = this.param[p].skip(TICK);
+        moved = true;
+      }
+    }
+
+    if (moved) {
+      this.modelChanged = false;
+      this.computeSections(true);
+    }
+  }
+
+  // Vintage Pre (Requisite Y7 tube mic preamp), mono: high-pass, one tube stage (a biased tanh, at 4x the sample rate), low-pass.
+  processPre(left, right, pos, n) {
+    const mono = this.mono, drive = this.drive, makeup = this.makeup, outGain = this.outGain, dc = this.dc;
+    const tubeOffset = this.tubeOffset, tubeNorm = this.tubeNorm;
+
+    for (let i = 0; i < n; ++i) mono[i] = 0.5 * (left[pos + i] + right[pos + i]);
+
+    this.section[0].process(mono, 0, n, 0);
+    this.section[0].advance(n);
+
+    for (let i = 0; i < n; ++i) mono[i] *= drive.next();
+
+    const up = this.oversampler.up(mono, n);
+    for (let i = 0; i < 4 * n; ++i) up[i] = (Math.tanh(up[i] + PRE_BIAS) - tubeOffset) * tubeNorm;
+    this.oversampler.down(mono, n);
+
+    for (let i = 0; i < n; ++i) mono[i] *= makeup.next();
+
+    this.section[1].process(mono, 0, n, 0);
+    this.section[1].advance(n);
+
+    for (let i = 0; i < n; ++i) left[pos + i] = right[pos + i] = dc.process(mono[i]) * outGain.next();
+  }
+}
+
+const gain = (name, def = 0) => decibels(name, -12, 12, def);
+const eq = (key, name, variant, basedOn, knobs) => model(key, name, CATEGORY.eq, ENGINE.eqFx, variant, basedOn, knobs);
+
+/** In the order of the variants. */
+const EQ_MODELS = [
+  eq("graphic_eq", "Graphic EQ", GRAPHIC_EQ, "Inspired by the MXR 10-band graphic EQ",
+    [gain("80Hz"), gain("220Hz"), gain("480Hz"), gain("1.1kHz"), gain("2.2kHz")]),
+  eq("parametric_eq", "Parametric EQ", PARAMETRIC_EQ, "Low shelf, high shelf and one fully parametric band",
+    [gain("Lows"), gain("Highs"), freq("Freq", 80, 8000, 800, 800), percent("Q", 35), gain("Gain")]),
+  eq("studio_eq", "Studio EQ", STUDIO_EQ, "Inspired by the API 550B",
+    [freq("Low Freq", 75, 1000, 500, 275), gain("Low Gain"), freq("Hi Freq", 800, 12500, 1500, 3200), gain("Hi Gain"), gain("Gain")]),
+  eq("4_band_shift_eq", "4 Band Shift EQ", FOUR_BAND_SHIFT_EQ, "Four bands whose frequencies the Shift knob spreads apart",
+    [gain("Low"), gain("Low Mid"), gain("Hi Mid"), gain("Hi"), percent("Shift", 50)]),
+  eq("mid_focus_eq", "Mid Focus EQ", MID_FOCUS_EQ, "High-pass and low-pass with resonance, and make-up gain",
+    [freq("Hi Pass Freq", 20, 2000, 130, 200), percent("Hi Pass Q", 25), freq("Low Pass Freq", 500, 20000, 4500, 3200), percent("Low Pass Q", 25), gain("Gain", 2)]),
+  eq("vintage_pre", "Vintage Pre", VINTAGE_PRE, "Requisite Y7 tube mic preamp",
+    [percent("Gain", 30), decibels("Output", -30, 12, 0), choice("Phase", ["0", "180"], 0),
+     freq("Hi Pass Filter", 20, 1000, 20, 140), freq("Lo Pass Filter", 1000, 20000, 20000, 4500)]),
+];
+
+return { EqFx, EQ_MODELS };
+})();
+// ---- dsp/delayfx.js
+const { DelayFx, DELAY_MODELS } = (() => {
+// The HD500X's 19 Delay models (Source/DSP/fx/DelayFx.h), ported line for line.
+// Returns the wet signal only; processDry() adds the original unit's preamp colour to the slot's dry signal
+// for Tube Echo, Tape Echo, Sweep Echo and Echo Platter.
+//
+// Knobs: Time, Note, Fdbk, <two of the model's own>, Mix (the Note knob is ignored here).
+// Stereo Delay: L Time, L Note, L Fdbk, R Time, R Note, R Fdbk, Mix.
+
+const TWO_PI = 6.283185307179586, LN2 = 0.6931471805599453;
+
+const V = { pingPong: 0, dynamicDly: 1, stereoDelay: 2, digitalDelay: 3, digMod: 4, reverse: 5, loRes: 6, tubeEcho: 7, tubeEchoDry: 8,
+            tapeEcho: 9, tapeEchoDry: 10, sweepEcho: 11, sweepEchoDry: 12, echoPlatter: 13, echoPlatterDry: 14, analogMod: 15,
+            analogEcho: 16, autoVolume: 17, multiHead: 18, numVariants: 19 };
+
+/** Linear parameter ramp kept in double: steps through exactly the same values as the C++ one. */
+class Ramp {
+  constructor() { this.current = 0; this.target = 0; this.step = 0; this.countdown = 0; this.steps = 1; }
+  prepare(fs, seconds) { this.steps = Math.max(1, Math.trunc(seconds * fs)); }
+  set(v) {
+    if (v === this.target) return;
+    this.target = v;
+    this.countdown = this.steps;
+    this.step = (this.target - this.current) / this.steps;
+  }
+  snap() { this.current = this.target; this.countdown = 0; }
+  next() {
+    if (this.countdown > 0) {
+      if (--this.countdown === 0) this.current = this.target;
+      else this.current += this.step;
+    }
+    return this.current;
+  }
+  isZero() { return this.countdown === 0 && this.current === 0; }
+}
+
+/** Circular delay line over a piece of the engine's memory. read(d) / readInt(d): the sample pushed d pushes ago. */
+class Line {
+  constructor() { this.data = new Float32Array(8); this.size = 8; this.writePos = 0; }
+  push(x) {
+    this.data[this.writePos] = x;
+    if (++this.writePos === this.size) this.writePos = 0;
+  }
+  readInt(d) {
+    let i = this.writePos - d;
+    if (i < 0) i += this.size;
+    return this.data[i];
+  }
+  /** 4-point Hermite; an integer d returns the stored sample exactly. */
+  read(d) {
+    const size = this.size, data = this.data;
+    if (d < 2) d = 2;
+    else if (d > size - 4) d = size - 4;
+
+    const di = Math.floor(d);
+    const frac = f32(d - di);
+    let i0 = this.writePos - di;  if (i0 < 0) i0 += size;
+    let im = i0 + 1;              if (im >= size) im -= size;
+    let i1 = i0 - 1;              if (i1 < 0) i1 += size;
+    let i2 = i1 - 1;              if (i2 < 0) i2 += size;
+
+    const xm1 = data[im], x0 = data[i0], x1 = data[i1], x2 = data[i2];
+    const c1 = 0.5 * (x1 - xm1);
+    const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;
+    const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+    return ((c3 * frac + c2) * frac + c1) * frac + x0;
+  }
+}
+
+/** One read position of a digital delay; a new time is reached by crossfading to a second read position. */
+class Tap {
+  constructor() { this.current = 9600; this.next = 9600; this.target = 9600; this.count = 0; }
+}
+
+/** Transparent up to +-1, then bends over towards +-1.5: keeps a digital loop at 100 % feedback bounded. */
+function softLimit(x) {
+  const a = Math.abs(x);
+  if (a <= 1) return x;
+  const over = a - 1, y = 1 + over / (1 + 2 * over);
+  return x < 0 ? -y : y;
+}
+
+/** tanh with a bias: tape (bias 0) or a tube / FET / BBD stage. Unity gain for small signals. */
+class Saturator {
+  constructor() { this.gain = 1; this.shift = 0; this.offset = 0; this.norm = 1; }
+  set(drive, bias) {
+    const o = Math.tanh(drive * bias);
+    this.gain = f32(drive);
+    this.shift = f32(drive * bias);
+    this.offset = f32(Math.tanh(this.shift));
+    this.norm = f32(1 / (drive * (1 - o * o)));
+  }
+  process(x) { return (Math.tanh(this.gain * x + this.shift) - this.offset) * this.norm; }
+}
+
+/** Peak filter (the same response as Biquad.setPeak) as a state-variable filter: precise in float at low centres. */
+class Bell {
+  constructor() { this.a1 = 1; this.a2 = 0; this.a3 = 0; this.peak = 0; this.s1 = 0; this.s2 = 0; }
+  set(fs, hz, q, gainDb) {
+    const A = Math.pow(10, gainDb / 40), k = 1 / (q * A);
+    const g = Math.tan(PI * clamp(hz, 1, 0.49 * fs) / fs), k1 = 1 / (1 + g * (g + k));
+    this.a1 = f32(k1);
+    this.a2 = f32(g * k1);
+    this.a3 = f32(g * g * k1);
+    this.peak = f32(k * (A * A - 1));
+  }
+  reset() { this.s1 = this.s2 = 0; }
+  process(x) {
+    const v3 = x - this.s2, v1 = this.a1 * this.s1 + this.a2 * v3, v2 = this.s2 + this.a2 * this.s1 + this.a3 * v3;
+    this.s1 = 2 * v1 - this.s1;
+    this.s2 = 2 * v2 - this.s2;
+    return x + this.peak * v1;
+  }
+}
+
+// What makes each tape / platter / BBD echo its own (see Voicing in DelayFx.h)
+const voicing = (lowPassHz, lowPassQ, highPassHz, bumpHz, bumpDb, bumpQ, preHz, driveMin, driveMax, bias, wowHz, wowDeviation, drift, dry) =>
+  ({ lowPassHz, lowPassQ, highPassHz, bumpHz, bumpDb, bumpQ, preHz, driveMin, driveMax, bias, wowHz, wowDeviation, drift, dry });
+const VOICING_EP1     = voicing(3800, 0.65, 85,  120, 2.5, 0.9,  0,    0.7, 3.2, 0.12,   [0.55, 1.9, 7.3], [0.0055, 0.0022, 0.002], 0.0022, 1);
+const VOICING_EP3     = voicing(4600, 0.70, 65,  100, 2.0, 1.0,  0,    0.9, 0.9, 0.03,   [0.55, 1.9, 7.3], [0.0055, 0.0022, 0.002], 0.0022, 2);
+const VOICING_SWEEP   = voicing(3800, 0.65, 85,  120, 2.5, 0.9,  0,    1.4, 1.4, 0.12,   [0.55, 1.9, 7.3], [0.0055, 0.0022, 0.002], 0.0022, 1);
+const VOICING_PLATTER = voicing(5000, 0.70, 160, 1800, 1.5, 0.8, 0,    0.6, 2.6, 0.10,   [0.37, 2.6, 9.5], [0.003, 0.006, 0.003],   0.002,  3);
+const VOICING_DMM     = voicing(3600, 0.75, 60,  0, 0, 1.0,      5000, 1.15, 1.15, 0.08, [1, 1, 1],        [0, 0, 0],               0,      0);
+const VOICING_DM2     = voicing(2900, 0.80, 110, 0, 0, 1.0,      4000, 1.7, 1.7, 0.12,   [1, 1, 1],        [0, 0, 0],               0,      0);
+const VOICING_SWELL   = voicing(5000, 0.70, 50,  100, 1.5, 1.0,  0,    0.9, 0.9, 0,      [0.55, 1.9, 7.3], [0.0055, 0.0022, 0.002], 0.0022, 0);
+const VOICING_RE101   = voicing(4200, 0.70, 95,  95, 3.0, 1.0,   0,    1.1, 1.1, 0.05,   [0.45, 1.3, 8.9], [0.005, 0.0025, 0.002],  0.0025, 0);
+
+const EQ_RANGE_DB = 9, EQ_BASS_HZ = 250, EQ_TREBLE_HZ = 2500;
+const SWEEP_CENTRE_HZ = 800, SWEEP_OCTAVES = 2.2, SWEEP_DAMPING = 0.4;
+const SWELL_ON = 0.006, SWELL_OFF = 0.002, SWELL_ONSET_RATIO = 1.6;
+const HEAD_RATIO = [0.25, 0.5, 0.75, 1.0], HEAD_MIX_KNEE = f32(0.6), HEAD_MIX_SCALE = f32(1 / f32(0.6));
+const REGEN_KNEE = 0.85, REGEN_MAX = 1.2; // tape, platter and BBD echoes regenerate past unity at the top of the Fdbk knob
+const NUM_KNOBS_READ = 7;
+
+const toSeconds = (ms) => clamp(ms, 20, 2000) * 0.001;
+const toUnit = (percentValue) => clamp(percentValue * 0.01, 0, 1);
+
+/** How many repeats after the first one until they are 60 dB down. */
+function repeats(fb) {
+  if (fb >= 0.999) return 1.0e6;
+  return Math.log(0.001) / Math.log(Math.max(fb, 1.0e-6));
+}
+
+/** Moves `value` towards `target` by at most `maxStep`. */
+function approach(value, target, maxStep) {
+  if (value === target) return value;
+  return target > value ? Math.min(target, value + maxStep) : Math.max(target, value - maxStep);
+}
+
+/** A bass and a treble shelf: out = in + amount * (low- / high-passed in); states at index `s`. */
+function shelfPair(x, lowState, highState, s, bass, treble, lowCoef, highCoef) {
+  let v = (x - lowState[s]) * lowCoef, low = v + lowState[s];
+  lowState[s] = low + v;
+  x += bass * low;
+
+  v = (x - highState[s]) * highCoef;
+  low = v + highState[s];
+  highState[s] = low + v;
+  return x + treble * (x - low);
+}
+
+class DelayFx {
+  constructor() {
+    this.fs = 48000;
+    this.variant = V.digitalDelay;
+    this.mix = f32(0.35); this.tail = 1;
+    this.knobs = new Float32Array([500, 1, 40, 50, 50, 35, 35]); // the last setParameters, for prepare()
+
+    this.memory = new Float32Array(16);
+    this.line = [new Line(), new Line()]; this.whole = new Line();
+    this.lineSize = 0;
+
+    // times and feedback
+    this.timeTarget = 9600; this.glide = 9600; // samples
+    this.glideCoef = 0;
+    this.tap = [new Tap(), new Tap()];
+    this.xfadeLength = 1; this.xfadeStep = 1;
+    this.feedback = [new Ramp(), new Ramp()];
+
+    // modulation: chorus LFO, tape wow / flutter / drift
+    this.lfoPhase = 0; this.lfoInc = 0;
+    this.modAmp = new Ramp();
+    this.wowPhase = new Float64Array(3); this.wowInc = new Float64Array(3);
+    this.wowAmp = [new Ramp(), new Ramp(), new Ramp()]; this.driftAmp = new Ramp();
+    this.noiseState = 0; this.noiseCount = 0; this.noiseInterval = 1;
+    this.noiseTarget = 0; this.noise1 = 0; this.noise2 = 0; this.noiseCoef = 0;
+
+    // loop colour
+    this.lowPass = [new Biquad(), new Biquad()]; this.bump = [new Bell(), new Bell()];
+    this.highPass = [new OnePole(), new OnePole()]; this.preFilter = [new OnePole(), new OnePole()];
+    this.shelfLow = new Float32Array(4); this.shelfHigh = new Float32Array(4); // [inside the loop, on the output] x [side]
+    this.saturator = new Saturator();
+    this.drive = 0; this.driveTarget = 0; this.bbdTime = -1;
+    this.bassGain = new Ramp(); this.trebleGain = new Ramp(); this.bassCoef = new Ramp(); this.trebleCoef = new Ramp(); this.outGain = new Ramp();
+
+    // Ping Pong
+    this.spreadDirect = new Ramp(); this.spreadCross = new Ramp();
+
+    // Dynamic Dly
+    this.duckThreshold = 0.03; this.duckDepth = 0; this.duckEnv = 0; this.duckGain = 1;
+    this.duckAttack = 0; this.duckRelease = 0; this.duckClose = 0; this.duckOpen = 0;
+
+    // Lo Res Delay
+    this.tone = 1; this.toneTarget = 1; this.toneState = new Float64Array(2); this.quantScale = 8388608;
+    this.toneCoef = 1; this.toneOpen = true;
+
+    // Reverse
+    this.reversePos = 0; this.reverseLength = 9600; this.reversePrevious = 9600; this.reverseTarget = 9600;
+    this.reverseFade = 1; this.reverseFadeMax = 1;
+
+    // Sweep Echo
+    this.sweepPhase = 0; this.sweepInc = 0;
+    this.sweepDepth = new Ramp(); this.sweepMix = new Ramp();
+    this.sweep1 = new Float32Array(2); this.sweep2 = new Float32Array(2);
+
+    // Auto-Volume Echo
+    this.swellFast = 0; this.swellSlow = 0; this.swellPos = 0; this.swellGain = 0;
+    this.swellRise = 0.001; this.swellDipStep = 0.01; this.swellCloseStep = 0.001;
+    this.swellFastRelease = 0; this.swellSlowAttack = 0; this.swellSlowRelease = 0;
+    this.swellHold = 0; this.swellHoldSamples = 0;
+    this.swellOpen = false; this.swellDipping = false;
+    this.directGain = new Ramp(); this.echoGain = new Ramp();
+
+    // Multi-Head
+    this.headGain = [new Ramp(), new Ramp(), new Ramp(), new Ramp()];
+
+    // the dry signal's preamp (processDry)
+    this.dryKind = 0;
+    this.dryEq = [new Biquad(), new Biquad()];
+    this.dryHighPass = [new OnePole(), new OnePole()]; this.dryLowPass = [new OnePole(), new OnePole()];
+    this.drySaturator = new Saturator();
+    this.dryDrive = 0; this.dryGain = 1;
+
+    this.ramps = [this.feedback[0], this.feedback[1], this.modAmp, this.bassGain, this.trebleGain, this.bassCoef, this.trebleCoef,
+                  this.spreadDirect, this.spreadCross, this.wowAmp[0], this.wowAmp[1], this.wowAmp[2], this.driftAmp, this.sweepDepth,
+                  this.sweepMix, this.directGain, this.echoGain, this.outGain,
+                  this.headGain[0], this.headGain[1], this.headGain[2], this.headGain[3]];
+  }
+
+  prepare(sampleRate, maxBlock) {
+    const fs = this.fs = sampleRate;
+
+    // 2 s of delay plus room for wow / chorus; Reverse reads up to twice its chunk length back,
+    // so it uses both halves as one line
+    const lineSize = this.lineSize = Math.trunc(2.1 * fs) + 64;
+    this.memory = new Float32Array(lineSize * 2);
+    this.line[0].data = this.memory.subarray(0, lineSize);  this.line[0].size = lineSize;
+    this.line[1].data = this.memory.subarray(lineSize);     this.line[1].size = lineSize;
+    this.whole.data = this.memory;                          this.whole.size = lineSize * 2;
+
+    this.xfadeLength = Math.max(1, Math.trunc(0.04 * fs));
+    this.xfadeStep = f32(1 / this.xfadeLength);
+    this.reverseFadeMax = Math.max(1, Math.trunc(0.02 * fs));
+
+    for (const r of this.ramps) r.prepare(fs, 0.04);
+
+    this.glideCoef = this.stepFor(0.2);
+    this.duckAttack = this.stepFor(0.002);  this.duckRelease = this.stepFor(0.12);
+    this.duckClose = this.stepFor(0.012);   this.duckOpen = this.stepFor(0.3);
+    this.swellFastRelease = f32(Math.exp(-1 / (0.03 * fs)));
+    this.swellSlowAttack = this.stepFor(0.03);  this.swellSlowRelease = this.stepFor(0.15);
+    this.swellDipStep = 1 / (0.004 * fs);
+    this.swellCloseStep = 1 / (0.15 * fs);
+    this.swellHoldSamples = Math.trunc(0.08 * fs);
+    this.noiseInterval = Math.max(1, Math.trunc(fs / 40));
+    this.noiseCoef = f32(1 - Math.exp(-TWO_PI * 1.2 / fs));
+
+    this.updateVoicing();
+    this.setParameters(this.knobs); // everything measured in samples depends on the rate
+    this.reset();
+  }
+
+  reset() {
+    this.memory.fill(0);
+    this.line[0].writePos = this.line[1].writePos = this.whole.writePos = 0;
+
+    for (let c = 0; c < 2; ++c) {
+      this.lowPass[c].reset();  this.highPass[c].reset();  this.bump[c].reset();  this.preFilter[c].reset();
+      this.dryEq[c].reset();    this.dryHighPass[c].reset(); this.dryLowPass[c].reset();
+      this.sweep1[c] = this.sweep2[c] = 0;
+      this.toneState[c] = 0;
+      const t = this.tap[c];
+      t.current = t.next = t.target;
+      t.count = 0;
+    }
+    this.shelfLow.fill(0); this.shelfHigh.fill(0);
+
+    this.glide = this.timeTarget;
+    this.lfoPhase = this.sweepPhase = 0;
+    this.wowPhase.fill(0);
+    this.noiseState = 0x2545f491;
+    this.noiseCount = 0;
+    this.noiseTarget = this.noise1 = this.noise2 = 0;
+
+    this.duckEnv = 0;
+    this.duckGain = 1;
+    this.swellFast = this.swellSlow = this.swellPos = this.swellGain = 0;
+    this.swellOpen = this.swellDipping = false;
+    this.swellHold = 0;
+
+    this.reversePos = 0;
+    this.reverseLength = this.reversePrevious = this.reverseTarget;
+    this.reverseFade = Math.min(Math.trunc(this.reverseLength / 4), this.reverseFadeMax);
+
+    this.updateBlock(0, true);
+
+    for (const r of this.ramps) r.snap();
+  }
+
+  setModel(variant) {
+    this.variant = clamp(variant | 0, 0, V.numVariants - 1);
+    this.updateVoicing();
+  }
+
+  setParameters(k) {
+    const fs = this.fs, variant = this.variant, q = this.knobs;
+    if (k !== q)
+      for (let i = 0; i < NUM_KNOBS_READ; ++i) q[i] = k[i] === undefined ? 0 : k[i]; // (rounds to float, as the C++ receives them)
+
+    const twoTimes = variant === V.stereoDelay;
+    const seconds = toSeconds(q[0]);
+    const fb = toUnit(q[2]);
+    const a = twoTimes ? 0 : q[3], b = twoTimes ? 0 : q[4];
+    const mixValue = toUnit(q[twoTimes ? 6 : 5]);
+    const regenerates = variant >= V.tubeEcho && variant !== V.autoVolume;
+    const loopGain = regenerates && fb > REGEN_KNEE ? REGEN_KNEE + (fb - REGEN_KNEE) * (REGEN_MAX - REGEN_KNEE) / (1 - REGEN_KNEE) : fb;
+    let first = seconds, spacing = seconds, tailFeedback = Math.min(1, loopGain); // for getTailSeconds()
+    let fbRight = fb, wowDepth = 0, loopScale = 1;
+    const tap = this.tap;
+
+    this.mix = f32(mixValue);
+    this.timeTarget = seconds * fs;
+    tap[0].target = tap[1].target = Math.floor(seconds * fs + 0.5);
+
+    switch (variant) {
+      case V.pingPong: {
+        // Offset: the right delay as a percentage of the left one. Spread: mono .. hard left / right.
+        const right = Math.max(0.001, seconds * toUnit(q[3]));
+        const angle = (1 - toUnit(q[4])) * (PI / 4);
+        tap[1].target = Math.floor(right * fs + 0.5);
+        this.spreadDirect.set(Math.cos(angle));
+        this.spreadCross.set(Math.sin(angle));
+        first = spacing = seconds + right;
+        break;
+      }
+
+      case V.dynamicDly: {
+        // Thresh: -60 .. 0 dB. Ducking: how far the echoes are turned down (100 % = muted).
+        const keep = 1 - toUnit(q[4]);
+        this.duckThreshold = Math.pow(10, (-60 + 0.6 * clamp(a, 0, 100)) / 20);
+        this.duckDepth = 1 - keep * keep;
+        break;
+      }
+
+      case V.stereoDelay: {
+        const secondsRight = toSeconds(q[3]);
+        fbRight = toUnit(q[5]);
+        tap[1].target = Math.floor(secondsRight * fs + 0.5);
+        if (secondsRight * (1 + repeats(fbRight)) > seconds * (1 + repeats(fb))) {
+          first = spacing = secondsRight;
+          tailFeedback = fbRight;
+        }
+        break;
+      }
+
+      case V.digitalDelay:
+      case V.tapeEcho:
+      case V.tapeEchoDry:
+      case V.analogEcho: {
+        // Shelves, flat at 50 %. A cut sits inside the loop (every repeat loses a little more), a boost behind it
+        // (every repeat gets it once), so the loop gain never exceeds Fdbk.
+        const bassDb = (clamp(a, 0, 100) - 50) / 50 * EQ_RANGE_DB;
+        const trebleDb = (clamp(b, 0, 100) - 50) / 50 * EQ_RANGE_DB;
+        const bassRatio = Math.pow(10, bassDb / 20), trebleRatio = Math.pow(10, trebleDb / 20);
+        this.bassGain.set(bassRatio);
+        this.trebleGain.set(trebleRatio);
+
+        // out = in + (gain - 1) * low-passed (or high-passed) in, the corner placed so that boost and cut are mirror images
+        this.bassCoef.set(this.onePoleCoef(EQ_BASS_HZ / Math.sqrt(bassRatio)));
+        this.trebleCoef.set(this.onePoleCoef(EQ_TREBLE_HZ * Math.sqrt(trebleRatio)));
+        wowDepth = variant === V.tapeEcho || variant === V.tapeEchoDry ? 0.18 : 0;
+        break;
+      }
+
+      case V.digMod:
+      case V.analogMod: {
+        // Depth is the pitch deviation (up to +-1.2 %); the sweep is capped at 5 ms so slow speeds stay a chorus
+        const rate = clamp(a, 0.05, 10);
+        this.lfoInc = TWO_PI * rate / fs;
+        this.modAmp.set(Math.min(Math.min(0.005, 0.25 * seconds), toUnit(q[4]) * 0.012 / (TWO_PI * rate)) * fs);
+        break;
+      }
+
+      case V.reverse: {
+        const rate = clamp(a, 0.05, 10);
+        this.lfoInc = TWO_PI * rate / fs;
+        this.modAmp.set(Math.min(0.003, toUnit(q[4]) * 0.010 / (TWO_PI * rate)) * fs);
+        this.reverseTarget = tap[0].target;
+        first = spacing = 2 * seconds; // a chunk is heard up to twice its length after it went in
+        break;
+      }
+
+      case V.loRes:
+        this.toneTarget = toUnit(q[3]);
+        this.quantScale = 1 << (5 + clamp(Math.floor(b + 0.5), 0, 18)); // 2^(bits - 1)
+        break;
+
+      case V.tubeEcho:
+      case V.tubeEchoDry:
+      case V.echoPlatter:
+      case V.echoPlatterDry:
+        wowDepth = toUnit(q[3]);
+        this.driveTarget = toUnit(q[4]);
+        break;
+
+      case V.sweepEcho:
+      case V.sweepEchoDry: {
+        const depth = toUnit(q[4]);
+        this.sweepInc = TWO_PI * clamp(a, 0.05, 10) / fs;
+        this.sweepDepth.set(depth * SWEEP_OCTAVES);
+        this.sweepMix.set(Math.min(1, depth * 5)); // no sweep, no filter: plain EP-1 echoes
+        wowDepth = 0.15;
+        this.driveTarget = 0.4; // the dry path's preamp (processDry)
+        break;
+      }
+
+      case V.autoVolume:
+        // The swell has to replace the dry signal, so this model does its own mixing: it returns the swelled
+        // signal and the echoes already balanced by Mix, and getMix() tells the slot "all wet".
+        wowDepth = toUnit(q[3]);
+        this.swellRise = f32(1 / (0.02 * Math.pow(100, toUnit(q[4])) * fs)); // 20 ms .. 2 s
+        this.directGain.set(Math.min(1, 2 - 2 * mixValue));
+        this.echoGain.set(Math.min(1, 2 * mixValue));
+        this.mix = 1;
+        break;
+
+      case V.multiHead: {
+        const heads = clamp(Math.floor(a + 0.5), 0, 3) | (clamp(Math.floor(b + 0.5), 0, 3) << 2);
+        let count = 0, last = 3;
+        for (let h = 0; h < 4; ++h)
+          if ((heads >> h) & 1) { ++count; last = h; }
+
+        // The mix of the selected heads (each at 1 / sqrt (heads)) is what gets recorded again, as on the real
+        // unit: more heads, denser repeats. It is scaled so that the loop gain is Fdbk when all heads add up.
+        const gain = count > 0 ? 1 / Math.sqrt(count) : 0;
+        for (let h = 0; h < 4; ++h)
+          this.headGain[h].set(((heads >> h) & 1) ? gain : 0);
+
+        loopScale = count > 0 ? gain : 1;
+        wowDepth = 0.2;
+        first = spacing = seconds * HEAD_RATIO[last];
+        break;
+      }
+
+      default:
+        break;
+    }
+
+    this.feedback[0].set(loopGain * loopScale);
+    this.feedback[1].set(fbRight);
+    this.setWow(wowDepth, seconds);
+    this.tail = f32(clamp(first + spacing * repeats(tailFeedback) + 0.1, first + 0.1, 20));
+  }
+
+  /** Wet signal only, in place. */
+  process(left, right, n) {
+    this.updateBlock(n, false);
+
+    switch (this.variant) {
+      case V.pingPong:      this.processPingPong(left, right, n); break;
+      case V.dynamicDly:
+      case V.stereoDelay:
+      case V.digitalDelay:
+      case V.digMod:        this.processDigital(left, right, n); break;
+      case V.reverse:       this.processReverse(left, right, n); break;
+      case V.loRes:         this.processLoRes(left, right, n); break;
+      case V.multiHead:     this.processMultiHead(left, right, n); break;
+      default:              this.processAnalog(left, right, n); break;
+    }
+  }
+
+  /** The slot's dry signal, in place: Tube Echo, Tape Echo, Sweep Echo and Echo Platter pass it through the
+      original unit's preamp; every other model (and the "Dry" variants) leave it untouched. */
+  processDry(left, right, n) {
+    if (this.dryKind === 0) return;
+
+    const moved = approach(this.dryDrive, this.driveTarget, 8 * n / this.fs);
+    if (moved !== this.dryDrive) {
+      this.dryDrive = moved;
+      this.updateDrySaturator();
+    }
+
+    const sat = this.drySaturator, gain = this.dryGain;
+    for (let c = 0; c < 2; ++c) {
+      const io = c === 0 ? left : right, eq = this.dryEq[c], hp = this.dryHighPass[c], lp = this.dryLowPass[c];
+      for (let i = 0; i < n; ++i) {
+        let x = eq.process(io[i]);
+        x = hp.highPass(sat.process(x));
+        io[i] = lp.lowPass(x) * gain;
+      }
+    }
+  }
+
+  /** 0..1 from the Mix knob. (Auto-Volume Echo reports 1 and balances swell and echoes itself.) */
+  getMix() { return this.mix; }
+
+  /** About how long the repeats need to fall by 60 dB at the current Time and Fdbk. */
+  getTailSeconds() { return this.tail; }
+
+  // ---- private ----
+  stepFor(seconds) { return f32(1 - Math.exp(-1 / (seconds * this.fs))); }
+
+  /** Coefficient of a one-pole (TPT) low-pass at `hz`. */
+  onePoleCoef(hz) {
+    const g = Math.tan(PI * clamp(hz, 1, 0.49 * this.fs) / this.fs);
+    return g / (1 + g);
+  }
+
+  voicing() {
+    switch (this.variant) {
+      case V.tapeEcho: case V.tapeEchoDry:        return VOICING_EP3;
+      case V.sweepEcho: case V.sweepEchoDry:      return VOICING_SWEEP;
+      case V.echoPlatter: case V.echoPlatterDry:  return VOICING_PLATTER;
+      case V.analogMod:                           return VOICING_DMM;
+      case V.analogEcho:                          return VOICING_DM2;
+      case V.autoVolume:                          return VOICING_SWELL;
+      case V.multiHead:                           return VOICING_RE101;
+      default:                                    return VOICING_EP1;
+    }
+  }
+
+  /** The fixed filters of the selected model. */
+  updateVoicing() {
+    const v = this.voicing(), fs = this.fs, variant = this.variant;
+    const dryThrough = variant === V.tubeEcho || variant === V.tapeEcho || variant === V.sweepEcho || variant === V.echoPlatter;
+    const dryKind = this.dryKind = dryThrough ? v.dry : 0;
+
+    for (let c = 0; c < 2; ++c) {
+      this.lowPass[c].setLowPass(fs, v.lowPassHz, v.lowPassQ);
+      this.highPass[c].setCutoff(fs, v.highPassHz);
+      this.bump[c].set(fs, v.bumpHz > 0 ? v.bumpHz : 100, v.bumpQ, v.bumpDb);
+      this.preFilter[c].setCutoff(fs, v.preHz > 0 ? v.preHz : 5000);
+
+      // the dry signal's way through the unit
+      if (dryKind === 2)       this.dryEq[c].setHighShelf(fs, 2200, 2.5);  // EP-3: the FET preamp's treble lift
+      else if (dryKind === 3)  this.dryEq[c].setPeak(fs, 1200, 0.7, 2.0);  // Echorec: mid-forward valve mixer
+      else                     this.dryEq[c].setPeak(fs, 1000, 0.7, 0.0);  // EP-1: flat before the tube
+      this.dryHighPass[c].setCutoff(fs, dryKind === 3 ? 90 : (dryKind === 2 ? 45 : 30));
+      this.dryLowPass[c].setCutoff(fs, dryKind === 3 ? 6500 : (dryKind === 2 ? 16000 : 9000));
+    }
+
+    this.dryGain = dryKind === 2 ? f32(0.93) : 1;
+    this.bbdTime = -1;
+  }
+
+  updateDrySaturator() {
+    if (this.dryKind === 2)       this.drySaturator.set(0.45, 0.05);
+    else if (this.dryKind === 3)  this.drySaturator.set(0.5 + 1.0 * this.dryDrive, 0.10);
+    else                          this.drySaturator.set(0.5 + 1.2 * this.dryDrive, 0.12);
+  }
+
+  /** Transport speed errors -> delay modulation. A speed error a sin (w t) moves an echo of length T by
+      (2 a / w) sin (w T / 2): slow wow grows with the delay time, fast flutter does not. */
+  setWow(depth, seconds) {
+    const v = this.voicing(), fs = this.fs;
+    for (let j = 0; j < 3; ++j) {
+      const w = TWO_PI * v.wowHz[j];
+      this.wowAmp[j].set(depth * (2 * v.wowDeviation[j] / w) * Math.abs(Math.sin(0.5 * w * seconds)) * fs);
+      this.wowInc[j] = w / fs;
+    }
+    this.driftAmp.set(depth * v.drift * 8 * Math.min(seconds, 0.5) * fs);
+  }
+
+  /** Once per block: knob values that are slewed at block rate and the filters that follow them.
+      `force` (from reset) jumps to the targets and recalculates everything. */
+  updateBlock(numSamples, force) {
+    const fs = this.fs, n = numSamples / fs, v = this.voicing();
+
+    // record-path saturation (Drive)
+    const drive = approach(this.drive, this.driveTarget, force ? 1.0e9 : 8 * n);
+    if (drive !== this.drive || force) {
+      this.drive = drive;
+      const hasDriveKnob = v.driveMax > v.driveMin;
+      const g = v.driveMin + (v.driveMax - v.driveMin) * (hasDriveKnob ? drive : 0);
+      this.saturator.set(g, v.bias);
+      this.outGain.set(hasDriveKnob ? Math.pow(g, 0.25) : 1); // a hot tape returns a little louder
+    }
+
+    if (force) {
+      this.dryDrive = this.driveTarget;
+      this.updateDrySaturator();
+    }
+
+    // Lo Res Delay's Tone: 500 Hz .. 20 kHz, wide open at 100 %
+    const tone = approach(this.tone, this.toneTarget, force ? 1.0e9 : 6 * n);
+    if (tone !== this.tone || force) {
+      this.tone = tone;
+      const g = Math.tan(PI * Math.min(500 * Math.pow(40, tone), 0.49 * fs) / fs);
+      this.toneCoef = f32(g / (1 + g));
+      this.toneOpen = tone >= 0.995;
+    }
+
+    // BBD: a longer delay means a slower clock and a lower reconstruction filter
+    if (this.variant === V.analogMod || this.variant === V.analogEcho) {
+      if (force) this.glide = this.timeTarget;
+
+      if (this.bbdTime < 0 || Math.abs(this.glide - this.bbdTime) > 0.01 * this.bbdTime) {
+        this.bbdTime = this.glide;
+        const hz = v.lowPassHz * Math.min(1, Math.pow(0.3 * fs / this.glide, 0.4));
+        this.lowPass[0].setLowPass(fs, hz, v.lowPassQ);
+        this.lowPass[1].setLowPass(fs, hz, v.lowPassQ);
+      }
+    }
+  }
+
+  /** Whole-sample read with the crossfade to a new time. */
+  readTap(l, t) {
+    if (t.count === 0) {
+      if (t.target === t.current) return l.readInt(t.current);
+      t.next = t.target;
+      t.count = this.xfadeLength;
+    }
+
+    const from = l.readInt(t.current), to = l.readInt(t.next);
+    const g = f32((this.xfadeLength - t.count) * this.xfadeStep);
+    if (--t.count === 0) t.current = t.next;
+    return from + (to - from) * g;
+  }
+
+  /** The same with a modulated (fractional) read position. */
+  readTapAt(l, t, offset) {
+    if (t.count === 0) {
+      if (t.target === t.current) return l.read(t.current + offset);
+      t.next = t.target;
+      t.count = this.xfadeLength;
+    }
+
+    const from = l.read(t.current + offset), to = l.read(t.next + offset);
+    const g = f32((this.xfadeLength - t.count) * this.xfadeStep);
+    if (--t.count === 0) t.current = t.next;
+    return from + (to - from) * g;
+  }
+
+  advanceLfo() {
+    this.lfoPhase += this.lfoInc;
+    if (this.lfoPhase >= TWO_PI) this.lfoPhase -= TWO_PI;
+  }
+
+  /** Dynamic Dly: gain for the echoes, from the level of what is being played right now. */
+  nextDuckGain(l, r) {
+    const level = Math.max(Math.abs(l), Math.abs(r));
+    this.duckEnv += (level - this.duckEnv) * (level > this.duckEnv ? this.duckAttack : this.duckRelease);
+
+    const amount = clamp((this.duckEnv - 0.5 * this.duckThreshold) / this.duckThreshold, 0, 1);
+    const target = 1 - amount * this.duckDepth;
+    this.duckGain += (target - this.duckGain) * (target < this.duckGain ? this.duckClose : this.duckOpen); // down fast, bloom slowly
+    return this.duckGain;
+  }
+
+  /** Auto-Volume Echo: gain that closes at every new note and fades it in (exactly the C++ arithmetic). */
+  nextSwellGain(l, r) {
+    const level = 0.5 * (Math.abs(l) + Math.abs(r));
+    this.swellFast = level > this.swellFast ? level : this.swellFast * this.swellFastRelease;
+    this.swellSlow += (this.swellFast - this.swellSlow) * (this.swellFast > this.swellSlow ? this.swellSlowAttack : this.swellSlowRelease);
+    if (this.swellHold > 0) --this.swellHold;
+
+    if (this.swellFast < SWELL_OFF) {
+      this.swellOpen = false;
+    } else if (this.swellFast > SWELL_ON && this.swellHold === 0 && (!this.swellOpen || this.swellFast > SWELL_ONSET_RATIO * this.swellSlow)) {
+      this.swellOpen = true;
+      this.swellDipping = true; // a new note: down in 4 ms, then up over the Swell time
+      this.swellHold = this.swellHoldSamples;
+    }
+
+    if (this.swellDipping) {
+      this.swellGain -= this.swellDipStep;
+      if (this.swellGain <= 0) {
+        this.swellGain = this.swellPos = 0;
+        this.swellDipping = false;
+      }
+    } else {
+      this.swellPos = this.swellOpen ? Math.min(1, this.swellPos + this.swellRise) : Math.max(0, this.swellPos - this.swellCloseStep);
+      this.swellGain = this.swellPos * this.swellPos;
+    }
+    return this.swellGain;
+  }
+
+  /** Wow, flutter and a slow random drift of the transport, as a delay offset in samples. */
+  nextWow() {
+    const wowAmp = this.wowAmp, wowPhase = this.wowPhase, wowInc = this.wowInc;
+    let offset = 0;
+    for (let j = 0; j < 3; ++j) {
+      offset += wowAmp[j].next() * Math.sin(wowPhase[j]);
+      wowPhase[j] += wowInc[j];
+      if (wowPhase[j] >= TWO_PI) wowPhase[j] -= TWO_PI;
+    }
+
+    if (--this.noiseCount <= 0) {
+      this.noiseCount = this.noiseInterval;
+      this.noiseState = (Math.imul(this.noiseState, 1664525) + 1013904223) >>> 0;
+      this.noiseTarget = (this.noiseState >>> 8) * (2 / 16777216) - 1;
+    }
+    this.noise1 += this.noiseCoef * (this.noiseTarget - this.noise1);
+    this.noise2 += this.noiseCoef * (this.noise1 - this.noise2);
+    return offset + this.driftAmp.next() * this.noise2;
+  }
+
+  wowIsOn() {
+    return !(this.wowAmp[0].isZero() && this.wowAmp[1].isZero() && this.wowAmp[2].isZero() && this.driftAmp.isZero());
+  }
+
+  /** Tape-style time change: the delay glides to its target, which bends the pitch of what is in the line. */
+  nextGlide() {
+    this.glide += clamp((this.timeTarget - this.glide) * this.glideCoef, -1, 0.66);
+    return this.glide;
+  }
+
+  // Dynamic Dly, Stereo Delay, Digital Delay, Dig Dly W/Mod: one clean line per side
+  processDigital(left, right, n) {
+    const variant = this.variant, line = this.line, tap = this.tap, feedback = this.feedback;
+    const shelfLow = this.shelfLow, shelfHigh = this.shelfHigh;
+    const useEq = variant === V.digitalDelay, useMod = variant === V.digMod, ducking = variant === V.dynamicDly;
+
+    for (let i = 0; i < n; ++i) {
+      const outputGain = ducking ? f32(this.nextDuckGain(left[i], right[i])) : 1;
+      let bass = 1, treble = 1, lowCoef = 0, highCoef = 0;
+      let offset0 = 0, offset1 = 0;
+
+      if (useEq) {
+        bass = f32(this.bassGain.next());      lowCoef = f32(this.bassCoef.next());
+        treble = f32(this.trebleGain.next());  highCoef = f32(this.trebleCoef.next());
+      }
+
+      if (useMod) {
+        const amp = this.modAmp.next();
+        offset0 = amp * Math.sin(this.lfoPhase); // the right side a quarter cycle ahead: the chorus spreads out
+        offset1 = amp * Math.cos(this.lfoPhase);
+        this.advanceLfo();
+      }
+
+      for (let c = 0; c < 2; ++c) {
+        const io = c === 0 ? left : right;
+        let wet = useMod ? this.readTapAt(line[c], tap[c], c === 0 ? offset0 : offset1) : this.readTap(line[c], tap[c]);
+        if (useEq) // cuts, inside the loop
+          wet = shelfPair(wet, shelfLow, shelfHigh, c, Math.min(bass, 1) - 1, Math.min(treble, 1) - 1, lowCoef, highCoef);
+
+        line[c].push(softLimit(io[i] + f32(feedback[c].next()) * wet));
+
+        if (useEq) // boosts, on the way out
+          wet = shelfPair(wet, shelfLow, shelfHigh, 2 + c, Math.max(bass, 1) - 1, Math.max(treble, 1) - 1, lowCoef, highCoef);
+        io[i] = wet * outputGain;
+      }
+    }
+  }
+
+  // Ping Pong: the mono sum goes into the left line, its output into the right line (first "ping", then
+  // "pong" at the same level), and the right line's output back into the left one, turned down by Fdbk.
+  processPingPong(left, right, n) {
+    const line0 = this.line[0], line1 = this.line[1], tap0 = this.tap[0], tap1 = this.tap[1];
+    for (let i = 0; i < n; ++i) {
+      const input = 0.5 * (left[i] + right[i]);
+      const ping = this.readTap(line0, tap0), pong = this.readTap(line1, tap1);
+      const fb = f32(this.feedback[0].next());
+      const direct = f32(this.spreadDirect.next()), cross = f32(this.spreadCross.next());
+
+      line0.push(softLimit(input + fb * pong));
+      line1.push(ping);
+      left[i] = direct * ping + cross * pong;
+      right[i] = direct * pong + cross * ping;
+    }
+  }
+
+  // Lo Res Delay: what goes into the line is rounded to the chosen word length (no dither, like an early
+  // digital delay), again on every trip round the loop. Same double arithmetic as the C++, so it rounds the same way.
+  processLoRes(left, right, n) {
+    const line = this.line, tap = this.tap, feedback = this.feedback, toneState = this.toneState;
+    const coef = this.toneCoef, xfadeLength = this.xfadeLength, toneOpen = this.toneOpen, quantScale = this.quantScale;
+
+    for (let i = 0; i < n; ++i)
+      for (let c = 0; c < 2; ++c) {
+        const io = c === 0 ? left : right, t = tap[c], l = line[c];
+        let wet;
+
+        if (t.count === 0 && t.target === t.current) {
+          wet = l.readInt(t.current);
+        } else {
+          if (t.count === 0) {
+            t.next = t.target;
+            t.count = xfadeLength;
+          }
+
+          const from = l.readInt(t.current), to = l.readInt(t.next);
+          wet = from + (to - from) * ((xfadeLength - t.count) / xfadeLength);
+          if (--t.count === 0) t.current = t.next;
+        }
+
+        // Tone: one-pole low-pass on the repeats (inside the loop: every repeat is a little darker)
+        const v = (wet - toneState[c]) * coef, low = v + toneState[c];
+        toneState[c] = low + v;
+        if (!toneOpen) wet = low;
+
+        const input = softLimit(io[i] + feedback[c].next() * wet);
+        l.push(Math.floor(input * quantScale + 0.5) / quantScale);
+        io[i] = wet;
+      }
+  }
+
+  // Reverse: the read position runs backwards from "now" for one chunk (Time), then jumps back to "now".
+  // At each jump the old read head keeps running underneath the new one for an equal-power crossfade.
+  processReverse(left, right, n) {
+    const whole = this.whole;
+    for (let i = 0; i < n; ++i) {
+      const input = 0.5 * (left[i] + right[i]);
+      const offset = this.modAmp.next() * (1 + Math.sin(this.lfoPhase)); // chorus: the read head wanders a little
+      this.advanceLfo();
+
+      let wet = whole.read(2 + 2 * this.reversePos + offset);
+      if (this.reversePos < this.reverseFade) {
+        const x = 0.5 * PI * (this.reversePos + 0.5) / this.reverseFade;
+        const old = whole.read(2 + 2 * (this.reversePrevious + this.reversePos) + offset);
+        wet = f32(Math.cos(x)) * old + f32(Math.sin(x)) * wet;
+      }
+      wet = f32(wet);
+
+      whole.push(softLimit(input + f32(this.feedback[0].next()) * wet));
+      left[i] = right[i] = wet;
+
+      if (++this.reversePos >= this.reverseLength) {
+        this.reversePos = 0;
+        this.reversePrevious = this.reverseLength;
+        this.reverseLength = this.reverseTarget; // a new Time is taken up here
+        this.reverseFade = Math.min(Math.trunc(this.reverseLength / 4), this.reverseFadeMax);
+      }
+    }
+  }
+
+  // Multi-Head: one tape, one record head, four playback heads. The selected heads are mixed, and that mix
+  // is also what is fed back to the record head.
+  processMultiHead(left, right, n) {
+    const line0 = this.line[0], headGain = this.headGain, lowPass = this.lowPass[0], highPass = this.highPass[0], bump = this.bump[0];
+    const wow = this.wowIsOn();
+
+    for (let i = 0; i < n; ++i) {
+      const input = 0.5 * (left[i] + right[i]);
+      const d = this.nextGlide() + (wow ? this.nextWow() : 0);
+      let wet = 0;
+
+      for (let h = 0; h < 4; ++h) {
+        const g = headGain[h].next();
+        if (g !== 0) wet += f32(g) * line0.read(d * HEAD_RATIO[h]);
+      }
+
+      wet = HEAD_MIX_KNEE * softLimit(wet * HEAD_MIX_SCALE);
+      wet = bump.process(highPass.highPass(lowPass.process(wet)));
+      line0.push(this.saturator.process(input + f32(this.feedback[0].next()) * wet));
+      left[i] = right[i] = wet;
+    }
+  }
+
+  // Tube / Tape / Sweep Echo, Echo Platter, Analog W/Mod, Analog Echo, Auto-Volume Echo: per side
+  //   read (gliding, wobbling) -> playback filters -> out
+  //   in + Fdbk * out -> saturation -> line
+  // so every repeat is filtered and saturated once more than the one before.
+  processAnalog(left, right, n) {
+    const variant = this.variant, v = this.voicing(), fs = this.fs;
+    const line = this.line, lowPass = this.lowPass, highPass = this.highPass, bump = this.bump, preFilter = this.preFilter;
+    const shelfLow = this.shelfLow, shelfHigh = this.shelfHigh, sweep1 = this.sweep1, sweep2 = this.sweep2, saturator = this.saturator;
+    const wow = this.wowIsOn(), sineMod = variant === V.analogMod, useBump = v.bumpDb !== 0, usePre = v.preHz > 0;
+    const useEq = variant === V.tapeEcho || variant === V.tapeEchoDry || variant === V.analogEcho;
+    const sweeping = variant === V.sweepEcho || variant === V.sweepEchoDry, swelling = variant === V.autoVolume;
+    const damping = f32(SWEEP_DAMPING);
+
+    for (let i = 0; i < n; ++i) {
+      let d = this.nextGlide();
+      if (wow) d += this.nextWow();
+
+      if (sineMod) {
+        d += this.modAmp.next() * Math.sin(this.lfoPhase);
+        this.advanceLfo();
+      }
+
+      const fb = f32(this.feedback[0].next()), level = f32(this.outGain.next());
+      let bass = 1, treble = 1, lowCoef = 0, highCoef = 0;
+      let swell = 1, direct = 0, echo = 1;
+      let a1 = 0, a2 = 0, a3 = 0, sweepAmount = 0;
+
+      if (useEq) {
+        bass = f32(this.bassGain.next());      lowCoef = f32(this.bassCoef.next());
+        treble = f32(this.trebleGain.next());  highCoef = f32(this.trebleCoef.next());
+      }
+
+      if (swelling) {
+        swell = f32(this.nextSwellGain(left[i], right[i]));
+        direct = f32(this.directGain.next());
+        echo = f32(this.echoGain.next());
+      }
+
+      if (sweeping) {
+        // state-variable filter, the cutoff swept up and down by a sine
+        const octaves = this.sweepDepth.next() * Math.sin(this.sweepPhase);
+        this.sweepPhase += this.sweepInc;
+        if (this.sweepPhase >= TWO_PI) this.sweepPhase -= TWO_PI;
+
+        const g = Math.tan(PI * Math.min(SWEEP_CENTRE_HZ * Math.exp(LN2 * octaves), 0.45 * fs) / fs);
+        const k1 = 1 / (1 + g * (g + SWEEP_DAMPING));
+        a1 = f32(k1);
+        a2 = f32(g * k1);
+        a3 = f32(g * g * k1);
+        sweepAmount = f32(this.sweepMix.next());
+      }
+
+      for (let c = 0; c < 2; ++c) {
+        const io = c === 0 ? left : right;
+        const input = f32(io[i] * swell);
+        let wet = highPass[c].highPass(lowPass[c].process(line[c].read(d)));
+        if (useBump) wet = bump[c].process(wet);
+
+        if (useEq) // cuts, inside the loop
+          wet = shelfPair(wet, shelfLow, shelfHigh, c, Math.min(bass, 1) - 1, Math.min(treble, 1) - 1, lowCoef, highCoef);
+
+        let record = saturator.process(input + fb * wet);
+        if (usePre) record = preFilter[c].lowPass(record);
+        line[c].push(record);
+
+        if (useEq) // boosts, on the way out
+          wet = shelfPair(wet, shelfLow, shelfHigh, 2 + c, Math.max(bass, 1) - 1, Math.max(treble, 1) - 1, lowCoef, highCoef);
+
+        if (sweeping) {
+          const v3 = wet - sweep2[c];
+          const v1 = a1 * sweep1[c] + a2 * v3;
+          const v2 = sweep2[c] + a2 * sweep1[c] + a3 * v3;
+          sweep1[c] = 2 * v1 - sweep1[c];
+          sweep2[c] = 2 * v2 - sweep2[c];
+          wet += sweepAmount * (0.5 * v2 + damping * v1 - wet); // some low-pass under the band-pass peak
+        }
+
+        io[i] = swelling ? input * direct + wet * echo : wet * level;
+      }
+    }
+  }
+}
+
+// ---- the model list (in the order of the variants) ----
+const HEADS_12 = ["Off", "1", "2", "1+2"], HEADS_34 = ["Off", "3", "4", "3+4"];
+const BIT_NAMES = ["6 bit", "7 bit", "8 bit", "9 bit", "10 bit", "11 bit", "12 bit", "13 bit", "14 bit", "15 bit",
+                   "16 bit", "17 bit", "18 bit", "19 bit", "20 bit", "21 bit", "22 bit", "23 bit", "24 bit"];
+
+const timeKnob = (name, def) => millis(name, 20, 2000, def, 500);
+const noteKnob = (name, def) => choice(name, DELAY_NOTE_NAMES, def);
+const speedKnob = (name, def) => hertz(name, 0.05, 10, def, 1);
+const SYNC = { timeKnob: 0, noteKnob: 1, noteBeats: DELAY_NOTE_BEATS, trails: true };
+
+/** Time, Note, Fdbk, the model's two controls, Mix. */
+const delayModel = (key, name, variant, basedOn, timeMs, fdbk, first, second, mix) =>
+  model(key, name, CATEGORY.delay, ENGINE.delayFx, variant, basedOn,
+        [timeKnob("Time", timeMs), noteKnob("Note", 1), percent("Fdbk", fdbk), first, second, percent("Mix", mix)], SYNC);
+
+const DELAY_MODELS = [
+  delayModel("ping_pong", "Ping Pong", V.pingPong, "Line 6 original", 400, 45, percent("Offset", 100), percent("Spread", 100), 35),
+  delayModel("dynamic_dly", "Dynamic Dly", V.dynamicDly, "TC Electronic 2290", 450, 40, percent("Thresh", 50), percent("Ducking", 60), 40),
+  // two times, each with its own tempo sync (dotted eighth against a quarter by default)
+  model("stereo_delay", "Stereo Delay", CATEGORY.delay, ENGINE.delayFx, V.stereoDelay, "Line 6 high-res digital delay",
+        [timeKnob("L Time", 375), noteKnob("L Note", 2), percent("L Fdbk", 35), timeKnob("R Time", 500), noteKnob("R Note", 1), percent("R Fdbk", 35), percent("Mix", 35)],
+        { ...SYNC, timeKnob2: 3, noteKnob2: 4 }),
+  delayModel("digital_delay", "Digital Delay", V.digitalDelay, "Line 6 original", 500, 40, percent("Bass", 50), percent("Treble", 50), 35),
+  delayModel("dig_dly_w_mod", "Dig Dly W/Mod", V.digMod, "Line 6 original", 450, 40, speedKnob("ModSpd", 0.8), percent("Depth", 50), 35),
+  delayModel("reverse", "Reverse", V.reverse, "Line 6 original", 800, 20, speedKnob("ModSpd", 0.5), percent("Depth", 20), 50),
+  delayModel("lo_res_delay", "Lo Res Delay", V.loRes, "Line 6 original", 400, 40, percent("Tone", 60), choice("Res", BIT_NAMES, 4), 35),
+  delayModel("tube_echo", "Tube Echo", V.tubeEcho, "'63 Maestro EP-1 Echoplex", 350, 45, percent("Wow/Flt", 35), percent("Drive", 40), 35),
+  delayModel("tube_echo_dry", "Tube Echo Dry", V.tubeEchoDry, "'63 Maestro EP-1 Echoplex", 350, 45, percent("Wow/Flt", 35), percent("Drive", 40), 35),
+  delayModel("tape_echo", "Tape Echo", V.tapeEcho, "Maestro EP-3 Echoplex", 380, 40, percent("Bass", 50), percent("Treble", 50), 35),
+  delayModel("tape_echo_dry", "Tape Echo Dry", V.tapeEchoDry, "Maestro EP-3 Echoplex", 380, 40, percent("Bass", 50), percent("Treble", 50), 35),
+  delayModel("sweep_echo", "Sweep Echo", V.sweepEcho, "Line 6 original (EP-1 with a sweeping filter)", 400, 45, speedKnob("Swp Spd", 0.4), percent("Swp Dep", 60), 40),
+  delayModel("sweep_echo_dry", "Sweep Echo Dry", V.sweepEchoDry, "Line 6 original (EP-1 with a sweeping filter)", 400, 45, speedKnob("Swp Spd", 0.4), percent("Swp Dep", 60), 40),
+  delayModel("echo_platter", "Echo Platter", V.echoPlatter, "Binson EchoRec", 300, 50, percent("Wow/Flt", 30), percent("Drive", 35), 40),
+  delayModel("echo_platter_dry", "Echo Platter Dry", V.echoPlatterDry, "Binson EchoRec", 300, 50, percent("Wow/Flt", 30), percent("Drive", 35), 40),
+  delayModel("analog_w_mod", "Analog W/Mod", V.analogMod, "Electro-Harmonix Deluxe Memory Man", 400, 40, speedKnob("ModSpd", 0.6), percent("Depth", 35), 35),
+  delayModel("analog_echo", "Analog Echo", V.analogEcho, "Boss DM-2", 300, 35, percent("Bass", 50), percent("Treble", 50), 35),
+  delayModel("auto_volume_echo", "Auto-Volume Echo", V.autoVolume, "Line 6 original", 450, 35, percent("ModDep", 30), percent("Swell", 50), 40),
+  delayModel("multi_head", "Multi-Head", V.multiHead, "Roland RE-101 Space Echo", 480, 35, choice("Heads 1-2", HEADS_12, 2), choice("Heads 3-4", HEADS_34, 2), 35),
+];
+
+return { DelayFx, DELAY_MODELS };
+})();
+// ---- dsp/verb.js
+const { VerbFx, VERB_MODELS } = (() => {
+// The HD500X's reverb models (Source/DSP/fx/Verb.h), ported line for line. Stereo; returns the wet signal only.
+// Knobs:  Decay, PreDelay (ms), Tone, Mix   |   Particle Verb: Dwell, Condition, Gain, Mix
+//
+// Three structures:
+// - a feedback delay network (8 modulated lines, Hadamard matrix, an all-pass in every line, decay per band)
+//   behind a pre-delay, early-reflection taps and input diffusers: Plate, Room, Chamber, Hall, Echo (plus a
+//   ping-pong echo), Tile, Cave, Ducking (plus a ducker), Octo (plus a feedback path through octave-up shifters)
+// - springs: recirculating delays with chains of first-order all-passes (dispersion), run at about 9.6 kHz
+// - Particle Verb: two cross-coupled all-pass chains with a pitch shifter in each feedback path
+
+const TICK = 32;        // control rate: knob smoothing and LFOs move every 32 samples (any host block size)
+const MAX_EARLY = 12;   // early-reflection taps per side
+const MAX_STAGES = 160; // all-pass stages per half spring
+
+const FDN = 0, SPRINGS = 1, PARTICLE = 2;             // type
+const PLAIN = 0, ECHOES = 1, DUCKER = 2, OCTAVE = 3;  // extra
+
+// the delay lines, all inside one buffer
+const D_PRE_L = 0, D_PRE_R = 1, D_EARLY_L = 2, D_EARLY_R = 3, D_DIFF = 4, D_LINE = 12, D_AP = 20, D_ECHO_L = 28, D_ECHO_R = 29, D_SHIFT_A = 30, NUM_DELAYS = 32;
+
+// everything in the signal path that follows Decay and Tone, ramped from tick to tick.
+// [0..31] per line: gain of the highs, mids - highs, lows - mids, loss of the all-pass
+// (springs and Particle Verb keep their loop gains in [0..3] and the losses of their all-passes in [24..31])
+const C_DAMP = 32, C_SHIFT = 33, C_ECHO = 34, C_TONE = 35, NUM_COEFS = 36;
+
+const AP_SPREAD = Float32Array.from([1.0, 1.19, 1.41, 1.69, 1.93, 2.23, 2.53, 2.83]);
+const RATE_SPREAD = Float32Array.from([1.0, 1.31, 0.77, 1.63]);
+const SHIFT_MS = Float32Array.from([61.3, 70.9]); // pitch shifter windows
+const PARTICLE_AP_MS = Float32Array.from([23.7, 37.1, 53.9, 71.3, 26.3, 34.7, 57.7, 67.9]);
+const PARTICLE_DELAY_MS = Float32Array.from([97.1, 113.3]);
+const SPRING_IN = Float32Array.from([1.0, -0.9, 0.8]);
+const SPRING_OUT_L3 = Float32Array.from([1.0, 0.5, -0.5]), SPRING_OUT_R3 = Float32Array.from([0.5, -0.5, 1.0]);
+const SPRING_OUT_L2 = Float32Array.from([1.0, 0.6, 0.0]), SPRING_OUT_R2 = Float32Array.from([-0.6, 1.0, 0.0]);
+
+// The C++ keeps the numbers of a program as floats: round them the same way.
+const rounded = (v) => (Array.isArray(v) ? v.map(rounded) : f32(v));
+const program = (p) => { const out = {}; for (const name in p) out[name] = rounded(p[name]); return out; };
+
+// What makes one model: the structure (type / extra) and the sizes of its space. The same table as in Verb.h
+// (see there for what the fields mean); unused arrays are left short.
+const PROGRAMS = [
+  // Plate - a studio plate (EMT 140 style): no separate reflections, the full density from the first
+  // milliseconds (four diffusers, short output taps), bright, the lows ring longer than the highs.
+  program({ type: FDN, extra: PLAIN, rtMin: 0.4, rtMax: 6, level: 0.192, toneHz: 12000, lowCutHz: 120, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [23.9, 28.1, 31.7, 37.3, 41.9, 47.1, 53.3, 59.9], tapMs: [0.3, 0.5, 2.9, 3.7, 6.1, 7.3, 9.7, 11.3], apMs: 3.7, apGain: 0.55, numDiff: 4,
+    diffMs: [1.9, 3.7, 5.9, 8.3, 2.3, 3.1, 6.7, 7.9], diffGain: 0.7, dampHz: 8000, hfRatio: 0.6, bassHz: 350, bassRatio: 1.3, modMs: 0.25,
+    modHz: 0.9, tankLevel: 1, earlyLevel: 0, numEarly: 0, earlyMs: [[], []], earlyGain: [[], []], numSprings: 0, stages: 0, springMs: [0],
+    springCoef: 0, drive: 0 }),
+
+  // Room - a small studio live room: mostly early reflections (12 taps per side in the first 60 ms),
+  // a short, quieter tail behind them.
+  program({ type: FDN, extra: PLAIN, rtMin: 0.15, rtMax: 1.6, level: 0.184, toneHz: 7000, lowCutHz: 90, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [17.3, 20.9, 23.9, 27.7, 31.9, 35.3, 39.7, 44.9], tapMs: [0.3, 0.5, 3.1, 4.3, 7.7, 9.1, 13.3, 15.1], apMs: 2.3, apGain: 0.5, numDiff: 3,
+    diffMs: [2.1, 4.9, 7.1, 0, 2.7, 4.3, 7.7, 0], diffGain: 0.6, dampHz: 5000, hfRatio: 0.5, bassHz: 200, bassRatio: 0.85, modMs: 0.2, modHz: 0.7,
+    tankLevel: 0.8, earlyLevel: 1, numEarly: 12,
+    earlyMs: [[2.9, 6.7, 9.5, 13.3, 17.9, 21.1, 26.3, 30.7, 36.1, 41.9, 49.3, 57.1], [3.7, 5.9, 10.9, 14.7, 16.3, 22.9, 25.1, 32.3, 37.7, 43.3, 47.9, 59.3]],
+    earlyGain: [[0.84, -0.71, 0.66, 0.58, -0.52, 0.47, -0.41, 0.38, 0.33, -0.29, 0.25, -0.21], [0.8, 0.74, -0.63, 0.57, 0.54, -0.45, 0.42, -0.36, 0.34, 0.28, -0.26, 0.2]],
+    numSprings: 0, stages: 0, springMs: [0], springCoef: 0, drive: 0 }),
+
+  // Chamber - an elongated echo chamber (hallway, stairwell): a few short lines for the cross-section and
+  // long ones for the length, reflections that come back in pairs along the long axis.
+  program({ type: FDN, extra: PLAIN, rtMin: 0.4, rtMax: 5, level: 0.194, toneHz: 7500, lowCutHz: 90, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [14.3, 17.9, 21.1, 26.9, 33.7, 47.9, 63.1, 83.3], tapMs: [0.3, 0.5, 5.3, 6.7, 11.3, 14.9, 23.3, 31.1], apMs: 2.9, apGain: 0.55,
+    numDiff: 3, diffMs: [3.1, 5.3, 9.1, 0, 3.7, 4.7, 9.7, 0], diffGain: 0.65, dampHz: 5500, hfRatio: 0.5, bassHz: 250, bassRatio: 1.1, modMs: 0.3,
+    modHz: 0.6, tankLevel: 1, earlyLevel: 0.6, numEarly: 8,
+    earlyMs: [[4.1, 11.3, 21.7, 26.3, 43.1, 48.7, 64.9, 86.3], [5.3, 9.7, 22.9, 27.7, 41.9, 50.3, 66.7, 84.1]],
+    earlyGain: [[0.7, -0.62, 0.66, 0.5, -0.52, 0.4, 0.38, -0.28], [0.68, 0.6, -0.64, 0.52, 0.5, -0.41, 0.36, 0.29]], numSprings: 0, stages: 0,
+    springMs: [0], springCoef: 0, drive: 0 }),
+
+  // Hall - a concert hall: long lines, sparse soft reflections, output taps deep inside the lines so the
+  // sound builds up slowly; long smooth tail, warm (long bass decay, damped highs).
+  program({ type: FDN, extra: PLAIN, rtMin: 0.8, rtMax: 10, level: 0.265, toneHz: 6500, lowCutHz: 80, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [41.3, 47.9, 56.3, 63.7, 72.1, 81.7, 90.3, 101.9], tapMs: [0.4, 0.6, 17.1, 21.3, 33.7, 38.9, 55.3, 61.1], apMs: 5.3, apGain: 0.6,
+    numDiff: 4, diffMs: [4.7, 8.9, 13.3, 19.1, 5.3, 8.3, 14.1, 18.1], diffGain: 0.7, dampHz: 3800, hfRatio: 0.35, bassHz: 250, bassRatio: 1.35,
+    modMs: 0.5, modHz: 0.45, tankLevel: 1, earlyLevel: 0.35, numEarly: 8,
+    earlyMs: [[8.3, 19.1, 27.7, 38.9, 51.1, 63.7, 79.3, 97.1], [10.1, 17.3, 29.9, 41.3, 47.9, 66.1, 82.7, 94.3]],
+    earlyGain: [[0.5, -0.45, 0.48, 0.4, -0.36, 0.33, -0.28, 0.24], [0.48, 0.46, -0.44, 0.41, 0.37, -0.32, 0.27, -0.25]], numSprings: 0, stages: 0,
+    springMs: [0], springCoef: 0, drive: 0 }),
+
+  // Echo - Line 6 original: a ping-pong echo (its time follows PreDelay) whose repeats are heard on their
+  // own and also feed a lush, strongly modulated tail.
+  program({ type: FDN, extra: ECHOES, rtMin: 0.8, rtMax: 8, level: 0.203, toneHz: 6500, lowCutHz: 100, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [31.1, 36.7, 42.9, 49.3, 55.7, 62.3, 69.1, 76.9], tapMs: [0.4, 0.6, 9.1, 11.7, 19.3, 23.9, 31.7, 37.3], apMs: 4.3, apGain: 0.6,
+    numDiff: 4, diffMs: [3.7, 6.7, 10.1, 14.9, 4.1, 6.1, 11.3, 13.7], diffGain: 0.7, dampHz: 4500, hfRatio: 0.45, bassHz: 250, bassRatio: 1.1,
+    modMs: 0.8, modHz: 0.55, tankLevel: 1, earlyLevel: 0, numEarly: 0, earlyMs: [[], []], earlyGain: [[], []], numSprings: 0, stages: 0,
+    springMs: [0], springCoef: 0, drive: 0 }),
+
+  // Tile - a small tiled room: hard walls, so strong, bright, clearly separate reflections (little
+  // diffusion), short lines, hardly any damping, a bright ring around 3 kHz.
+  program({ type: FDN, extra: PLAIN, rtMin: 0.2, rtMax: 2.5, level: 0.161, toneHz: 11000, lowCutHz: 140, peakHz: 3200, peakDb: 3, peakQ: 0.9,
+    lineMs: [11.9, 14.3, 16.9, 19.7, 22.7, 26.3, 30.1, 34.7], tapMs: [0.3, 0.5, 2.3, 3.1, 5.9, 7.1, 10.3, 12.7], apMs: 1.7, apGain: 0.45, numDiff: 2,
+    diffMs: [1.3, 3.1, 0, 0, 1.7, 2.9, 0, 0], diffGain: 0.5, dampHz: 9000, hfRatio: 0.75, bassHz: 250, bassRatio: 0.8, modMs: 0.12, modHz: 1.1,
+    tankLevel: 0.7, earlyLevel: 1, numEarly: 8,
+    earlyMs: [[2.3, 5.3, 8.9, 12.1, 17.3, 23.9, 31.1, 39.7], [3.1, 4.7, 9.7, 13.9, 16.1, 25.3, 29.9, 41.3]],
+    earlyGain: [[0.9, -0.78, 0.7, 0.61, -0.52, 0.44, -0.37, 0.3], [0.88, 0.8, -0.68, 0.6, 0.55, -0.43, 0.38, -0.29]], numSprings: 0, stages: 0,
+    springMs: [0], springCoef: 0, drive: 0 }),
+
+  // Cave - Line 6 original: a huge cavern. Very long lines, far-wall slaps up to a quarter of a second
+  // away, dark (strong damping), a booming low-mid resonance and a bass that rings longest.
+  program({ type: FDN, extra: PLAIN, rtMin: 1.5, rtMax: 14, level: 0.277, toneHz: 3200, lowCutHz: 60, peakHz: 280, peakDb: 5, peakQ: 1.4,
+    lineMs: [61.7, 73.3, 84.1, 97.3, 109.9, 124.7, 139.1, 157.3], tapMs: [0.5, 0.7, 29.3, 37.1, 61.3, 71.9, 97.3, 113.1], apMs: 7.1, apGain: 0.6,
+    numDiff: 4, diffMs: [7.9, 12.7, 19.9, 27.1, 8.9, 11.3, 21.1, 25.9], diffGain: 0.7, dampHz: 2200, hfRatio: 0.3, bassHz: 300, bassRatio: 1.6,
+    modMs: 0.7, modHz: 0.3, tankLevel: 1, earlyLevel: 0.5, numEarly: 6,
+    earlyMs: [[23.3, 57.1, 89.9, 131.3, 187.7, 251.9], [31.7, 49.3, 97.1, 139.7, 173.9, 263.3]],
+    earlyGain: [[0.55, -0.5, 0.46, 0.4, -0.34, 0.28], [0.53, 0.5, -0.45, 0.41, 0.35, -0.27]], numSprings: 0, stages: 0, springMs: [0], springCoef: 0,
+    drive: 0 }),
+
+  // Ducking - a hall whose level is pulled down by an envelope follower on the dry signal and swells
+  // back when the playing stops.
+  program({ type: FDN, extra: DUCKER, rtMin: 0.8, rtMax: 10, level: 0.255, toneHz: 7000, lowCutHz: 90, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [37.9, 44.3, 51.7, 59.3, 67.7, 76.1, 85.9, 95.3], tapMs: [0.4, 0.6, 13.3, 16.9, 27.1, 32.3, 45.7, 51.1], apMs: 4.9, apGain: 0.6,
+    numDiff: 4, diffMs: [4.3, 7.9, 12.1, 17.3, 4.9, 7.3, 12.9, 16.7], diffGain: 0.7, dampHz: 4200, hfRatio: 0.4, bassHz: 250, bassRatio: 1.2,
+    modMs: 0.5, modHz: 0.5, tankLevel: 1, earlyLevel: 0.3, numEarly: 6,
+    earlyMs: [[9.1, 20.3, 31.9, 44.3, 58.7, 77.9], [11.3, 18.7, 33.1, 46.1, 56.3, 80.3]],
+    earlyGain: [[0.5, -0.46, 0.44, 0.38, -0.33, 0.27], [0.48, 0.47, -0.42, 0.39, 0.32, -0.28]], numSprings: 0, stages: 0, springMs: [0],
+    springCoef: 0, drive: 0 }),
+
+  // Octo - Line 6 original: a shimmer. What comes out of two of the eight lines goes through an octave-up
+  // pitch shifter and back into the network, so every layer grows another one an octave above it.
+  program({ type: FDN, extra: OCTAVE, rtMin: 1.5, rtMax: 15, level: 0.193, toneHz: 8000, lowCutHz: 120, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [37.1, 43.3, 50.9, 57.7, 65.3, 73.9, 81.1, 89.9], tapMs: [0.4, 0.6, 12.7, 15.1, 25.3, 29.9, 41.9, 47.3], apMs: 4.7, apGain: 0.6,
+    numDiff: 4, diffMs: [6.1, 10.7, 16.3, 23.9, 6.7, 9.7, 17.9, 22.3], diffGain: 0.7, dampHz: 6000, hfRatio: 0.6, bassHz: 250, bassRatio: 1,
+    modMs: 0.6, modHz: 0.5, tankLevel: 1, earlyLevel: 0, numEarly: 0, earlyMs: [[], []], earlyGain: [[], []], numSprings: 0, stages: 0,
+    springMs: [0], springCoef: 0, drive: 0 }),
+
+  // Spring - a studio spring reverb: three springs of different length, moderate dispersion, clean drive,
+  // the springs coupled to each other so the echoes blur quickly.
+  program({ type: SPRINGS, extra: PLAIN, rtMin: 0.8, rtMax: 4, level: 0.579, toneHz: 5200, lowCutHz: 80, peakHz: 0, peakDb: 0, peakQ: 1, lineMs: [0],
+    tapMs: [0], apMs: 0, apGain: 0, numDiff: 0, diffMs: [0, 0, 0, 0, 0, 0, 0, 0], diffGain: 0, dampHz: 1500, hfRatio: 0.55, bassHz: 0, bassRatio: 1,
+    modMs: 0, modHz: 0, tankLevel: 1, earlyLevel: 0, numEarly: 0, earlyMs: [[], []], earlyGain: [[], []], numSprings: 3, stages: 64,
+    springMs: [29.3, 36.7, 43.1], springCoef: 0.5, drive: 0 }),
+
+  // '63 Spring - Fender 6G15 tube reverb unit: a two-spring tank driven by a tube (asymmetric soft
+  // clipping), strong dispersion (the "drip"), band-limited to the tank's 100 Hz .. 4 kHz.
+  program({ type: SPRINGS, extra: PLAIN, rtMin: 1, rtMax: 5, level: 0.661, toneHz: 4200, lowCutHz: 130, peakHz: 0, peakDb: 0, peakQ: 1, lineMs: [0],
+    tapMs: [0], apMs: 0, apGain: 0, numDiff: 0, diffMs: [0, 0, 0, 0, 0, 0, 0, 0], diffGain: 0, dampHz: 1500, hfRatio: 0.45, bassHz: 0, bassRatio: 1,
+    modMs: 0, modHz: 0, tankLevel: 1, earlyLevel: 0, numEarly: 0, earlyMs: [[], []], earlyGain: [[], []], numSprings: 2, stages: 150,
+    springMs: [33.1, 41.3, 0], springCoef: 0.5, drive: 1.4 }),
+
+  // Particle Verb - Line 6 original: two cross-coupled chains of long modulated all-passes (a pad with a
+  // slow attack) with a pitch shifter in each feedback path: off (Stable), a few cents up per trip
+  // (Critical), or swinging over an octave with more feedback and modulation (Hazard).
+  program({ type: PARTICLE, extra: PLAIN, rtMin: 2, rtMax: 30, level: 0.754, toneHz: 9000, lowCutHz: 100, peakHz: 0, peakDb: 0, peakQ: 1,
+    lineMs: [0], tapMs: [0], apMs: 0, apGain: 0.62, numDiff: 4, diffMs: [6.1, 10.7, 16.3, 23.9, 6.7, 9.7, 17.9, 22.3], diffGain: 0.7, dampHz: 5000,
+    hfRatio: 1, bassHz: 0, bassRatio: 1, modMs: 1.2, modHz: 0.45, tankLevel: 1, earlyLevel: 0, numEarly: 0, earlyMs: [[], []], earlyGain: [[], []],
+    numSprings: 0, stages: 0, springMs: [0], springCoef: 0, drive: 0 }),
+];
+
+const zap = (v) => (v > 1.0e-18 || v < -1.0e-18 ? v : 0); // no denormals in the loops
+const whole = (v) => Math.floor(v + 0.5);
+const poleCoef = (hz, fs) => f32(1 - Math.exp((-2 * PI * Math.min(hz, 0.45 * fs)) / fs));
+
+function nextPrime(n) {
+  if (n < 3) return 3;
+  for (n |= 1; ; n += 2) {
+    let prime = true;
+    for (let d = 3; d * d <= n; d += 2) if (n % d === 0) { prime = false; break; }
+    if (prime) return n;
+  }
+}
+
+class VerbFx {
+  constructor() {
+    this.fs = 48000;
+    this.variant = 0; this.activeVariant = 0;
+    this.prog = PROGRAMS[0];
+
+    // knobs
+    this.decayTarget = 0.5; this.toneTarget = 0.5; this.decaySm = 0.5; this.toneSm = 0.5; this.smoothCoef = 0.02;
+    this.preTarget = 0; this.echoTarget = 4800; this.condition = 0; this.activeCondition = 0; this.activeEcho = 4800;
+    this.mix = f32(0.3);
+    this.driveGain = new Smoothed(1);
+
+    // the delay memory
+    this.pool = new Float32Array(64); this.chain = new Float32Array(6 * MAX_STAGES);
+    this.bs = new Int32Array(NUM_DELAYS); this.mk = new Int32Array(NUM_DELAYS);
+    this.wp = 0; this.wpLow = 0; this.tickPos = 0;
+    this.sxL = new Float32Array(TICK); this.sxR = new Float32Array(TICK);
+    this.syL = new Float32Array(TICK); this.syR = new Float32Array(TICK);
+    this.duckGain = new Float32Array(TICK);
+
+    // pre-delay, echo
+    this.preCur = 0; this.preNext = 0; this.preFade = 0; this.echoCur = 4800; this.echoNext = 4800; this.echoFade = 0; this.fadeLen = 1920;
+    this.fadeStep = 0; this.echoCoef = 0; this.echoLp = 0;
+    this.echoOn = false; this.duckOn = false; this.shiftOn = false; this.voiceOn = false;
+
+    // feedback delay network
+    this.numEarly = 0; this.numDiff = 0;
+    this.lineLen = new Int32Array(8); this.apLen = new Int32Array(8); this.tapLen = new Int32Array(8); this.diffLen = new Int32Array(8);
+    this.earlyLen = new Int32Array(2 * MAX_EARLY); this.earlyBase = new Int32Array(2 * MAX_EARLY);
+    this.earlyGain = new Float32Array(2 * MAX_EARLY);
+    this.loopLen = new Float64Array(8);
+    this.coef = new Float32Array(NUM_COEFS); this.coefTarget = new Float32Array(NUM_COEFS); this.coefInc = new Float32Array(NUM_COEFS);
+    this.ramping = false;
+    this.dampHi = new Float32Array(8); this.dampLo = new Float32Array(8);
+    this.loCoef = 0; this.lowCoef = 0; this.lowState = new Float32Array(2);
+    this.diffGain = f32(0.7); this.apGain = 0.5; this.tankLevel = 1;
+    this.o = new Float32Array(8);
+
+    // modulation
+    this.modPhase = new Float64Array(4); this.modStep = new Float64Array(4); this.modBase = new Float64Array(4);
+    this.modDelay = new Float64Array(4); this.modInc = new Float64Array(4); this.depthSm = 0;
+
+    // pitch shifters (Octo, Particle Verb)
+    this.shiftPhase = new Float64Array(2); this.shiftRate = new Float64Array(2); this.hazardPhase = new Float64Array(2);
+    this.shiftLen = new Int32Array(2);
+    this.shiftCoef = 0.5; this.shiftPole = new Float32Array(2);
+    this.shiftLp = [new Biquad(), new Biquad()]; this.shiftHp = [new Biquad(), new Biquad()];
+
+    // ducker
+    this.duckEnv = 0; this.duckAmount = 0; this.duckHold = 0; this.duckAttack = 0; this.duckRelease = 0;
+
+    // springs
+    this.decim = 5; this.decPhase = 0; this.numSprings = 2; this.stages = 32; this.springLen = new Int32Array(3);
+    this.springCoef = f32(0.6); this.drive = 0; this.driveBias = 0; this.driveNorm = 1; this.lowHp = 0;
+    this.springFb = new Float32Array(3); this.springLp = new Float32Array(3);
+    this.lowPrev = new Float32Array(2); this.lowCur = new Float32Array(2);
+    this.springOutL = new Float32Array(3); this.springOutR = new Float32Array(3);
+    this.back = new Float32Array(3);
+    this.aaIn = [new Biquad(), new Biquad(), new Biquad()];
+    this.aaOut = [new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad(), new Biquad()]; // left, right
+
+    // Particle Verb
+    this.loopBack = new Float32Array(2); this.loopHp = new Float32Array(2);
+    this.pin = new Float32Array(2); this.early = new Float32Array(2); this.late = new Float32Array(2);
+
+    // output
+    this.voice = [new Biquad(), new Biquad()];
+    this.tone = new Float32Array(4);
+    this.outGain = 1; this.outGainInc = 0; this.outGainTarget = 1;
+    this.biquads = [...this.voice, ...this.shiftLp, ...this.shiftHp, ...this.aaIn, ...this.aaOut];
+  }
+
+  prepare(sampleRate, maxBlock) {
+    const fs = (this.fs = sampleRate);
+
+    // one buffer for every delay line, each a power-of-two stretch of it
+    let total = 0;
+    for (let d = 0; d < NUM_DELAYS; ++d) {
+      const seconds = d < D_EARLY_L ? 0.2 : d < D_DIFF ? 0.28 : d < D_LINE ? 0.03 : d < D_AP ? 0.17 : d < D_ECHO_L ? 0.08 : d < D_SHIFT_A ? 0.51 : 0.09;
+      let size = 64;
+      while (size < Math.floor(seconds * fs) + 8) size *= 2;
+      this.bs[d] = total;
+      this.mk[d] = size - 1;
+      total += size;
+    }
+    this.pool = new Float32Array(total);
+    this.chain.fill(0);
+
+    this.smoothCoef = 1 / (1 + (0.05 * fs) / TICK);
+    this.fadeLen = Math.floor(0.04 * fs);
+    this.fadeStep = f32(1 / this.fadeLen);
+    this.decim = Math.max(1, Math.floor(fs / 9600 + 0.5));
+    this.driveGain.reset(fs, 0.03);
+    this.reset();
+  }
+
+  reset() {
+    this.pool.fill(0);
+    this.chain.fill(0);
+    this.wp = this.wpLow = this.tickPos = this.decPhase = 0;
+
+    this.activeVariant = this.variant;
+    this.prog = PROGRAMS[this.variant];
+    this.decaySm = this.decayTarget;
+    this.toneSm = this.toneTarget;
+    this.activeCondition = this.condition;
+    this.activeEcho = this.echoTarget;
+    this.preCur = this.preNext = this.preTarget;
+    this.echoCur = this.echoNext = this.echoTarget;
+    this.preFade = this.echoFade = 0;
+    this.driveGain.setCurrentAndTarget(this.driveGain.target);
+
+    this.dampHi.fill(0); this.dampLo.fill(0);
+    this.tone.fill(0);
+    this.springFb.fill(0); this.springLp.fill(0);
+    this.lowState.fill(0); this.loopBack.fill(0); this.loopHp.fill(0); this.lowPrev.fill(0); this.lowCur.fill(0); this.shiftPole.fill(0);
+    for (let i = 0; i < 2; ++i) {
+      this.voice[i].reset();
+      this.shiftLp[i].reset();
+      this.shiftHp[i].reset();
+      this.shiftPhase[i] = 0.5;
+      this.shiftRate[i] = 0;
+      this.hazardPhase[i] = 1.3 * i;
+    }
+    for (const f of this.aaIn) f.reset();
+    for (const f of this.aaOut) f.reset();
+    this.echoLp = this.lowHp = this.duckEnv = this.duckAmount = 0;
+
+    this.configure();
+    this.depthSm = this.depthTarget();
+    this.updateCoefficients();
+    for (let c = 0; c < NUM_COEFS; ++c) {
+      this.coef[c] = this.coefTarget[c];
+      this.coefInc[c] = 0;
+    }
+    this.ramping = false;
+    this.outGain = this.outGainTarget;
+    this.outGainInc = 0;
+
+    for (let i = 0; i < 4; ++i) {
+      this.modPhase[i] = 1.7 * i;
+      this.modDelay[i] = this.modBase[i] + this.depthSm * Math.sin(this.modPhase[i]);
+      this.modInc[i] = 0;
+    }
+    if (this.prog.type === PARTICLE && this.condition === 1)
+      for (let i = 0; i < 2; ++i) this.shiftRate[i] = this.criticalRate(i);
+  }
+
+  setModel(variant) { this.variant = clamp(variant | 0, 0, PROGRAMS.length - 1); }
+
+  setParameters(k) {
+    const fs = this.fs;
+    this.decayTarget = clamp(f32(k[0]) * 0.01, 0, 1);
+
+    if (PROGRAMS[this.variant].type === PARTICLE) {
+      this.condition = clamp(Math.floor(f32(k[1]) + 0.5), 0, 2);
+      this.driveGain.setTarget(f32(Math.pow(10, (f32(k[2]) - 50) * 0.012))); // +-12 dB
+      this.toneTarget = 0.5;
+      this.preTarget = 0;
+    } else {
+      this.preTarget = Math.floor(clamp(f32(k[1]), 0, 200) * 0.001 * fs + 0.5);
+      this.toneTarget = clamp(f32(k[2]) * 0.01, 0, 1);
+    }
+
+    this.echoTarget = Math.floor(0.1 * fs + 0.5) + 2 * this.preTarget; // Echo: 100 ms + twice the pre-delay
+    this.mix = clamp(f32(f32(k[3]) * f32(0.01)), 0, 1);
+  }
+
+  getMix() { return this.mix; }
+
+  /** About the time the tail needs to fall 100 dB at the current knobs (plus the pre-delay). */
+  getTailSeconds() {
+    const p = PROGRAMS[this.variant];
+    let rt = p.rtMin * Math.pow(p.rtMax / p.rtMin, this.decayTarget);
+    if (p.type === FDN) rt *= p.extra === OCTAVE ? 1.3 : Math.max(1, p.bassRatio); // Octo: the octave layers ring on
+
+    let tail = rt * (100 / 60) + this.preTarget / this.fs;
+    if (p.extra === ECHOES) tail += (2 * this.echoTarget) / this.fs;
+    if (p.type === SPRINGS) tail += 0.1;
+    return f32(clamp(tail, 0.5, 20));
+  }
+
+  process(left, right, numSamples) {
+    if (this.activeVariant !== this.variant) this.reset();
+
+    for (let pos = 0; pos < numSamples; ) {
+      if (this.tickPos === 0) this.controlTick();
+
+      const n = Math.min(numSamples - pos, TICK - this.tickPos);
+      this.inputStage(left, right, pos, n);
+
+      const type = this.prog.type;
+      if (type === FDN) this.tankStage(n);
+      else if (type === SPRINGS) this.springStage(n);
+      else this.particleStage(n);
+
+      this.outputStage(left, right, pos, n);
+      this.wp = (this.wp + n) & 0x3fffffff;
+      this.tickPos = (this.tickPos + n) & (TICK - 1);
+      pos += n;
+    }
+  }
+
+  // ==========================================================================
+  /** Lengths, fixed filters and gains of the current model at this sample rate (no allocation in the C++). */
+  configure() {
+    const p = this.prog, fs = this.fs, bs = this.bs;
+    const perMs = 0.001 * fs;
+
+    this.duckOn = p.extra === DUCKER;
+    this.echoOn = p.extra === ECHOES;
+    this.shiftOn = p.extra === OCTAVE;
+    this.lowCoef = poleCoef(p.lowCutHz, fs);
+    this.voiceOn = p.peakDb !== 0;
+    if (this.voiceOn) for (const v of this.voice) v.setPeak(fs, p.peakHz, p.peakQ, p.peakDb);
+
+    this.numEarly = 0;
+    this.numDiff = p.numDiff;
+    this.diffGain = p.diffGain;
+    for (let i = 0; i < 8; ++i) this.diffLen[i] = nextPrime(whole(p.diffMs[i] * perMs));
+    for (let i = 0; i < 4; ++i) {
+      this.modStep[i] = (2 * PI * p.modHz * RATE_SPREAD[i] * TICK) / fs;
+      this.modBase[i] = 8;
+    }
+    for (let i = 0; i < 2; ++i) {
+      this.shiftLen[i] = whole(SHIFT_MS[i] * perMs);
+      this.shiftLp[i].setLowPass(fs, p.type === PARTICLE ? 5000 : 3400, 0.7071);
+    }
+    this.shiftCoef = poleCoef(5000, fs);
+    for (const f of this.shiftHp) f.setHighPass(fs, 160, 0.7071);
+
+    if (p.type === FDN) {
+      this.numEarly = p.numEarly;
+      this.apGain = p.apGain;
+      this.tankLevel = p.tankLevel;
+      this.loCoef = poleCoef(p.bassHz, fs);
+      for (let i = 0; i < 8; ++i) {
+        this.lineLen[i] = nextPrime(whole(p.lineMs[i] * perMs));
+        this.apLen[i] = nextPrime(whole(p.apMs * AP_SPREAD[i] * perMs));
+        this.tapLen[i] = clamp(whole(p.tapMs[i] * perMs), 1, Math.floor((this.lineLen[i] * 3) / 4));
+        this.loopLen[i] = this.lineLen[i];
+        if (i < 4) this.modBase[i] = this.lineLen[i];
+      }
+      for (let side = 0; side < 2; ++side)
+        for (let k = 0; k < this.numEarly; ++k) {
+          const e = side * MAX_EARLY + k;
+          this.earlyLen[e] = Math.max(1, whole(p.earlyMs[side][k] * perMs));
+          this.earlyGain[e] = p.earlyGain[side][k] * p.earlyLevel;
+          this.earlyBase[e] = bs[((k & 1) ^ side) !== 0 ? D_EARLY_R : D_EARLY_L]; // every other tap comes from the other side
+        }
+
+      if (this.shiftOn) for (let i = 0; i < 2; ++i) this.shiftRate[i] = -1 / this.shiftLen[i]; // one octave up
+
+      this.echoCoef = poleCoef(4500, fs);
+      this.duckHold = f32(Math.exp(-1 / (0.05 * fs)));
+      this.duckAttack = f32(1 - Math.exp(-1 / (0.01 * fs)));
+      this.duckRelease = f32(1 - Math.exp(-1 / (0.25 * fs)));
+    } else if (p.type === SPRINGS) {
+      const fsLow = fs / this.decim;
+      const q6 = [0.5176, 0.7071, 1.9319]; // sixth-order Butterworth
+      for (let i = 0; i < 3; ++i) {
+        this.aaIn[i].setLowPass(fs, 0.4 * fsLow, q6[i]);
+        this.aaOut[i].setLowPass(fs, 0.42 * fsLow, q6[i]);
+        this.aaOut[3 + i].setLowPass(fs, 0.42 * fsLow, q6[i]);
+      }
+
+      this.numSprings = p.numSprings;
+      this.stages = Math.min(p.stages, MAX_STAGES);
+      for (let s = 0; s < 3; ++s) {
+        this.springOutL[s] = this.numSprings === 3 ? SPRING_OUT_L3[s] : SPRING_OUT_L2[s];
+        this.springOutR[s] = this.numSprings === 3 ? SPRING_OUT_R3[s] : SPRING_OUT_R2[s];
+      }
+      this.springCoef = p.springCoef;
+      const lowDelay = (this.stages * (1 - p.springCoef)) / (1 + p.springCoef); // of one chain, at low frequencies
+      for (let s = 0; s < this.numSprings; ++s) {
+        this.springLen[s] = Math.max(2, whole(p.springMs[s] * 0.001 * fsLow - lowDelay));
+        this.apLen[2 * s] = nextPrime(whole(0.37 * p.springMs[s] * 0.001 * fsLow)); // reflections inside the spring
+        this.apLen[2 * s + 1] = nextPrime(whole(0.23 * p.springMs[s] * 0.001 * fsLow));
+        this.loopLen[s] = (2 * (this.springLen[s] + lowDelay)) / fsLow; // seconds per round trip
+      }
+      this.lowCoef = poleCoef(p.lowCutHz, fsLow);
+      this.loCoef = poleCoef(p.dampHz, fsLow);
+
+      this.drive = p.drive;
+      this.driveBias = f32(Math.tanh(0.25));
+      this.driveNorm = this.drive > 0 ? f32(1 / (this.drive * (1 - this.driveBias * this.driveBias))) : 1;
+    } else {
+      for (let side = 0; side < 2; ++side) {
+        for (let k = 0; k < 4; ++k) {
+          const a = side * 4 + k;
+          this.apLen[a] = nextPrime(whole(PARTICLE_AP_MS[a] * perMs));
+          if (k < 2) this.modBase[side * 2 + k] = this.apLen[a];
+        }
+        this.lineLen[side] = nextPrime(whole(PARTICLE_DELAY_MS[side] * perMs));
+        this.loopLen[side] = (this.lineLen[side] + 0.5 * this.shiftLen[side]) / fs; // seconds in the delay and the shifter
+      }
+    }
+  }
+
+  depthTarget() {
+    const depth = this.prog.modMs * 0.001 * this.fs;
+    return this.prog.type === PARTICLE && this.activeCondition === 2 ? 2.5 * depth : depth;
+  }
+
+  criticalRate(side) { return (1 - Math.pow(2, 14 / 1200)) / this.shiftLen[side]; }
+
+  /** Everything that follows the Decay and Tone knobs (called at the control rate while they move). */
+  updateCoefficients() {
+    const p = this.prog, fs = this.fs, target = this.coefTarget;
+    let rt = p.rtMin * Math.pow(p.rtMax / p.rtMin, this.decaySm);
+    const tilt = Math.pow(4, this.toneSm - 0.5); // 0.5 .. 2
+
+    if (p.type === FDN) {
+      const hf = clamp(p.hfRatio * tilt, 0.05, 1);
+      target[C_DAMP] = poleCoef(p.dampHz * tilt, fs);
+      for (let i = 0; i < 8; ++i) {
+        const e = (-3 * this.loopLen[i]) / fs;
+        const mid = Math.pow(10, e / rt), high = Math.pow(10, e / (rt * hf)), low = Math.pow(10, e / (rt * p.bassRatio));
+        target[i] = 0.35355339059327373 * high;
+        target[8 + i] = 0.35355339059327373 * (mid - high);
+        target[16 + i] = 0.35355339059327373 * (low - mid);
+        target[24 + i] = Math.pow(10, (-3 * this.apLen[i]) / (fs * rt)); // the all-pass loses in proportion to its length too
+      }
+      target[C_ECHO] = Math.min(0.85, Math.pow(10, (-3 * this.echoTarget) / (fs * rt)));
+      target[C_SHIFT] = (2 * (0.75 + 0.5 * this.decaySm)) / Math.sqrt(rt); // about the same share of octave whatever the decay time
+    } else if (p.type === SPRINGS) {
+      for (let s = 0; s < this.numSprings; ++s) target[s] = -Math.pow(10, (-3 * this.loopLen[s]) / rt); // [0..2]: gain of each spring's loop
+      for (let a = 0; a < 6; ++a) target[24 + a] = Math.pow(10, (-3 * this.apLen[a] * this.decim) / (fs * rt));
+      target[3] = clamp(p.hfRatio * tilt, 0.1, 0.95); // [3]: how much of the highs survives a round trip
+    } else {
+      if (this.activeCondition === 2) rt *= 1.5;
+      for (let side = 0; side < 2; ++side) target[side] = Math.pow(10, (-3 * this.loopLen[side]) / rt); // [0..1]: gain of each feedback path
+      for (let a = 0; a < 8; ++a) target[24 + a] = Math.pow(10, (-3 * this.apLen[a]) / (fs * rt));
+    }
+
+    const mid = p.toneHz;
+    const hz = this.toneSm < 0.5 ? 900 * Math.pow(mid / 900, 2 * this.toneSm) : mid * Math.pow(18000 / mid, 2 * this.toneSm - 1);
+    target[C_TONE] = poleCoef(hz, fs);
+    this.outGainTarget = p.level * Math.pow(rt, -0.3); // longer decays build up more level: take some of it back
+  }
+
+  controlTick() {
+    const fs = this.fs;
+
+    // filter states that have died away become zero (a one-pole can stall on a denormal number)
+    for (let i = 0; i < 8; ++i) {
+      this.dampHi[i] = zap(this.dampHi[i]);
+      this.dampLo[i] = zap(this.dampLo[i]);
+    }
+    for (let i = 0; i < 4; ++i) this.tone[i] = zap(this.tone[i]);
+    for (let i = 0; i < 3; ++i) this.springLp[i] = zap(this.springLp[i]);
+    for (let i = 0; i < 2; ++i) {
+      this.lowState[i] = zap(this.lowState[i]);
+      this.shiftPole[i] = zap(this.shiftPole[i]);
+      this.loopHp[i] = zap(this.loopHp[i]);
+    }
+    this.echoLp = zap(this.echoLp);
+    this.lowHp = zap(this.lowHp);
+    this.duckAmount = zap(this.duckAmount);
+    // (JavaScript only: the C++ runs with denormals flushed to zero, which keeps its biquads clean)
+    const biquads = this.biquads;
+    for (let i = 0; i < biquads.length; ++i) { biquads[i].z1 = zap(biquads[i].z1); biquads[i].z2 = zap(biquads[i].z2); }
+
+    let moving = false;
+    if (this.decaySm !== this.decayTarget) {
+      this.decaySm += (this.decayTarget - this.decaySm) * this.smoothCoef;
+      if (Math.abs(this.decayTarget - this.decaySm) < 1.0e-4) this.decaySm = this.decayTarget;
+      moving = true;
+    }
+    if (this.toneSm !== this.toneTarget) {
+      this.toneSm += (this.toneTarget - this.toneSm) * this.smoothCoef;
+      if (Math.abs(this.toneTarget - this.toneSm) < 1.0e-4) this.toneSm = this.toneTarget;
+      moving = true;
+    }
+    if (this.activeCondition !== this.condition || this.activeEcho !== this.echoTarget) {
+      this.activeCondition = this.condition;
+      this.activeEcho = this.echoTarget; // Echo: the feedback follows the echo time
+      moving = true;
+    }
+    const coef = this.coef, target = this.coefTarget, inc = this.coefInc;
+    if (moving) {
+      // the loop gains glide to their new values over the next tick (no steps in the feedback)
+      this.updateCoefficients();
+      for (let c = 0; c < NUM_COEFS; ++c) inc[c] = (target[c] - coef[c]) * (1 / TICK);
+      this.ramping = true;
+    } else if (this.ramping) {
+      for (let c = 0; c < NUM_COEFS; ++c) coef[c] = target[c];
+      this.ramping = false;
+    }
+    this.outGainInc = (this.outGainTarget - this.outGain) * (1 / TICK);
+
+    // pre-delay and echo time change by crossfading to a second tap
+    if (this.preFade === 0 && this.preCur !== this.preTarget) { this.preNext = this.preTarget; this.preFade = this.fadeLen; }
+    if (this.echoFade === 0 && this.echoCur !== this.echoTarget) { this.echoNext = this.echoTarget; this.echoFade = this.fadeLen; }
+
+    // modulation: four sine LFOs, the delay times move in straight lines between the ticks
+    const modPhase = this.modPhase;
+    this.depthSm += (this.depthTarget() - this.depthSm) * 0.02;
+    for (let i = 0; i < 4; ++i) {
+      modPhase[i] += this.modStep[i];
+      if (modPhase[i] >= 2 * PI) modPhase[i] -= 2 * PI;
+      this.modInc[i] = (this.modBase[i] + this.depthSm * Math.sin(modPhase[i]) - this.modDelay[i]) * (1 / TICK);
+    }
+
+    if (this.prog.type === PARTICLE) {
+      // Hazard: the two shifters swing between +2 .. +12 and -12 .. +2 semitones
+      const hazardPhase = this.hazardPhase, shiftRate = this.shiftRate;
+      hazardPhase[0] += (2 * PI * 0.13 * TICK) / fs;
+      hazardPhase[1] += (2 * PI * 0.09 * TICK) / fs;
+      for (let i = 0; i < 2; ++i) {
+        if (hazardPhase[i] >= 2 * PI) hazardPhase[i] -= 2 * PI;
+
+        let goal = 0;
+        if (this.activeCondition === 1) goal = this.criticalRate(i);
+        else if (this.activeCondition === 2)
+          goal = (1 - Math.pow(2, ((i === 0 ? 7 : -5) + (i === 0 ? 5 : 7) * Math.sin(hazardPhase[i])) / 12)) / this.shiftLen[i];
+
+        shiftRate[i] += (goal - shiftRate[i]) * 0.1;
+        if (Math.abs(goal - shiftRate[i]) < 1.0e-12) shiftRate[i] = goal;
+      }
+    }
+  }
+
+  // ==========================================================================
+  /** Pre-delay (both sides) and the ducker's envelope follower. */
+  inputStage(left, right, pos, n) {
+    const P = this.pool, sxL = this.sxL, sxR = this.sxR;
+    const bL = this.bs[D_PRE_L], bR = this.bs[D_PRE_R], m = this.mk[D_PRE_L];
+    const fadeStep = this.fadeStep, duckOn = this.duckOn, duckGain = this.duckGain;
+
+    for (let j = 0; j < n; ++j) {
+      const w = this.wp + j;
+      const inL = left[pos + j], inR = right[pos + j];
+      P[bL + (w & m)] = inL;
+      P[bR + (w & m)] = inR;
+
+      let xl = P[bL + ((w - this.preCur) & m)], xr = P[bR + ((w - this.preCur) & m)];
+      if (this.preFade > 0) {
+        const g = f32(this.preFade * fadeStep);
+        const nl = P[bL + ((w - this.preNext) & m)], nr = P[bR + ((w - this.preNext) & m)];
+        xl = nl + (xl - nl) * g;
+        xr = nr + (xr - nr) * g;
+        if (--this.preFade === 0) this.preCur = this.preNext;
+      }
+      sxL[j] = xl;
+      sxR[j] = xr;
+
+      if (duckOn) {
+        const level = 0.5 * (Math.abs(inL) + Math.abs(inR));
+        this.duckEnv = f32(zap(Math.max(level, this.duckEnv * this.duckHold)));
+        const goal = Math.min(1, this.duckEnv * 16); // fully ducked above -24 dBFS
+        this.duckAmount = f32(this.duckAmount + (goal - this.duckAmount) * (goal > this.duckAmount ? this.duckAttack : this.duckRelease));
+        duckGain[j] = 1 - f32(0.87) * this.duckAmount; // down to -18 dB
+      }
+    }
+  }
+
+  /** Two-tap crossfading pitch shifter on its own delay line; the two windows always add up to one,
+      so it never adds energy (it can sit inside a feedback loop). */
+  shift(s, x, w) {
+    const P = this.pool;
+    const b = this.bs[D_SHIFT_A + s], m = this.mk[D_SHIFT_A + s];
+    P[b + (w & m)] = x;
+
+    let ph = this.shiftPhase[s] + this.shiftRate[s];
+    if (ph < 0) ph += 1;
+    else if (ph >= 1) ph -= 1;
+    this.shiftPhase[s] = ph;
+
+    const span = this.shiftLen[s];
+    const d1 = 2 + span * ph, d2 = 2 + span * (ph < 0.5 ? ph + 0.5 : ph - 0.5);
+    const i1 = d1 | 0, i2 = d2 | 0;
+    const f1 = f32(d1 - i1), f2 = f32(d2 - i2);
+    const a0 = P[b + ((w - i1) & m)], a1 = P[b + ((w - i1 - 1) & m)];
+    const c0 = P[b + ((w - i2) & m)], c1 = P[b + ((w - i2 - 1) & m)];
+    const x1 = a0 + f1 * (a1 - a0), x2 = c0 + f2 * (c1 - c0);
+
+    const tri = f32(1 - Math.abs(2 * ph - 1));
+    const win = tri * tri * (3 - 2 * tri);
+    return x2 + win * (x1 - x2);
+  }
+
+  // ==========================================================================
+  tankStage(n) {
+    const P = this.pool, bs = this.bs, mk = this.mk, o = this.o, coef = this.coef, inc = this.coefInc;
+    const sxL = this.sxL, sxR = this.sxR, syL = this.syL, syR = this.syR;
+    const eM = mk[D_EARLY_L], cM = mk[D_ECHO_L];
+    const lowState = this.lowState, lowCoef = this.lowCoef, loCoef = this.loCoef;
+    const numEarly = this.numEarly, earlyGain = this.earlyGain, earlyBase = this.earlyBase, earlyLen = this.earlyLen;
+    const numDiff = this.numDiff, diffLen = this.diffLen, diffGain = this.diffGain;
+    const modDelay = this.modDelay, modInc = this.modInc, lineLen = this.lineLen, apLen = this.apLen, tapLen = this.tapLen;
+    const dampHi = this.dampHi, dampLo = this.dampLo, apGain = this.apGain, tankLevel = this.tankLevel;
+    const echoOn = this.echoOn, shiftOn = this.shiftOn, fadeStep = this.fadeStep, echoCoef = this.echoCoef;
+    const shiftPole = this.shiftPole, shiftCoef = this.shiftCoef, sixth = f32(1 / 6);
+
+    for (let j = 0; j < n; ++j) {
+      const w = this.wp + j;
+      let xl = sxL[j], xr = sxR[j];
+      if (this.ramping) for (let c = 0; c < C_TONE; ++c) coef[c] += inc[c];
+
+      lowState[0] += lowCoef * (xl - lowState[0]);
+      lowState[1] += lowCoef * (xr - lowState[1]);
+      xl -= lowState[0];
+      xr -= lowState[1];
+
+      // early reflections
+      let el = 0, er = 0;
+      if (numEarly > 0) {
+        P[bs[D_EARLY_L] + (w & eM)] = xl;
+        P[bs[D_EARLY_R] + (w & eM)] = xr;
+        for (let k = 0; k < numEarly; ++k) {
+          el += earlyGain[k] * P[earlyBase[k] + ((w - earlyLen[k]) & eM)];
+          er += earlyGain[MAX_EARLY + k] * P[earlyBase[MAX_EARLY + k] + ((w - earlyLen[MAX_EARLY + k]) & eM)];
+        }
+      }
+
+      // Echo: ping-pong repeats (left first), heard directly and sent into the tank
+      if (echoOn) {
+        let a = P[bs[D_ECHO_L] + ((w - this.echoCur) & cM)], b = P[bs[D_ECHO_R] + ((w - this.echoCur) & cM)];
+        if (this.echoFade > 0) {
+          const g = f32(this.echoFade * fadeStep);
+          const na = P[bs[D_ECHO_L] + ((w - this.echoNext) & cM)], nb = P[bs[D_ECHO_R] + ((w - this.echoNext) & cM)];
+          a = na + (a - na) * g;
+          b = nb + (b - nb) * g;
+          if (--this.echoFade === 0) this.echoCur = this.echoNext;
+        }
+        this.echoLp = f32(this.echoLp + echoCoef * (b - this.echoLp));
+        P[bs[D_ECHO_L] + (w & cM)] = zap(0.5 * (xl + xr) + coef[C_ECHO] * this.echoLp);
+        P[bs[D_ECHO_R] + (w & cM)] = zap(coef[C_ECHO] * a);
+        el = f32(0.8) * a;
+        er = f32(0.8) * b;
+        xl += f32(0.7) * a;
+        xr += f32(0.7) * b;
+      }
+
+      // input diffusers
+      for (let k = 0; k < numDiff; ++k) {
+        const dl = D_DIFF + k, dr = D_DIFF + 4 + k;
+        const zl = P[bs[dl] + ((w - diffLen[k]) & mk[dl])], zr = P[bs[dr] + ((w - diffLen[4 + k]) & mk[dr])];
+        const vl = xl - diffGain * zl, vr = xr - diffGain * zr;
+        P[bs[dl] + (w & mk[dl])] = zap(vl);
+        P[bs[dr] + (w & mk[dr])] = zap(vr);
+        xl = zl + diffGain * vl;
+        xr = zr + diffGain * vr;
+      }
+
+      // the eight lines: four with a slowly moving length, read with third-order Lagrange interpolation
+      // (between its two middle points it never has a gain above one, and it keeps the highs)
+      for (let i = 0; i < 4; ++i) {
+        const d = modDelay[i];
+        modDelay[i] = d + modInc[i];
+        const di = d | 0;
+        const x = f32(d - di), xp = x + 1, xm = x - 1, xn = x - 2;
+        const b = bs[D_LINE + i], m = mk[D_LINE + i];
+        o[i] = -x * xm * xn * sixth * P[b + ((w - di + 1) & m)] + xp * xm * xn * 0.5 * P[b + ((w - di) & m)]
+             - xp * x * xn * 0.5 * P[b + ((w - di - 1) & m)] + xp * x * xm * sixth * P[b + ((w - di - 2) & m)];
+      }
+      for (let i = 4; i < 8; ++i) o[i] = P[bs[D_LINE + i] + ((w - lineLen[i]) & mk[D_LINE + i])];
+
+      // decay per band: high, mid and low frequencies lose a different amount per trip
+      const damp = coef[C_DAMP];
+      for (let i = 0; i < 8; ++i) {
+        const x = o[i];
+        dampHi[i] += damp * (x - dampHi[i]);
+        dampLo[i] += loCoef * (x - dampLo[i]);
+        o[i] = coef[i] * x + coef[8 + i] * dampHi[i] + coef[16 + i] * dampLo[i];
+      }
+
+      // Octo: what comes out of two lines is band-limited, shifted up an octave and fed in again (crosswise),
+      // so an octave layer grows on top of every layer. The low-pass ends the climb; the high-pass keeps
+      // out what is too slow for the shifter to move (that would be a plain feedback loop)
+      if (shiftOn) {
+        shiftPole[0] += shiftCoef * (o[6] - shiftPole[0]);
+        shiftPole[1] += shiftCoef * (o[7] - shiftPole[1]);
+        const upL = this.shift(0, this.shiftHp[0].process(this.shiftLp[0].process(shiftPole[0])), w);
+        const upR = this.shift(1, this.shiftHp[1].process(this.shiftLp[1].process(shiftPole[1])), w);
+        xl += coef[C_SHIFT] * upR;
+        xr += coef[C_SHIFT] * upL;
+      }
+
+      // Hadamard matrix (lossless; its 1 / sqrt (8) is part of the gains)
+      const a0 = o[0] + o[1], a1 = o[0] - o[1], a2 = o[2] + o[3], a3 = o[2] - o[3];
+      const a4 = o[4] + o[5], a5 = o[4] - o[5], a6 = o[6] + o[7], a7 = o[6] - o[7];
+      const b0 = a0 + a2, b1 = a1 + a3, b2 = a0 - a2, b3 = a1 - a3;
+      const b4 = a4 + a6, b5 = a5 + a7, b6 = a4 - a6, b7 = a5 - a7;
+      o[0] = b0 + b4 + xl; o[1] = b1 + b5 + xr; o[2] = b2 + b6 - xl; o[3] = b3 + b7 - xr;
+      o[4] = b0 - b4 + xl; o[5] = b1 - b5 + xr; o[6] = b2 - b6 - xl; o[7] = b3 - b7 - xr;
+
+      // an all-pass in front of every line, then into the line
+      for (let i = 0; i < 8; ++i) {
+        const da = D_AP + i, dl = D_LINE + i;
+        const z = coef[24 + i] * P[bs[da] + ((w - apLen[i]) & mk[da])];
+        const v = o[i] - apGain * z;
+        P[bs[da] + (w & mk[da])] = zap(v);
+        P[bs[dl] + (w & mk[dl])] = zap(z + apGain * v);
+      }
+
+      const tl = P[bs[D_LINE] + ((w - tapLen[0]) & mk[D_LINE])] - P[bs[D_LINE + 2] + ((w - tapLen[2]) & mk[D_LINE + 2])]
+               + P[bs[D_LINE + 4] + ((w - tapLen[4]) & mk[D_LINE + 4])] - P[bs[D_LINE + 6] + ((w - tapLen[6]) & mk[D_LINE + 6])];
+      const tr = P[bs[D_LINE + 1] + ((w - tapLen[1]) & mk[D_LINE + 1])] - P[bs[D_LINE + 3] + ((w - tapLen[3]) & mk[D_LINE + 3])]
+               + P[bs[D_LINE + 5] + ((w - tapLen[5]) & mk[D_LINE + 5])] - P[bs[D_LINE + 7] + ((w - tapLen[7]) & mk[D_LINE + 7])];
+
+      syL[j] = el + tankLevel * tl;
+      syR[j] = er + tankLevel * tr;
+    }
+  }
+
+  // ==========================================================================
+  /** One step of the springs, at the low rate. Each spring: delay and all-pass chain out to the far end
+      (the output), delay and chain back, loss, and into the spring (and its neighbours) again. */
+  springStep(x) {
+    const P = this.pool, bs = this.bs, mk = this.mk, c = this.chain, coef = this.coef;
+    const springCoef = this.springCoef, stages = this.stages, springLen = this.springLen, apLen = this.apLen;
+    const back = this.back, springFb = this.springFb, springLp = this.springLp;
+    const w = this.wpLow;
+    this.wpLow = (this.wpLow + 1) & 0x3fffffff;
+
+    this.lowHp = f32(this.lowHp + this.lowCoef * (x - this.lowHp));
+    x -= this.lowHp;
+
+    let outL = 0, outR = 0;
+    back[0] = back[1] = back[2] = 0;
+    for (let s = 0; s < this.numSprings; ++s) {
+      const da = D_LINE + 2 * s, db = da + 1;
+      let ci = 2 * s * MAX_STAGES;
+
+      P[bs[da] + (w & mk[da])] = zap(x * SPRING_IN[s] + springFb[s]);
+      let t = P[bs[da] + ((w - springLen[s]) & mk[da])];
+      for (let k = 0; k < stages; ++k) {
+        const y = springCoef * t + c[ci + k];
+        c[ci + k] = t - springCoef * y;
+        t = y;
+      }
+      outL += this.springOutL[s] * t;
+      outR += this.springOutR[s] * t;
+
+      // on the way back: the same again, with an all-pass before and after (the reflections inside
+      // a real spring, which blur the repeats a little more on every trip)
+      for (let half = 0; half < 2; ++half) {
+        const a = 2 * s + half, d = D_AP + a;
+        const z = coef[24 + a] * P[bs[d] + ((w - apLen[a]) & mk[d])];
+        const v = t - 0.5 * z;
+        P[bs[d] + (w & mk[d])] = zap(v);
+        t = z + 0.5 * v;
+        if (half === 1) break;
+
+        P[bs[db] + (w & mk[db])] = t;
+        t = P[bs[db] + ((w - springLen[s]) & mk[db])];
+        ci += MAX_STAGES;
+        for (let k = 0; k < stages; ++k) {
+          const y = springCoef * t + c[ci + k];
+          c[ci + k] = t - springCoef * y;
+          t = y;
+        }
+      }
+      springLp[s] += this.loCoef * (t - springLp[s]);
+      back[s] = springLp[s] + coef[3] * (t - springLp[s]);
+    }
+
+    if (this.numSprings === 3) {
+      const m = (back[0] + back[1] + back[2]) * f32(2 / 3); // Householder matrix: the springs feed each other
+      for (let s = 0; s < 3; ++s) springFb[s] = coef[s] * (back[s] - m);
+    } else {
+      springFb[0] = coef[0] * (f32(0.8) * back[0] + f32(0.6) * back[1]); // a rotation: the two springs share their mounts
+      springFb[1] = coef[1] * (f32(0.8) * back[1] - f32(0.6) * back[0]);
+    }
+
+    this.lowPrev[0] = this.lowCur[0];
+    this.lowPrev[1] = this.lowCur[1];
+    this.lowCur[0] = outL;
+    this.lowCur[1] = outR;
+  }
+
+  springStage(n) {
+    const sxL = this.sxL, sxR = this.sxR, syL = this.syL, syR = this.syR, coef = this.coef, inc = this.coefInc;
+    const aaIn = this.aaIn, aaOut = this.aaOut, lowPrev = this.lowPrev, lowCur = this.lowCur;
+    const drive = this.drive, driveBias = this.driveBias, driveNorm = this.driveNorm, decim = this.decim;
+    const decStep = f32(1 / decim);
+    for (let j = 0; j < n; ++j) {
+      if (this.ramping) {
+        for (let c = 0; c < 4; ++c) coef[c] += inc[c];
+        for (let c = 24; c < 32; ++c) coef[c] += inc[c];
+      }
+
+      let m = 0.5 * (sxL[j] + sxR[j]);
+      if (drive > 0) m = (f32(Math.tanh(f32(drive * m + 0.25))) - driveBias) * driveNorm; // the tube that drives the tank
+      m = aaIn[2].process(aaIn[1].process(aaIn[0].process(m)));
+
+      if (++this.decPhase >= decim) {
+        this.decPhase = 0;
+        this.springStep(f32(m));
+      }
+
+      const fr = f32((this.decPhase + 1) * decStep);
+      syL[j] = aaOut[2].process(aaOut[1].process(aaOut[0].process(lowPrev[0] + (lowCur[0] - lowPrev[0]) * fr)));
+      syR[j] = aaOut[5].process(aaOut[4].process(aaOut[3].process(lowPrev[1] + (lowCur[1] - lowPrev[1]) * fr)));
+    }
+  }
+
+  // ==========================================================================
+  particleStage(n) {
+    const P = this.pool, bs = this.bs, mk = this.mk, coef = this.coef, inc = this.coefInc;
+    const sxL = this.sxL, sxR = this.sxR, syL = this.syL, syR = this.syR;
+    const g = this.prog.apGain, numDiff = this.numDiff, diffLen = this.diffLen, diffGain = this.diffGain;
+    const modDelay = this.modDelay, modInc = this.modInc, apLen = this.apLen, lineLen = this.lineLen;
+    const pin = this.pin, early = this.early, late = this.late, loopBack = this.loopBack, loopHp = this.loopHp;
+    const lowState = this.lowState, lowCoef = this.lowCoef, third = f32(1 / 27);
+
+    for (let j = 0; j < n; ++j) {
+      const w = this.wp + j;
+      const gain = this.driveGain.next();
+      if (this.ramping) {
+        coef[0] += inc[0];
+        coef[1] += inc[1];
+        for (let c = 24; c < 32; ++c) coef[c] += inc[c];
+      }
+
+      lowState[0] += lowCoef * (sxL[j] - lowState[0]);
+      lowState[1] += lowCoef * (sxR[j] - lowState[1]);
+      pin[0] = (sxL[j] - lowState[0]) * gain; pin[1] = (sxR[j] - lowState[1]) * gain;
+      early[0] = early[1] = late[0] = late[1] = 0;
+
+      // input diffusers: a dense burst instead of a click, before the long all-passes smear it further
+      for (let k = 0; k < numDiff; ++k)
+        for (let side = 0; side < 2; ++side) {
+          const d = D_DIFF + side * 4 + k;
+          const z = P[bs[d] + ((w - diffLen[side * 4 + k]) & mk[d])];
+          const v = pin[side] - diffGain * z;
+          P[bs[d] + (w & mk[d])] = zap(v);
+          pin[side] = z + diffGain * v;
+        }
+
+      for (let side = 0; side < 2; ++side) {
+        // the input plus what comes back from the other side, soft-limited (this keeps Hazard bounded)
+        let s = f32(clamp(pin[side] + loopBack[side], -3, 3));
+        s -= s * s * s * third;
+
+        for (let k = 0; k < 4; ++k) {
+          const a = side * 4 + k, b = bs[D_AP + a], m = mk[D_AP + a];
+          let z;
+          if (k < 2) {
+            const mi = side * 2 + k;
+            const d = modDelay[mi];
+            modDelay[mi] = d + modInc[mi];
+            const di = d | 0;
+            const fr = f32(d - di);
+            const z0 = P[b + ((w - di) & m)], z1 = P[b + ((w - di - 1) & m)];
+            z = z0 + fr * (z1 - z0);
+          } else {
+            z = P[b + ((w - apLen[a]) & m)];
+          }
+          z *= coef[24 + a];
+
+          const v = s - g * z;
+          P[b + (w & m)] = zap(v);
+          s = z + g * v;
+          if (k === 1) early[side] = s;
+        }
+        late[side] = s;
+
+        // round to the other side: delay, low-pass, pitch shifter, low cut, loss
+        const dl = D_LINE + side;
+        P[bs[dl] + (w & mk[dl])] = s;
+        let t = this.shift(side, this.shiftLp[side].process(P[bs[dl] + ((w - lineLen[side]) & mk[dl])]), w);
+        loopHp[side] += lowCoef * (t - loopHp[side]);
+        t -= loopHp[side];
+        loopBack[side ^ 1] = zap(t * coef[side]);
+      }
+
+      syL[j] = late[0] - f32(0.6) * early[1];
+      syR[j] = late[1] + f32(0.6) * early[0];
+    }
+  }
+
+  // ==========================================================================
+  /** Voicing EQ, the Tone low-pass (12 dB / octave), level and ducking. */
+  outputStage(left, right, pos, n) {
+    const syL = this.syL, syR = this.syR, tone = this.tone, coef = this.coef, inc = this.coefInc;
+    const voiceOn = this.voiceOn, voice = this.voice, duckOn = this.duckOn, duckGain = this.duckGain;
+    for (let j = 0; j < n; ++j) {
+      let yl = syL[j], yr = syR[j];
+      if (voiceOn) {
+        yl = voice[0].process(yl);
+        yr = voice[1].process(yr);
+      }
+
+      if (this.ramping) coef[C_TONE] += inc[C_TONE];
+      const toneCoef = coef[C_TONE];
+      tone[0] += toneCoef * (yl - tone[0]);
+      tone[1] += toneCoef * (tone[0] - tone[1]);
+      tone[2] += toneCoef * (yr - tone[2]);
+      tone[3] += toneCoef * (tone[2] - tone[3]);
+
+      this.outGain += this.outGainInc;
+      const g = duckOn ? f32(this.outGain) * duckGain[j] : f32(this.outGain);
+      left[pos + j] = tone[1] * g;
+      right[pos + j] = tone[3] * g;
+    }
+  }
+}
+
+const verb = (key, name, variant, basedOn, decay, preDelay, mix) =>
+  model(key, name, CATEGORY.reverb, ENGINE.reverbFx, variant, basedOn,
+        [percent("Decay", decay), millis("PreDelay", 0, 200, preDelay, 50), percent("Tone", 50), percent("Mix", mix)], { trails: true });
+
+/** In the order of the variants. */
+const VERB_MODELS = [
+  verb("plate", "Plate", 0, "Studio plate reverb", 50, 10, 30),
+  verb("room", "Room", 1, "Studio room, mostly early reflections", 45, 5, 35),
+  verb("chamber", "Chamber", 2, "Elongated echo chamber (hallway, stairwell)", 50, 15, 30),
+  verb("hall", "Hall", 3, "Concert hall", 50, 30, 30),
+  verb("echo_verb", "Echo", 4, "Line 6 original: echoes feeding a lush reverb", 50, 90, 30),
+  verb("tile", "Tile", 5, "Tiled room (bathroom, shower)", 45, 5, 30),
+  verb("cave", "Cave", 6, "Line 6 original: cavernous echo chamber", 45, 50, 30),
+  verb("ducking", "Ducking", 7, "Hall with ducking", 55, 30, 40),
+  verb("octo", "Octo", 8, "Line 6 original: octave-harmonised decay", 60, 40, 35),
+  verb("spring", "Spring", 9, "Studio spring reverb", 50, 0, 30),
+  verb("spring_63", "'63 Spring", 10, "1963 Fender tube spring reverb unit (6G15)", 55, 0, 35),
+  model("particle_verb", "Particle Verb", CATEGORY.reverb, ENGINE.reverbFx, 11, "Line 6 original: modulated pad reverb",
+        [percent("Dwell", 55), choice("Condition", ["Stable", "Critical", "Hazard"], 0), percent("Gain", 50), percent("Mix", 40)], { trails: true }),
+];
+
+return { VerbFx, VERB_MODELS };
+})();
+// ---- dsp/wah.js
+const { WahFx, WAH_MODELS } = (() => {
+// The HD500X's eight wahs (Source/DSP/fx/Wah.h). Stereo: one filter per side. Knobs: Position (0 = heel, 100 = toe), Mix.
+
+// One wah: resonance at heel / toe (Hz) and the pot's taper, Q at heel / toe, gain at the peak (dB) at heel / toe,
+// level of the flat part below the resonance (dB) at heel / toe (inductor wahs: resonant low-pass + band-pass;
+// lowPassPath false = the inductor-less Colorsound's pure band-pass), and the input cap's bass cut (Hz).
+const voice = (heelHz, toeHz, taper, heelQ, toeQ, heelPeakDb, toePeakDb, heelLowDb, toeLowDb, lowPassPath, couplingHz) =>
+  ({ heelHz, toeHz, taper, heelQ, toeQ, heelPeakDb, toePeakDb, heelLowDb, toeLowDb, lowPassPath, couplingHz });
+
+const VOICES = [
+  voice(410, 2050, 1.0, 6.0, 4.2, 11.0, 13.0, -12.0, -17.0, true, 110),    // Fassel: Cry Baby Super / Jen (Fasel inductor)
+  voice(300, 1350, 1.1, 4.0, 3.0, 10.5, 11.0, -7.5, -11.5, true, 60),      // Conductor: Maestro Boomerang
+  voice(330, 1750, 0.9, 7.0, 4.8, 13.0, 13.0, -11.0, -16.0, true, 90),     // Throaty: RMC Real McCoy
+  voice(280, 2400, 1.2, 2.2, 8.5, 6.0, 16.0, -100.0, -100.0, false, 120),  // Colorful: Colorsound (no inductor)
+  voice(300, 2800, 1.0, 4.5, 4.5, 10.5, 10.5, -14.0, -14.0, true, 40),     // Vetta Wah: Line 6 original
+  voice(440, 1600, 1.0, 5.5, 3.6, 11.0, 11.5, -11.0, -15.0, true, 100),    // Chrome: Vox V847
+  voice(360, 2300, 1.35, 3.4, 2.6, 11.5, 12.5, -9.0, -13.0, true, 60),     // Chrome Custom: modded V847
+  voice(350, 2200, 1.0, 7.5, 5.0, 12.0, 15.0, -14.0, -20.0, true, 150),    // Weeper: Arbiter / Dunlop Cry Baby
+];
+
+const TICK = 16; // samples between coefficient updates (interpolated in between)
+const TINY = f32(1e-20);
+const PERCENT = f32(0.01);
+
+class WahFx {
+  constructor() {
+    this.fs = 48000; this.variant = 0;
+    this.position = new Smoothed(f32(0.5)); this.mix = new Smoothed(1);
+    this.g = f32(0.1); this.k = f32(0.2); this.lowGain = 0; this.bandGain = 1;
+    this.gTarget = f32(0.1); this.kTarget = f32(0.2); this.lowTarget = 0; this.bandTarget = 1;
+    this.gStep = 0; this.kStep = 0; this.lowStep = 0; this.bandStep = 0;
+    this.tickCount = 0; this.moving = false; this.modelChanged = true;
+    this.ic1 = new Float32Array(2); this.ic2 = new Float32Array(2);
+    this.coupling = [new OnePole(), new OnePole()];
+  }
+
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    this.position.reset(this.fs, 0.02);
+    this.mix.reset(this.fs, 0.03);
+    this.configure();
+    this.reset();
+  }
+
+  reset() {
+    this.position.setCurrentAndTarget(this.position.target);
+    this.mix.setCurrentAndTarget(this.mix.target);
+
+    this.computeTargets(this.position.target);
+    this.g = this.gTarget; this.k = this.kTarget; this.lowGain = this.lowTarget; this.bandGain = this.bandTarget;
+    this.gStep = this.kStep = this.lowStep = this.bandStep = 0;
+    this.tickCount = 0;
+    this.moving = this.modelChanged = false;
+
+    for (let ch = 0; ch < 2; ++ch) {
+      this.ic1[ch] = this.ic2[ch] = 0;
+      this.coupling[ch].reset();
+    }
+  }
+
+  setModel(variant) {
+    this.variant = clamp(variant | 0, 0, VOICES.length - 1);
+    this.configure();
+  }
+
+  setParameters(knobs) {
+    this.position.setTarget(clamp(f32(f32(knobs[0]) * PERCENT), 0, 1));
+    this.mix.setTarget(clamp(f32(f32(knobs[1]) * PERCENT), 0, 1));
+  }
+
+  process(left, right, n) {
+    const mix = this.mix, couplingL = this.coupling[0], couplingR = this.coupling[1];
+    let ic1L = this.ic1[0], ic2L = this.ic2[0], ic1R = this.ic1[1], ic2R = this.ic2[1];
+
+    for (let pos = 0; pos < n;) {
+      if (this.tickCount === 0) this.nextTick();
+
+      const count = Math.min(this.tickCount, n - pos);
+      const gStep = this.gStep, kStep = this.kStep, lowStep = this.lowStep, bandStep = this.bandStep;
+      let g = this.g, k = this.k, lowGain = this.lowGain, bandGain = this.bandGain;
+
+      for (let i = pos; i < pos + count; ++i) {
+        g = f32(g + gStep); k = f32(k + kStep); lowGain = f32(lowGain + lowStep); bandGain = f32(bandGain + bandStep);
+        const a1 = 1 / (1 + g * (g + k));
+        const a2 = g * a1;
+        const a3 = g * a2;
+        const wetMix = mix.next();
+
+        // state-variable filter (trapezoidal integrators): v1 = band-pass, v2 = low-pass
+        let dry = left[i];
+        let x = couplingL.highPass(dry + TINY) + TINY;
+        let v3 = x - ic2L;
+        let v1 = a1 * ic1L + a2 * v3;
+        let v2 = ic2L + a2 * ic1L + a3 * v3;
+        ic1L = 2 * v1 - ic1L;
+        ic2L = 2 * v2 - ic2L;
+        left[i] = dry + wetMix * (lowGain * v2 + bandGain * v1 - dry);
+
+        dry = right[i];
+        x = couplingR.highPass(dry + TINY) + TINY;
+        v3 = x - ic2R;
+        v1 = a1 * ic1R + a2 * v3;
+        v2 = ic2R + a2 * ic1R + a3 * v3;
+        ic1R = 2 * v1 - ic1R;
+        ic2R = 2 * v2 - ic2R;
+        right[i] = dry + wetMix * (lowGain * v2 + bandGain * v1 - dry);
+      }
+
+      this.g = g; this.k = k; this.lowGain = lowGain; this.bandGain = bandGain;
+      pos += count;
+      this.tickCount -= count;
+    }
+
+    this.ic1[0] = ic1L; this.ic2[0] = ic2L; this.ic1[1] = ic1R; this.ic2[1] = ic2R;
+  }
+
+  configure() {
+    for (const c of this.coupling) c.setCutoff(this.fs, VOICES[this.variant].couplingHz);
+    this.modelChanged = true;
+  }
+
+  /** Filter settings for a pedal position (0..1). */
+  computeTargets(pedal) {
+    const v = VOICES[this.variant], fs = this.fs;
+    const t = Math.pow(pedal, v.taper);
+    const hz = Math.min(v.heelHz * Math.pow(v.toeHz / v.heelHz, t), 0.45 * fs);
+    const q = v.heelQ * Math.pow(v.toeQ / v.heelQ, t);
+    const peak = Math.pow(10, (v.heelPeakDb + (v.toePeakDb - v.heelPeakDb) * t) / 20);
+    const low = v.lowPassPath ? Math.pow(10, (v.heelLowDb + (v.toeLowDb - v.heelLowDb) * t) / 20) : 0;
+
+    // at the resonance both outputs are Q times the input, 90 degrees apart: the band-pass share that gives the wanted peak
+    const band = Math.sqrt(Math.max(0, (peak / q) * (peak / q) - low * low));
+
+    this.gTarget = f32(Math.tan((PI * hz) / fs));
+    this.kTarget = f32(1 / q);
+    this.lowTarget = f32(low);
+    this.bandTarget = f32(band);
+  }
+
+  nextTick() {
+    this.tickCount = TICK;
+
+    if (this.moving) { // land exactly on what the last ramp aimed at
+      this.g = this.gTarget; this.k = this.kTarget; this.lowGain = this.lowTarget; this.bandGain = this.bandTarget;
+      this.gStep = this.kStep = this.lowStep = this.bandStep = 0;
+      this.moving = false;
+    }
+
+    if (this.position.isSmoothing() || this.modelChanged) {
+      this.modelChanged = false;
+      this.computeTargets(f32(this.position.skip(TICK)));
+      this.gStep = f32((this.gTarget - this.g) * (1 / TICK));
+      this.kStep = f32((this.kTarget - this.k) * (1 / TICK));
+      this.lowStep = f32((this.lowTarget - this.lowGain) * (1 / TICK));
+      this.bandStep = f32((this.bandTarget - this.bandGain) * (1 / TICK));
+      this.moving = true;
+    }
+  }
+}
+
+const wah = (key, name, variant, basedOn) =>
+  model(key, name, CATEGORY.wah, ENGINE.wahFx, variant, basedOn, [percent("Position", 50), percent("Mix", 100)]);
+
+/** In the order of the variants. */
+const WAH_MODELS = [
+  wah("fassel", "Fassel", 0, "Dunlop Cry Baby Super / Jen Super Cry Baby (Fasel inductor)"),
+  wah("conductor", "Conductor", 1, "Maestro Boomerang"),
+  wah("throaty", "Throaty", 2, "RMC Real McCoy 1"),
+  wah("colorful", "Colorful", 3, "Colorsound Wah-Fuzz (wah section, inductor-less)"),
+  wah("vetta_wah", "Vetta Wah", 4, "Line 6 original (Vetta II)"),
+  wah("chrome", "Chrome", 5, "Vox V847"),
+  wah("chrome_custom", "Chrome Custom", 6, "Modded Vox V847"),
+  wah("weeper", "Weeper", 7, "Arbiter Cry Baby"),
+];
+
+return { WahFx, WAH_MODELS };
+})();
+// ---- dsp/volume.js
+const { VolumeFx, VOLUME_MODELS } = (() => {
+// The HD500X's Volume/Pan models (Source/DSP/fx/Volume.h). Stereo.
+
+class VolumeFx {
+  prepare(sampleRate, maxBlock) {
+    this.variant = this.variant || 0;
+    this.gainLeft = new Smoothed(1); this.gainRight = new Smoothed(1);
+    this.gainLeft.reset(sampleRate, 0.03); this.gainRight.reset(sampleRate, 0.03);
+    this.reset();
+  }
+  reset() {
+    this.gainLeft.setCurrentAndTarget(this.gainLeft.target);
+    this.gainRight.setCurrentAndTarget(this.gainRight.target);
+  }
+  setModel(variant) { this.variant = clamp(variant | 0, 0, 1); }
+  setParameters(k) {
+    const position = f32(k[0] / 100);
+    if (this.variant === 0) {
+      this.gainLeft.setTarget(f32(position * position));
+      this.gainRight.setTarget(f32(position * position));
+    } else {
+      this.gainLeft.setTarget(f32(Math.min(1, 2 - 2 * position)));
+      this.gainRight.setTarget(f32(Math.min(1, 2 * position)));
+    }
+  }
+  process(left, right, n) {
+    const gl = this.gainLeft, gr = this.gainRight;
+    for (let i = 0; i < n; ++i) { left[i] *= gl.next(); right[i] *= gr.next(); }
+  }
+}
+
+/** In the order of the variants. */
+const VOLUME_MODELS = [
+  model("volume_pedal", "Volume Pedal", CATEGORY.volume, ENGINE.volumeFx, 0, "Volume pedal (100 % = unity)", [percent("Volume", 100)]),
+  model("pan", "Pan", CATEGORY.volume, ENGINE.volumeFx, 1, "Pan / balance (50 % = centre)", [percent("Pan", 50)]),
+];
+
+return { VolumeFx, VOLUME_MODELS };
+})();
+// ---- dsp/amp.js
+const { AmpFx, AMP_MODELS } = (() => {
+// The HD500X's amp models (Source/DSP/fx/Amp.h): the 30 stock amps and the 20 model-pack amps, each with its
+// "Pre" (preamp only) version on the Power Amp knob. Mono; the output is the amp's output signal (the cabinet
+// and microphone are a separate engine). Ported line for line from the C++; see Amp.h for the design notes.
+
+const MAX_STAGES = 4, NUM_KNOBS = 12, CHUNK = 32;
+
+// One preamp tube stage: [gain, bias, limPos, limNeg, pol, hpHz, lpHz, shelfK, shelfHz] (floats, as in C++)
+const stage = (...v) => Float32Array.from(v);
+const tri = (gain, hp, lp, shelfK = 1, shelfHz = 100) => stage(gain, 0.22, 1.0, 1.7, -1, hp, lp, shelfK, shelfHz);
+const cold = (gain, hp, lp, shelfK = 1, shelfHz = 100) => stage(gain, -0.22, 2.2, 0.55, -1, hp, lp, shelfK, shelfHz);
+const cf = (hp, lp) => stage(1, 0, 0.75, 4, 1, hp, lp, 1, 100);
+const pent = (gain, hp, lp, shelfK = 1, shelfHz = 100) => stage(gain, 0.08, 0.9, 1.05, -1, hp, lp, shelfK, shelfHz);
+const octal = (gain, hp, lp, shelfK = 1, shelfHz = 100) => stage(gain, 0.15, 1.6, 2.4, -1, hp, lp, shelfK, shelfHz);
+const ss = (gain, hp, lp, shelfK = 1, shelfHz = 100) => stage(gain, 0, 1, 1, 1, hp, lp, shelfK, shelfHz);
+const rect = (gain, hp, lp) => stage(gain, 0, 0.12, 3, -1, hp, lp, 1, 100);
+const noStage = stage(1, 0, 1, 1, 1, 10, 20000, 1, 100);
+
+const stackBlackface = 0, stackBassman = 1, stackJtm45 = 2, stackPlexi = 3, stackVox = 4, stackRecto = 5, stackSoldano = 6,
+      stackHiwatt = 7, stackEngl = 8, stackOrange = 9, stackPete = 10;
+const eqGeneric = 0, eqSupro = 1, eqGibson = 2, eqVox = 3, eqDivide = 4, eqFlipTop = 5, eqRoute = 6, eqSvt = 7, eqGk = 8,
+      eqAcoustic = 9, eqChamp = 10;
+const toneStack = 0, toneEq = 1;
+const midNormal = 0, midCut = 1, midTone = 2, midDivide = 3;
+const flagParallel = 1, flagInteract = 2;
+
+// <the tables of Amp.h, copied value for value: stacks, eqs, specs, trims (keep the two files identical)>
+const STACKS = [
+  [ 250.0,  250.0, 10.0, 100.0, 0.25, 100.0, 47.0 ], // Fender AB763 (Twin / Deluxe Reverb)
+  [ 250.0, 1000.0, 25.0,  56.0, 0.25,  20.0, 20.0 ], // Fender 5F6-A Bassman
+  [ 250.0, 1000.0, 25.0,  56.0, 0.27,  22.0, 22.0 ], // Marshall JTM45 (the Bassman's, British parts)
+  [ 220.0, 1000.0, 22.0,  33.0, 0.47,  22.0, 22.0 ], // Marshall 1959 / 2204 / Park 75
+  [ 1000.0, 1000.0, 10.0, 100.0, 0.05, 22.0, 22.0 ], // Vox AC30 Top Boost (no middle control)
+  [ 250.0,  250.0, 25.0,  47.0, 0.50,  20.0, 20.0 ], // Mesa Dual Rectifier
+  [ 250.0, 1000.0, 25.0,  47.0, 0.47,  22.0, 22.0 ], // Soldano SLO / Peavey 5150 / Bogner
+  [ 250.0, 1000.0, 22.0,  68.0, 0.47,  10.0, 47.0 ], // Hiwatt DR103: only half the blackface scoop, lower down
+  [ 250.0, 1000.0, 25.0,  47.0, 0.47,  10.0, 33.0 ], // Engl: a shallow dip lower down, strong mid control
+  [ 250.0,  250.0, 22.0,  68.0, 0.68,  47.0, 22.0 ], // Orange OR80
+  [ 250.0,  250.0, 25.0, 100.0, 0.25, 100.0, 22.0 ], // Black Panel Pete: blackface with more mids
+].map((r) => Float32Array.from(r));
+
+const EQS = [
+  [ 120.0, 10.0, 650.0, 0.7,  8.0, 3000.0, 10.0 ], // generic (the amps with a passive stack only name it)
+  [ 120.0,  8.0, 650.0, 0.7,  0.0, 3000.0,  8.0 ], // Supro: Mid is the Tone knob
+  [ 100.0, 10.0, 500.0, 0.6,  6.0, 2200.0, 10.0 ], // Gibson EH-185
+  [ 110.0,  9.0, 800.0, 0.7,  0.0, 2800.0, 10.0 ], // Vox without Top Boost: Mid is the Cut
+  [ 120.0,  0.0, 650.0, 0.7,  0.0, 3000.0,  0.0 ], // Divide 9/15: Tone and Cut only
+  [  70.0, 14.0, 400.0, 0.7,  8.0, 2200.0, 12.0 ], // Ampeg B-15 Baxandall
+  [ 120.0, 10.0, 700.0, 0.7,  6.0, 2500.0, 10.0 ], // Dr. Z Route 66 bass / treble
+  [  50.0, 12.0, 800.0, 1.2, 12.0, 4000.0, 14.0 ], // Ampeg SVT: Baxandall + inductor mid at 800 Hz
+  [  60.0, 12.0, 500.0, 0.8, 12.0, 7000.0, 12.0 ], // Gallien-Krueger 800RB active EQ
+  [ 100.0, 10.0, 800.0, 0.8, 10.0, 6000.0, 12.0 ], // Line 6 Acoustic
+  [ 120.0,  8.0, 700.0, 0.7,  6.0, 3000.0,  8.0 ], // Fender Champ (no tone controls on the original)
+].map((r) => Float32Array.from(r));
+
+const SPEC_ROWS = [
+  // '65 Twin Reverb, Normal: 12AX7 -> blackface stack -> volume -> 12AX7 -> 4x6L6 with lots of feedback, silicon rectifier.
+  // Very high headroom; the scoop at 400-500 Hz and the glassy top come from the stack.
+  [ "blackface_double_normal", "Blackface Double Normal", "'65 Fender Twin Reverb, Normal channel",
+    2, [ tri(0.9, 10.0, 16000.0), tri(30.0, 8.0, 14000.0), noStage, noStage ],
+    1, 46.0, 0.0, 1, toneStack, stackBlackface, eqGeneric, midNormal, 0,
+    1.6, 2.5, 1.0, 3000.0, 6.0, 0.93, 0.10, 40.0, 11000.0, 95.0, 1.0,
+    [ 45, 45, 55, 60, 35, 50, 100, 30, 50, 50, 40 ] ],
+  // Twin Reverb, Vibrato: bright cap on the volume and a third 12AX7 after the reverb mixer, which clips first.
+  [ "blackface_double_vibrato", "Blackface Double Vibrato", "'65 Fender Twin Reverb, Vibrato channel",
+    3, [ tri(0.9, 10.0, 16000.0), tri(30.0, 8.0, 14000.0), tri(1.7, 8.0, 12000.0), noStage ],
+    1, 46.0, 2650.0, 1, toneStack, stackBlackface, eqGeneric, midNormal, 0,
+    1.3, 2.5, 1.0, 3000.0, 6.0, 0.93, 0.10, 40.0, 11000.0, 95.0, 1.0,
+    [ 45, 45, 55, 55, 35, 50, 100, 30, 50, 50, 40 ] ],
+  // Hiwatt DR103: stiff, linear, loud. Flat-ish stack after the second stage, 4xEL34 with heavy feedback.
+  [ "hiway_100", "Hiway 100", "Hiwatt Custom 100 (DR103)",
+    3, [ tri(0.9, 15.0, 18000.0), tri(22.0, 20.0, 16000.0), tri(2.2, 20.0, 16000.0), noStage ],
+    1, 44.0, 0.0, 2, toneStack, stackHiwatt, eqGeneric, midNormal, 0,
+    1.8, 2.5, 1.2, 2500.0, 6.0, 0.95, 0.08, 35.0, 14000.0, 95.0, 0.6,
+    [ 50, 50, 55, 55, 45, 50, 75, 25, 50, 50, 35 ] ],
+  // Supro S6616: two triodes into one single-ended 6V6, no feedback, small transformer. One Tone knob (on Mid).
+  [ "super_o", "Super O", "'60s Supro S6616",
+    2, [ tri(1.1, 30.0, 9000.0), tri(13.0, 40.0, 7000.0), noStage, noStage ],
+    1, 40.0, 0.0, 2, toneEq, 0, eqSupro, midTone, 0,
+    3.0, 2.0, 0.0, 3500.0, 5.0, 0.0, 0.30, 90.0, 6500.0, 110.0, 2.5,
+    [ 55, 50, 60, 50, 40, 50, 100, 55, 50, 85, 50 ] ],
+  // Gibson EH-185 (1939): octal preamp, 2x6L6 without feedback, dark and soft.
+  [ "gibtone_185", "Gibtone 185", "Gibson EH-185",
+    2, [ octal(0.7, 25.0, 8000.0), octal(7.0, 30.0, 6500.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqGibson, midNormal, 0,
+    2.5, 2.0, 0.0, 3000.0, 5.0, 0.88, 0.35, 70.0, 5500.0, 85.0, 2.5,
+    [ 60, 55, 50, 55, 40, 50, 100, 55, 50, 60, 45 ] ],
+  // '59 Bassman 5F6-A, Normal: 12AY7 -> volume -> 12AX7 -> cathode follower -> stack -> long-tail inverter -> 2x5881,
+  // GZ34 rectifier, a real Presence control in the feedback loop.
+  [ "tweed_b_man_normal", "Tweed B-Man Normal", "'59 Fender Tweed Bassman, Normal channel",
+    3, [ octal(0.7, 12.0, 15000.0), tri(22.0, 15.0, 12000.0), cf(10.0, 14000.0), noStage ],
+    1, 42.0, 0.0, 3, toneStack, stackBassman, eqGeneric, midNormal, 0,
+    3.5, 2.5, 0.5, 1500.0, 8.0, 0.92, 0.30, 45.0, 9000.0, 100.0, 1.5,
+    [ 55, 45, 55, 55, 45, 50, 100, 50, 50, 50, 45 ] ],
+  // Bassman, Bright: the bright cap across the volume pot and the leaner half of the first tube.
+  [ "tweed_b_man_bright", "Tweed B-Man Bright", "'59 Fender Tweed Bassman, Bright channel",
+    3, [ octal(0.7, 12.0, 16000.0, 0.75, 300.0), tri(22.0, 40.0, 13000.0), cf(10.0, 14000.0), noStage ],
+    1, 42.0, 2500.0, 3, toneStack, stackBassman, eqGeneric, midNormal, 0,
+    3.5, 2.5, 0.5, 1500.0, 8.0, 0.92, 0.30, 45.0, 9000.0, 100.0, 1.5,
+    [ 55, 50, 55, 50, 45, 50, 100, 50, 50, 50, 45 ] ],
+  // Deluxe Reverb, Normal: the Twin's preamp into 2x6V6 (22 W) with a GZ34: breaks up early and sags.
+  [ "blackface_lux_normal", "Blackface 'Lux Normal", "Fender Blackface Deluxe Reverb, Normal channel",
+    2, [ tri(0.9, 10.0, 15000.0), tri(30.0, 10.0, 13000.0), noStage, noStage ],
+    1, 46.0, 0.0, 1, toneStack, stackBlackface, eqGeneric, midNormal, 0,
+    4.2, 2.2, 0.7, 3000.0, 6.0, 0.92, 0.35, 60.0, 8000.0, 100.0, 1.5,
+    [ 42, 50, 55, 55, 35, 50, 100, 50, 50, 50, 45 ] ],
+  // Deluxe Reverb, Vibrato: the fixed 47 pF bright cap and the third stage.
+  [ "blackface_lux_vibrato", "Blackface 'Lux Vibrato", "Fender Blackface Deluxe Reverb, Vibrato channel",
+    3, [ tri(0.9, 10.0, 15000.0), tri(30.0, 10.0, 13000.0), tri(1.7, 10.0, 11000.0), noStage ],
+    1, 46.0, 3386.0, 1, toneStack, stackBlackface, eqGeneric, midNormal, 0,
+    3.4, 2.2, 0.7, 3000.0, 6.0, 0.92, 0.35, 60.0, 8000.0, 100.0, 1.5,
+    [ 42, 50, 55, 55, 35, 50, 100, 50, 50, 50, 45 ] ],
+  // Divided by 13 JRT 9/15: two 5879 pentode channels mixed (clean level on Drive, dirty drive on Bass),
+  // one Tone (Mid) and a Cut (Treble), cathode-biased output pair without feedback.
+  [ "divide_9_15", "Divide 9/15", "Divided by 13 JRT 9/15",
+    2, [ pent(5.0, 20.0, 13000.0), pent(24.0, 45.0, 10000.0, 0.7, 250.0), noStage, noStage ],
+    0, 36.0, 0.0, 2, toneEq, 0, eqDivide, midDivide, flagParallel,
+    3.0, 2.0, 0.0, 3200.0, 5.0, 0.90, 0.30, 65.0, 9000.0, 100.0, 2.0,
+    [ 55, 45, 60, 70, 40, 50, 100, 50, 50, 70, 50 ] ],
+  // Dr. Z Route 66: one EF86 pentode, bass / treble, 2xKT66 with an ultra-linear transformer and GZ34.
+  [ "phd_motorway", "PhD Motorway", "Dr. Z Route 66",
+    2, [ pent(2.2, 20.0, 12000.0), tri(4.5, 15.0, 12000.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqRoute, midNormal, 0,
+    2.2, 2.5, 0.35, 3000.0, 5.0, 0.93, 0.28, 40.0, 13000.0, 95.0, 1.5,
+    [ 55, 50, 50, 55, 45, 50, 100, 45, 50, 55, 45 ] ],
+  // '61 Vox AC15, EF86 channel: pentode into the inverter, 2xEL84 cathode-biased, no feedback, EZ81. Cut on Mid.
+  [ "class_a_15", "Class A-15", "'61 \"Fawn\" Vox AC-15",
+    2, [ pent(2.0, 25.0, 11000.0), tri(4.0, 25.0, 12000.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqVox, midCut, 0,
+    2.8, 2.0, 0.0, 3500.0, 5.0, 0.90, 0.40, 70.0, 9000.0, 100.0, 2.5,
+    [ 55, 50, 70, 55, 45, 50, 100, 60, 50, 80, 50 ] ],
+  // Vox AC30 Top Boost: 12AX7 -> volume -> 12AX7 -> cathode follower -> Top Boost treble / bass -> 4xEL84,
+  // cathode-biased, no feedback, GZ34. Cut on Mid.
+  [ "class_a_30_tb", "Class A-30 TB", "Vox AC-30 \"Top Boost\"",
+    3, [ tri(1.0, 25.0, 14000.0), tri(22.0, 30.0, 13000.0), cf(12.0, 14000.0), noStage ],
+    1, 42.0, 0.0, 3, toneStack, stackVox, eqGeneric, midCut, 0,
+    3.0, 2.0, 0.0, 3500.0, 5.0, 0.90, 0.35, 60.0, 10000.0, 95.0, 2.5,
+    [ 55, 45, 70, 60, 45, 50, 100, 55, 50, 75, 50 ] ],
+  // '65 JTM45, Normal: the Bassman circuit with ECC83s and KT66s: fat, saggy (GZ34), heavy feedback.
+  [ "brit_j_45_normal", "Brit J-45 Normal", "'65 Marshall JTM-45 MkII, Normal channel",
+    3, [ tri(0.9, 10.0, 12000.0), tri(24.0, 15.0, 10000.0), cf(10.0, 12000.0), noStage ],
+    1, 42.0, 0.0, 3, toneStack, stackJtm45, eqGeneric, midNormal, 0,
+    3.5, 2.5, 0.8, 1800.0, 8.0, 0.92, 0.40, 50.0, 8500.0, 100.0, 1.2,
+    [ 60, 50, 55, 55, 45, 50, 100, 55, 50, 50, 50 ] ],
+  // JTM45, Bright: bright cap on the volume and the treble-peaking mixer network.
+  [ "brit_j_45_bright", "Brit J-45 Bright", "'65 Marshall JTM-45 MkII, Bright channel",
+    3, [ tri(0.9, 10.0, 14000.0), tri(24.0, 40.0, 12000.0, 0.55, 700.0), cf(10.0, 12000.0), noStage ],
+    1, 42.0, 2500.0, 3, toneStack, stackJtm45, eqGeneric, midNormal, 0,
+    3.5, 2.5, 0.8, 1800.0, 8.0, 0.92, 0.40, 50.0, 8500.0, 100.0, 1.2,
+    [ 60, 50, 55, 50, 45, 50, 100, 55, 50, 50, 50 ] ],
+  // Marshall 1959 Super Lead, Normal: fully bypassed first stage, 4xEL34, moderate feedback, silicon rectifier.
+  // Most of the crunch is the inverter and the output tubes.
+  [ "plexi_lead_100_normal", "Plexi Lead 100 Normal", "'59 Marshall \"Plexi\" Super Lead 100, Normal channel",
+    3, [ tri(0.9, 10.0, 13000.0), tri(28.0, 20.0, 11000.0), cf(10.0, 13000.0), noStage ],
+    1, 42.0, 0.0, 3, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.5, 2000.0, 8.0, 0.93, 0.20, 50.0, 9000.0, 100.0, 1.5,
+    [ 65, 50, 55, 55, 50, 50, 100, 40, 50, 50, 50 ] ],
+  // Super Lead, Bright: 2.7k / 0.68 uF cathode, 2.2 nF coupling, the 5 nF bright cap and 470 pF across the mixer.
+  [ "plexi_lead_100_bright", "Plexi Lead 100 Bright", "'59 Marshall \"Plexi\" Super Lead 100, Bright channel",
+    3, [ tri(0.9, 60.0, 15000.0, 0.6, 90.0), tri(28.0, 30.0, 12000.0, 0.5, 720.0), cf(10.0, 13000.0), noStage ],
+    1, 42.0, 100.0, 3, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.5, 2000.0, 8.0, 0.93, 0.20, 50.0, 9000.0, 100.0, 1.5,
+    [ 60, 55, 55, 50, 45, 50, 100, 40, 50, 50, 50 ] ],
+  // Park 75, Normal: a hotter plexi front end into KT88s: more gain, more headroom and tighter lows in the power amp.
+  [ "brit_p_75_normal", "Brit P-75 Normal", "Park 75, Normal channel",
+    3, [ tri(1.0, 10.0, 13000.0), tri(38.0, 20.0, 11000.0), cf(10.0, 13000.0), noStage ],
+    1, 42.0, 0.0, 3, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    3.5, 2.8, 0.6, 2200.0, 8.0, 0.94, 0.18, 40.0, 10000.0, 95.0, 1.2,
+    [ 60, 50, 55, 55, 50, 50, 100, 35, 50, 50, 45 ] ],
+  // Park 75, Bright.
+  [ "brit_p_75_bright", "Brit P-75 Bright", "Park 75, Bright channel",
+    3, [ tri(1.0, 60.0, 15000.0, 0.6, 90.0), tri(38.0, 30.0, 12000.0, 0.55, 720.0), cf(10.0, 13000.0), noStage ],
+    1, 42.0, 150.0, 3, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    3.5, 2.8, 0.6, 2200.0, 8.0, 0.94, 0.18, 40.0, 10000.0, 95.0, 1.2,
+    [ 55, 55, 55, 50, 45, 50, 100, 35, 50, 50, 45 ] ],
+  // JCM800 2204: gain pot (470 pF bright) -> cold clipper -> 470k / 470k with 470 pF -> third stage -> follower ->
+  // stack -> master -> 2xEL34. The distortion is the preamp's: tight, upper-mid bark.
+  [ "brit_j_800", "Brit J-800", "Marshall JCM-800 (2204)",
+    4, [ tri(1.0, 15.0, 14000.0, 0.6, 90.0), cold(30.0, 30.0, 12000.0), tri(6.0, 40.0, 9000.0, 0.5, 720.0), cf(10.0, 12000.0) ],
+    1, 48.0, 339.0, 4, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    5.0, 2.5, 0.6, 2000.0, 8.0, 0.93, 0.20, 50.0, 9000.0, 100.0, 1.5,
+    [ 60, 50, 60, 55, 45, 50, 45, 40, 50, 50, 50 ] ],
+  // Bogner Uberschall: four stages of gain with the bass cut before the clipping and put back by the power amp's
+  // deep resonance: huge but tight low end, dark smooth top.
+  [ "bomber_uber", "Bomber Uber", "2002 Bogner Uberschall",
+    4, [ tri(1.2, 20.0, 14000.0, 0.45, 170.0), tri(34.0, 130.0, 8000.0), cold(12.0, 80.0, 7000.0), tri(7.0, 40.0, 5500.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.9, 2500.0, 8.0, 0.93, 0.20, 35.0, 7000.0, 80.0, 4.5,
+    [ 55, 55, 45, 55, 40, 50, 45, 35, 50, 50, 50 ] ],
+  // Mesa Dual Rectifier (modern): cascaded gain into the stack, 6L6s with almost no feedback (loose, growling
+  // lows and a raw top), tube-rectifier sag.
+  [ "treadplate", "Treadplate", "Mesa/Boogie Dual Rectifier",
+    4, [ tri(1.2, 20.0, 15000.0, 0.7, 100.0), tri(28.0, 60.0, 12000.0), cold(10.0, 40.0, 11000.0), tri(6.0, 30.0, 9000.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackRecto, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.15, 4000.0, 7.0, 0.93, 0.30, 38.0, 12000.0, 90.0, 3.5,
+    [ 55, 55, 40, 65, 55, 50, 45, 50, 50, 50, 50 ] ],
+  // Engl Fireball 100: very tight (high coupling corners, lean first stage), mid-forward, stiff 6L6 power amp.
+  [ "angel_f_ball", "Angel F-Ball", "Engl Fireball 100",
+    4, [ tri(1.3, 25.0, 14000.0, 0.45, 200.0), tri(36.0, 160.0, 8500.0), cold(14.0, 110.0, 7500.0), tri(8.0, 60.0, 6000.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackEngl, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.8, 2800.0, 8.0, 0.94, 0.15, 45.0, 9500.0, 95.0, 2.5,
+    [ 55, 50, 55, 55, 50, 50, 45, 30, 50, 50, 45 ] ],
+  // Line 6 Elektrik: Line 6's own high-gain amp; Presence and Mid interact (Mid moves the presence corner).
+  [ "line6_elektrik", "Line 6 Elektrik", "Line 6 original (high gain)",
+    4, [ tri(1.2, 20.0, 14000.0, 0.5, 130.0), tri(38.0, 120.0, 9000.0), cold(14.0, 80.0, 8500.0), tri(9.0, 50.0, 7000.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackRecto, eqGeneric, midNormal, flagInteract,
+    4.5, 2.5, 0.5, 2200.0, 9.0, 0.93, 0.25, 40.0, 10000.0, 90.0, 3.0,
+    [ 60, 50, 50, 55, 50, 50, 45, 40, 50, 50, 50 ] ],
+  // Soldano SLO-100, Normal channel, Clean: two stages and the follower, stiff 6L6 power amp.
+  [ "solo_100_clean", "Solo 100 Clean", "'93 Soldano SLO-100, Normal channel (Clean)",
+    3, [ tri(1.0, 15.0, 15000.0), tri(14.0, 20.0, 13000.0), cf(10.0, 14000.0), noStage ],
+    1, 40.0, 0.0, 3, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    2.5, 2.5, 0.8, 2500.0, 8.0, 0.93, 0.15, 40.0, 11000.0, 95.0, 2.0,
+    [ 45, 50, 50, 55, 45, 50, 60, 35, 50, 50, 45 ] ],
+  // SLO-100, Normal channel, Crunch: the same channel with its extra gain switched in.
+  [ "solo_100_crunch", "Solo 100 Crunch", "'93 Soldano SLO-100, Normal channel (Crunch)",
+    3, [ tri(1.0, 15.0, 15000.0, 0.7, 100.0), tri(30.0, 40.0, 11000.0), tri(3.5, 30.0, 10000.0), noStage ],
+    1, 40.0, 0.0, 3, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    3.5, 2.5, 0.8, 2500.0, 8.0, 0.93, 0.15, 40.0, 11000.0, 95.0, 2.0,
+    [ 55, 50, 55, 55, 45, 50, 50, 35, 50, 50, 45 ] ],
+  // SLO-100, Overdrive: the cascade everybody copied: smooth, singing, saturated, with the Depth-like low resonance.
+  [ "solo_100_od", "Solo 100 OD", "'93 Soldano SLO-100, Overdrive channel",
+    4, [ tri(1.2, 20.0, 14000.0, 0.55, 130.0), tri(45.0, 100.0, 10000.0), cold(13.0, 70.0, 9000.0, 0.6, 1000.0), tri(7.0, 40.0, 7500.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.8, 2500.0, 8.0, 0.93, 0.15, 40.0, 10000.0, 95.0, 3.0,
+    [ 55, 50, 55, 55, 50, 50, 45, 35, 50, 50, 50 ] ],
+  // Line 6 Doom: a modded JCM800 preamp (more gain, full bass) into a Hiwatt power amp, with a lot of sag.
+  [ "line6_doom", "Line 6 Doom", "Line 6 original (JCM800 preamp into a Hiwatt power amp)",
+    4, [ tri(1.3, 10.0, 12000.0), cold(34.0, 25.0, 9000.0), tri(10.0, 25.0, 7000.0), cf(10.0, 10000.0) ],
+    1, 48.0, 0.0, 4, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    4.0, 2.5, 1.0, 2500.0, 6.0, 0.95, 0.50, 30.0, 8000.0, 80.0, 4.0,
+    [ 70, 65, 45, 45, 35, 50, 60, 75, 50, 50, 60 ] ],
+  // Line 6 Epic: the most gain of the stock amps, compressed so that it sustains at any playing level; smooth top.
+  [ "line6_epic", "Line 6 Epic", "Line 6 original (high gain, endless sustain)",
+    4, [ tri(1.4, 25.0, 14000.0, 0.5, 140.0), tri(45.0, 120.0, 8000.0), cold(18.0, 90.0, 7000.0), tri(12.0, 50.0, 5500.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.6, 2500.0, 8.0, 0.93, 0.25, 40.0, 7000.0, 90.0, 3.0,
+    [ 65, 50, 55, 50, 45, 50, 45, 45, 50, 50, 55 ] ],
+  // Ampeg B-15NF Portaflex (bass): octal preamp with a Baxandall bass / treble, 2x6L6 at 25-30 W, 5AR4: round, full lows.
+  [ "flip_top", "Flip Top", "Ampeg B-15NF Portaflex",
+    2, [ octal(0.8, 8.0, 9000.0), octal(6.0, 8.0, 8000.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqFlipTop, midNormal, 0,
+    2.2, 2.2, 0.6, 2500.0, 5.0, 0.92, 0.30, 25.0, 6000.0, 55.0, 3.0,
+    [ 45, 55, 50, 45, 35, 50, 100, 45, 50, 55, 45 ] ],
+  // ---- HD model packs: Metal ----
+  // Peavey 5150 (block logo), lead channel: five cascaded stages' worth of gain, tight before the clipping, cold-biased
+  // 6L6s (the default Bias is low: a little crossover grit) and a strong resonance.
+  [ "pv_panama", "PV Panama", "Peavey 5150",
+    4, [ tri(1.2, 25.0, 14000.0, 0.5, 130.0), tri(40.0, 130.0, 9000.0), cold(15.0, 90.0, 8000.0), tri(9.0, 50.0, 6500.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.7, 2200.0, 9.0, 0.93, 0.12, 40.0, 9500.0, 100.0, 4.0,
+    [ 55, 55, 45, 55, 55, 50, 45, 30, 50, 38, 50 ] ],
+  // Bogner Shiva, lead channel: medium-high gain, round and smooth, less compressed than the Uberschall.
+  [ "mahadeva", "Mahadeva", "Bogner Shiva",
+    4, [ tri(1.0, 15.0, 14000.0, 0.7, 100.0), tri(28.0, 60.0, 10000.0), tri(8.0, 40.0, 8000.0), cf(10.0, 12000.0) ],
+    1, 46.0, 0.0, 4, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    4.0, 2.5, 0.6, 2500.0, 7.0, 0.93, 0.20, 45.0, 10000.0, 95.0, 2.0,
+    [ 55, 50, 55, 55, 45, 50, 50, 40, 50, 50, 45 ] ],
+  // The "remastered" JCM800 2204: the Brit J-800 circuit, a little hotter and tighter.
+  [ "brit_2204", "Brit 2204", "Marshall JCM800 (2204), remastered",
+    4, [ tri(1.0, 15.0, 15000.0, 0.6, 90.0), cold(34.0, 40.0, 12000.0), tri(7.0, 50.0, 9500.0, 0.5, 720.0), cf(10.0, 13000.0) ],
+    1, 48.0, 339.0, 4, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    5.5, 2.5, 0.55, 2000.0, 8.0, 0.93, 0.22, 50.0, 9500.0, 100.0, 1.8,
+    [ 65, 50, 60, 55, 50, 50, 50, 40, 50, 50, 50 ] ],
+  // Line 6 Insane: as much gain as the cascade will take, mid-heavy.
+  [ "line6_insane", "Line 6 Insane", "Line 6 original (maximum gain)",
+    4, [ tri(1.5, 25.0, 14000.0, 0.5, 150.0), tri(60.0, 140.0, 8500.0), cold(22.0, 100.0, 7500.0), tri(14.0, 60.0, 6000.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackRecto, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.5, 2500.0, 8.0, 0.93, 0.20, 40.0, 9000.0, 90.0, 3.0,
+    [ 70, 50, 60, 50, 45, 50, 45, 40, 50, 50, 55 ] ],
+  // Line 6 Big Bottom: a high-gain amp voiced for low end: loose coupling, little feedback, a big resonance at 75 Hz.
+  [ "line6_big_bottom", "Line 6 Big Bottom", "Line 6 original (bass-heavy high gain)",
+    4, [ tri(1.2, 12.0, 14000.0, 0.85, 80.0), tri(34.0, 45.0, 9000.0), cold(12.0, 35.0, 8000.0), tri(7.0, 25.0, 6500.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackRecto, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.3, 3000.0, 7.0, 0.93, 0.30, 28.0, 9500.0, 75.0, 6.0,
+    [ 55, 65, 35, 55, 45, 50, 45, 45, 50, 50, 50 ] ],
+  // Line 6 Variac'ed Plexi: a Super Lead run on a lowered mains voltage: the power amp gives up early, sags and browns out.
+  [ "line6_variaced_plexi", "Line 6 Variac'ed Plexi", "Line 6 original (variac-sagged Plexi)",
+    3, [ tri(1.0, 30.0, 13000.0, 0.7, 90.0), tri(34.0, 25.0, 10500.0, 0.6, 720.0), cf(10.0, 12000.0), noStage ],
+    1, 42.0, 200.0, 3, toneStack, stackPlexi, eqGeneric, midNormal, 0,
+    8.0, 2.0, 0.4, 2000.0, 8.0, 0.93, 0.45, 50.0, 8000.0, 100.0, 2.0,
+    [ 70, 50, 60, 55, 45, 50, 100, 65, 50, 60, 60 ] ],
+  // Line 6 Purge: tight and mid-forward (high coupling corners, a wide mid control, stiff power amp).
+  [ "line6_purge", "Line 6 Purge", "Line 6 original (tight, mid-forward high gain)",
+    4, [ tri(1.3, 25.0, 14000.0, 0.45, 220.0), tri(38.0, 180.0, 9500.0), cold(14.0, 120.0, 8500.0), tri(9.0, 70.0, 7500.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackEngl, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.7, 3000.0, 9.0, 0.94, 0.12, 45.0, 10000.0, 100.0, 2.0,
+    [ 60, 45, 65, 55, 55, 50, 45, 30, 50, 50, 45 ] ],
+  // Line 6 Aggro: scooped and bright, hardly any feedback: a raw edge on top of a deep low end.
+  [ "line6_aggro", "Line 6 Aggro", "Line 6 original (scooped, aggressive high gain)",
+    4, [ tri(1.2, 20.0, 15000.0, 0.5, 140.0), tri(36.0, 110.0, 11000.0), cold(14.0, 80.0, 10000.0), tri(8.0, 45.0, 8500.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackRecto, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.2, 3800.0, 8.0, 0.93, 0.20, 38.0, 11000.0, 85.0, 4.0,
+    [ 60, 60, 35, 65, 55, 50, 45, 40, 50, 50, 50 ] ],
+  // Line 6 Smash: thick and fuzzy: pentode-like stages that clip hard and evenly, a dark Orange-style stack, loose power amp.
+  [ "line6_smash", "Line 6 Smash", "Line 6 original (thick, fuzzy high gain)",
+    4, [ tri(1.4, 15.0, 12000.0), pent(30.0, 50.0, 8000.0), pent(10.0, 40.0, 6500.0), cf(10.0, 10000.0) ],
+    1, 48.0, 0.0, 4, toneStack, stackOrange, eqGeneric, midNormal, 0,
+    3.5, 2.2, 0.3, 2500.0, 7.0, 0.92, 0.35, 40.0, 8000.0, 90.0, 3.0,
+    [ 65, 55, 55, 50, 40, 50, 55, 55, 50, 50, 55 ] ],
+  // Line 6 Octone: a high-gain amp whose second stage works as a half-wave rectifier, which puts an octave overtone on the notes.
+  [ "line6_octone", "Line 6 Octone", "Line 6 original (high gain with an octave overtone)",
+    4, [ tri(1.3, 30.0, 12000.0, 0.6, 200.0), rect(30.0, 120.0, 9000.0), cold(12.0, 80.0, 8000.0), tri(7.0, 50.0, 7000.0) ],
+    1, 52.0, 0.0, 4, toneStack, stackSoldano, eqGeneric, midNormal, 0,
+    4.5, 2.5, 0.6, 2500.0, 8.0, 0.93, 0.20, 40.0, 9500.0, 95.0, 2.5,
+    [ 60, 45, 60, 55, 50, 50, 45, 35, 50, 50, 50 ] ],
+  // ---- Vintage ----
+  // Roland JC-120 (the amp, without its chorus): solid state, a Fender-like passive stack, a stiff power amp that stays
+  // clean until it clips hard. No sag, hardly any hum.
+  [ "jazz_rivet", "Jazz Rivet", "Roland JC-120",
+    2, [ ss(0.8, 15.0, 20000.0), ss(9.0, 10.0, 18000.0), noStage, noStage ],
+    1, 46.0, 0.0, 1, toneStack, stackBlackface, eqGeneric, midNormal, 0,
+    2.0, 3.0, 1.5, 4000.0, 5.0, 1.0, 0.02, 20.0, 18000.0, 95.0, 0.3,
+    [ 45, 50, 50, 55, 40, 50, 100, 10, 30, 50, 20 ] ],
+  // Tweed Champ 5F1: two triode stages into one 6V6, single-ended, 5Y3 rectifier, no tone controls at all.
+  [ "small_tweed", "Small Tweed", "Fender Champ (tweed)",
+    2, [ tri(1.0, 25.0, 12000.0), tri(9.0, 30.0, 9000.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqChamp, midNormal, 0,
+    3.5, 2.0, 0.3, 3000.0, 5.0, 0.0, 0.40, 95.0, 7000.0, 120.0, 2.5,
+    [ 60, 50, 50, 55, 40, 50, 100, 60, 50, 85, 50 ] ],
+  // Orange OR80: a thick, mid-heavy crunch that turns fuzzy, EL34s with little feedback.
+  [ "mandarin_80", "Mandarin 80", "Orange OR80",
+    3, [ tri(1.0, 20.0, 12000.0), tri(30.0, 35.0, 9000.0, 0.7, 400.0), cf(10.0, 11000.0), noStage ],
+    1, 44.0, 0.0, 3, toneStack, stackOrange, eqGeneric, midNormal, 0,
+    4.0, 2.5, 0.35, 2000.0, 6.0, 0.93, 0.25, 45.0, 8500.0, 95.0, 2.0,
+    [ 65, 50, 55, 55, 45, 50, 100, 45, 50, 50, 50 ] ],
+  // Vox AC30 "Fawn" (before Top Boost), Normal: one triode into the inverter, 4xEL84, no feedback. Warm; Cut on Mid.
+  [ "a30_fawn_nrm", "A30 Fawn Nrm", "Vox AC30 \"Fawn\", Normal channel",
+    2, [ tri(1.0, 25.0, 11000.0), tri(5.0, 25.0, 10000.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqVox, midCut, 0,
+    3.0, 2.0, 0.0, 3500.0, 5.0, 0.90, 0.35, 60.0, 9500.0, 95.0, 2.5,
+    [ 55, 50, 70, 50, 40, 50, 100, 55, 50, 75, 50 ] ],
+  // AC30 "Fawn", Bright (Brilliant) channel: small coupling capacitors take the lows out before the inverter.
+  [ "a30_fawn_brt", "A30 Fawn Brt", "Vox AC30 \"Fawn\", Bright channel",
+    2, [ tri(1.0, 25.0, 14000.0, 0.5, 500.0), tri(6.5, 60.0, 13000.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqVox, midCut, 0,
+    3.0, 2.0, 0.0, 3500.0, 5.0, 0.90, 0.35, 60.0, 9500.0, 95.0, 2.5,
+    [ 55, 55, 70, 50, 40, 50, 100, 55, 50, 75, 50 ] ],
+  // Pete Anderson's custom blackface-style amp: the Deluxe circuit with more gain and a fuller middle.
+  [ "black_panel_pete", "Black Panel Pete", "Pete Anderson custom amp",
+    3, [ tri(1.0, 12.0, 15000.0), tri(30.0, 12.0, 12000.0), tri(1.8, 12.0, 10000.0), noStage ],
+    1, 46.0, 3000.0, 1, toneStack, stackPete, eqGeneric, midNormal, 0,
+    2.2, 2.3, 0.6, 3000.0, 6.0, 0.92, 0.28, 50.0, 10000.0, 100.0, 1.5,
+    [ 45, 50, 55, 55, 40, 50, 100, 45, 50, 50, 45 ] ],
+  // Line 6 Acoustic: a clean, wide-band amp voiced to make an electric guitar sound like a piezo acoustic:
+  // lean low mids, lifted highs, no distortion to speak of.
+  [ "line6_acoustic", "Line 6 Acoustic", "Line 6 original (acoustic simulation)",
+    2, [ ss(0.7, 60.0, 20000.0), ss(8.0, 30.0, 18000.0, 0.6, 900.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqAcoustic, midNormal, 0,
+    2.0, 3.0, 1.5, 5000.0, 6.0, 1.0, 0.02, 25.0, 18000.0, 95.0, 0.0,
+    [ 50, 50, 35, 60, 50, 50, 100, 10, 20, 50, 20 ] ],
+  // ---- Bass ----
+  // Ampeg SVT, Normal: two triode stages around a Baxandall bass / treble with an inductor midrange, six 6550s
+  // with heavy feedback: enormous clean headroom and a little tube growl when pushed.
+  [ "svt_nrm", "SVT Nrm", "Ampeg SVT, Normal channel",
+    3, [ tri(0.8, 8.0, 12000.0), tri(7.0, 8.0, 11000.0), tri(2.0, 8.0, 10000.0), noStage ],
+    1, 40.0, 0.0, 2, toneEq, 0, eqSvt, midNormal, 0,
+    1.8, 2.5, 1.0, 3000.0, 5.0, 0.95, 0.12, 22.0, 9000.0, 50.0, 2.0,
+    [ 50, 55, 50, 50, 35, 50, 100, 30, 50, 50, 40 ] ],
+  // SVT, Bright: the bright cap on the volume and a leaner first stage.
+  [ "svt_brt", "SVT Brt", "Ampeg SVT, Bright channel",
+    3, [ tri(0.8, 40.0, 14000.0, 0.8, 200.0), tri(7.0, 8.0, 13000.0), tri(2.0, 8.0, 11000.0), noStage ],
+    1, 40.0, 1500.0, 2, toneEq, 0, eqSvt, midNormal, 0,
+    1.8, 2.5, 1.0, 3000.0, 5.0, 0.95, 0.12, 22.0, 9000.0, 50.0, 2.0,
+    [ 50, 55, 50, 50, 35, 50, 100, 30, 50, 50, 40 ] ],
+  // Gallien-Krueger 800RB: solid state with an active four-band EQ: fast, clean, a slightly forward top.
+  [ "g_cougar_800", "G Cougar 800", "Gallien-Krueger 800RB",
+    2, [ ss(0.8, 20.0, 18000.0), ss(6.0, 15.0, 16000.0, 0.75, 1500.0), noStage, noStage ],
+    1, 40.0, 0.0, 1, toneEq, 0, eqGk, midNormal, 0,
+    2.2, 3.0, 1.5, 4000.0, 5.0, 1.0, 0.03, 20.0, 16000.0, 50.0, 0.5,
+    [ 45, 55, 45, 55, 40, 50, 100, 10, 30, 50, 20 ] ],
+];
+
+// output level calibration per amp, in dB: [full amp, Pre model]
+const TRIMS = [
+  [ -7.2, 3.5 ], [ -10.7, 1.1 ], [ -9.2, 1.8 ], [ -10.9, 7.4 ], [ -4.1, 6.9 ], [ -12.5, 8.1 ], [ -13.1, 5.3 ], [ -10.8, 9.2 ], [ -12.4, 6.3 ], [ -14.3, 5.8 ],
+  [ -7.8, 6.1 ], [ -6.9, 7.5 ], [ -12.5, 5.4 ], [ -13.7, 5.5 ], [ -13.4, 2.7 ], [ -17.5, 7.5 ], [ -18.8, 1.5 ], [ -17.6, 6.6 ], [ -19.3, 1.1 ], [ -25.6, 4.8 ],
+  [ -27.0, 4.1 ], [ -25.9, 3.0 ], [ -27.7, 4.1 ], [ -27.3, 2.9 ], [ -0.9, 2.6 ], [ -20.1, 3.5 ], [ -28.1, 3.8 ], [ -19.7, 1.9 ], [ -27.0, 3.2 ], [ 2.9, 6.5 ],
+  [ -28.1, 3.6 ], [ -20.7, 4.5 ], [ -26.8, 5.2 ], [ -27.6, 3.8 ], [ -26.0, 3.9 ], [ -13.4, -5.3 ], [ -28.2, 3.5 ], [ -27.2, 3.4 ], [ -19.5, 3.3 ], [ -27.5, 3.5 ],
+  [ 2.5, 5.9 ], [ -10.5, 7.7 ], [ -16.1, 7.9 ], [ -4.0, 8.8 ], [ -5.3, 8.5 ], [ -12.9, 3.7 ], [ 0.4, 5.8 ], [ -5.1, 4.9 ], [ -9.4, 4.1 ], [ 2.9, 6.8 ],
+].map((r) => Float32Array.from(r));
+// </tables>
+
+const SPECS = SPEC_ROWS.map((r) => ({
+  key: r[0], name: r[1], basedOn: r[2], numStages: r[3], stage: r[4], drivePos: r[5], driveRangeDb: f32(r[6]), brightHz: f32(r[7]),
+  tonePos: r[8], toneType: r[9], stack: r[10], eq: r[11], midMode: r[12], flags: r[13], paDrive: f32(r[14]), piLimit: f32(r[15]),
+  feedback: f32(r[16]), presenceHz: f32(r[17]), presenceDb: f32(r[18]), match: f32(r[19]), sagDepth: f32(r[20]), lowHz: f32(r[21]),
+  highHz: f32(r[22]), resHz: f32(r[23]), resDb: f32(r[24]), def: r[25],
+}));
+const NUM_AMPS = SPECS.length;
+const POWER_AMP_NAMES = ["On", "Off (Pre)"];
+
+// The passive stack's H(s) = (b1 s + b2 s^2 + b3 s^3) / (1 + a1 s + a2 s^2 + a3 s^3) for the pot positions t, m, l
+function fmvAnalog(k, t, m, l, b, a) {
+  const R1 = k[0] * 1.0e3, R2 = k[1] * 1.0e3, R3 = k[2] * 1.0e3, R4 = k[3] * 1.0e3;
+  const C1 = k[4] * 1.0e-9, C2 = k[5] * 1.0e-9, C3 = k[6] * 1.0e-9;
+  b[0] = 0;
+  b[1] = t*C1*R1 + m*C3*R3 + l*(C1*R2 + C2*R2) + (C1*R3 + C2*R3);
+  b[2] = t*(C1*C2*R1*R4 + C1*C3*R1*R4) - m*m*(C1*C3*R3*R3 + C2*C3*R3*R3) + m*(C1*C3*R1*R3 + C1*C3*R3*R3 + C2*C3*R3*R3)
+       + l*(C1*C2*R1*R2 + C1*C2*R2*R4 + C1*C3*R2*R4) + l*m*(C1*C3*R2*R3 + C2*C3*R2*R3) + (C1*C2*R1*R3 + C1*C2*R3*R4 + C1*C3*R3*R4);
+  b[3] = l*m*(C1*C2*C3*R1*R2*R3 + C1*C2*C3*R2*R3*R4) - m*m*(C1*C2*C3*R1*R3*R3 + C1*C2*C3*R3*R3*R4)
+       + m*(C1*C2*C3*R1*R3*R3 + C1*C2*C3*R3*R3*R4) + t*C1*C2*C3*R1*R3*R4 - t*m*C1*C2*C3*R1*R3*R4 + t*l*C1*C2*C3*R1*R2*R4;
+  a[0] = 1;
+  a[1] = (C1*R1 + C1*R3 + C2*R3 + C2*R4 + C3*R4) + m*C3*R3 + l*(C1*R2 + C2*R2);
+  a[2] = m*(C1*C3*R1*R3 - C2*C3*R3*R4 + C1*C3*R3*R3 + C2*C3*R3*R3) + l*m*(C1*C3*R2*R3 + C2*C3*R2*R3) - m*m*(C1*C3*R3*R3 + C2*C3*R3*R3)
+       + l*(C1*C2*R2*R4 + C1*C2*R1*R2 + C1*C3*R2*R4 + C2*C3*R2*R4)
+       + (C1*C2*R1*R4 + C1*C3*R1*R4 + C1*C2*R3*R4 + C1*C2*R1*R3 + C1*C3*R3*R4 + C2*C3*R3*R4);
+  a[3] = l*m*(C1*C2*C3*R1*R2*R3 + C1*C2*C3*R2*R3*R4) - m*m*(C1*C2*C3*R1*R3*R3 + C1*C2*C3*R3*R3*R4)
+       + m*(C1*C2*C3*R3*R3*R4 + C1*C2*C3*R1*R3*R3 - C1*C2*C3*R1*R3*R4) + l*C1*C2*C3*R1*R2*R4 + C1*C2*C3*R1*R3*R4;
+}
+
+function fmvMagnitude(b, a, hz) {
+  const w = 2 * PI * hz;
+  const nr = -b[2] * w * w, ni = b[1] * w - b[3] * w * w * w;
+  const dr = a[0] - a[2] * w * w, di = a[1] * w - a[3] * w * w * w;
+  return Math.sqrt((nr * nr + ni * ni) / (dr * dr + di * di));
+}
+
+// The same stack as a state-space system on its three capacitor voltages, discretised with the trapezoidal rule:
+//   x[n+1] = P x[n] + Q (u[n] + u[n+1]),   y[n] = C x[n] + D u[n]      (C[3] = D)
+// Its state means the same thing whatever the pot positions, so turning a knob neither clicks nor zippers.
+function fmvStateSpace(k, t, m, l, fs, gain, P, Q, C) {
+  const C1 = k[4] * 1.0e-9, C2 = k[5] * 1.0e-9, C3 = k[6] * 1.0e-9;
+  const G1 = 1 / (k[0] * 1.0e3), G4 = 1 / (k[3] * 1.0e3), G3 = 1 / (m * k[2] * 1.0e3);
+  const Gs = 1 / (l * k[1] * 1.0e3 + (1 - m) * k[2] * 1.0e3); // bass pot in series with the top of the middle pot
+
+  // the voltage at the slope resistor's far end: vB = bu u + b1 x1 + b2 x2 + b3 x3
+  const Gt = G1 + G4 + G3, bu = (G4 + G1) / Gt, b1 = -G1 / Gt, b2 = G1 / Gt, b3 = G3 / Gt;
+  // x' = A x + B u
+  const A0 = (G1 * (-1 - b1)) / C1, A1 = (G1 * (1 - b2)) / C1, A2 = (-G1 * b3) / C1;
+  const A3 = (-G1 * (-1 - b1)) / C2, A4 = (-Gs - G1 * (1 - b2)) / C2, A5 = (Gs + G1 * b3) / C2;
+  const A6 = (G3 * b1) / C3, A7 = (G3 * b2 + Gs) / C3, A8 = (G3 * (b3 - 1) - Gs) / C3;
+  const B0 = (G1 * (1 - bu)) / C1, B1 = (-G1 * (1 - bu)) / C2, B2 = (G3 * bu) / C3;
+
+  // P = (I - h A)^-1 (I + h A), Q = (I - h A)^-1 h B with h = T / 2
+  const h = 0.5 / fs;
+  const M0 = -h * A0 + 1, M1 = -h * A1, M2 = -h * A2, M3 = -h * A3, M4 = -h * A4 + 1, M5 = -h * A5, M6 = -h * A6, M7 = -h * A7, M8 = -h * A8 + 1;
+  const N0 = h * A0 + 1, N1 = h * A1, N2 = h * A2, N3 = h * A3, N4 = h * A4 + 1, N5 = h * A5, N6 = h * A6, N7 = h * A7, N8 = h * A8 + 1;
+
+  const c00 = M4 * M8 - M5 * M7, c01 = M5 * M6 - M3 * M8, c02 = M3 * M7 - M4 * M6;
+  const id = 1 / (M0 * c00 + M1 * c01 + M2 * c02);
+  const i0 = c00 * id, i1 = (M2 * M7 - M1 * M8) * id, i2 = (M1 * M5 - M2 * M4) * id;
+  const i3 = c01 * id, i4 = (M0 * M8 - M2 * M6) * id, i5 = (M2 * M3 - M0 * M5) * id;
+  const i6 = c02 * id, i7 = (M1 * M6 - M0 * M7) * id, i8 = (M0 * M4 - M1 * M3) * id;
+  P[0] = i0 * N0 + i1 * N3 + i2 * N6; P[1] = i0 * N1 + i1 * N4 + i2 * N7; P[2] = i0 * N2 + i1 * N5 + i2 * N8;
+  Q[0] = h * (i0 * B0 + i1 * B1 + i2 * B2);
+  P[3] = i3 * N0 + i4 * N3 + i5 * N6; P[4] = i3 * N1 + i4 * N4 + i5 * N7; P[5] = i3 * N2 + i4 * N5 + i5 * N8;
+  Q[1] = h * (i3 * B0 + i4 * B1 + i5 * B2);
+  P[6] = i6 * N0 + i7 * N3 + i8 * N6; P[7] = i6 * N1 + i7 * N4 + i8 * N7; P[8] = i6 * N2 + i7 * N5 + i8 * N8;
+  Q[2] = h * (i6 * B0 + i7 * B1 + i8 * B2);
+
+  // the treble pot's wiper, between the C1 end (u - x1) and the bass end (vB - x2)
+  C[0] = gain * ((1 - t) * b1 - t);
+  C[1] = gain * (1 - t) * (b2 - 1);
+  C[2] = gain * (1 - t) * b3;
+  C[3] = gain * ((1 - t) * bu + t);
+}
+
+// pot tapers: bass (log, about 17 % at noon) and middle (linear); neither ever quite reaches 0 ohms
+const bassTaper = (x) => 0.01 + 0.99 * x * x * (0.4 + 0.6 * x);
+const midTaper = (x) => 0.02 + 0.98 * x;
+
+// Trapezoidal state-variable filter (A. Simper's form): c = [a1, a2, a3, m0, m1, m2] for
+//   v3 = x - ic2;  v1 = a1 ic1 + a2 v3;  v2 = ic2 + a2 ic1 + a3 v3;  ic1 = 2 v1 - ic1;  ic2 = 2 v2 - ic2;  y = m0 x + m1 v1 + m2 v2
+function svfSet(c, g, k, m0, m1, m2) {
+  c[0] = 1 / (1 + g * (g + k));
+  c[1] = g * c[0];
+  c[2] = g * c[1];
+  c[3] = m0;
+  c[4] = m1;
+  c[5] = m2;
+}
+const svfG = (fs, fc) => Math.tan((PI * clamp(fc, 1, 0.45 * fs)) / fs);
+function svfShelf(c, fs, fc, gainDb, high) {
+  const A = Math.pow(10, gainDb / 40), k = 1.4142135623730951;
+  if (high) svfSet(c, svfG(fs, fc) * Math.sqrt(A), k, A * A, k * (1 - A) * A, 1 - A * A);
+  else svfSet(c, svfG(fs, fc) / Math.sqrt(A), k, 1, k * (A - 1), A * A - 1);
+}
+function svfPeak(c, fs, fc, q, gainDb) {
+  const A = Math.pow(10, gainDb / 40), k = 1 / (q * A);
+  svfSet(c, svfG(fs, fc), k, 1, k * (A * A - 1), 0);
+}
+function svfLowPass(c, fs, fc, q) {
+  svfSet(c, svfG(fs, fc), 1 / q, 0, 0, 1);
+}
+
+// RBJ shelf / peak / low-pass / high-pass biquads with double coefficients { b0, b1, b2, a1, a2 } at c[o..o+4],
+// for the fixed output-transformer and speaker-impedance filters
+function eqSet(c, o, b0, b1, b2, a0, a1, a2) {
+  c[o] = b0 / a0; c[o + 1] = b1 / a0; c[o + 2] = b2 / a0; c[o + 3] = a1 / a0; c[o + 4] = a2 / a0;
+}
+function eqShelf(c, o, fs, fc, gainDb, high) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.45 * fs)) / fs, cosw = Math.cos(w0), alpha = Math.sin(w0) / (2 * 0.70710678);
+  const A = Math.pow(10, gainDb / 40), k = 2 * Math.sqrt(A) * alpha, sgn = high ? -1 : 1;
+  eqSet(c, o, A * ((A + 1) - sgn * (A - 1) * cosw + k), sgn * 2 * A * ((A - 1) - sgn * (A + 1) * cosw), A * ((A + 1) - sgn * (A - 1) * cosw - k),
+        (A + 1) + sgn * (A - 1) * cosw + k, -sgn * 2 * ((A - 1) + sgn * (A + 1) * cosw), (A + 1) + sgn * (A - 1) * cosw - k);
+}
+function eqPeak(c, o, fs, fc, q, gainDb) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.45 * fs)) / fs, cosw = Math.cos(w0), alpha = Math.sin(w0) / (2 * q);
+  const A = Math.pow(10, gainDb / 40);
+  eqSet(c, o, 1 + alpha * A, -2 * cosw, 1 - alpha * A, 1 + alpha / A, -2 * cosw, 1 - alpha / A);
+}
+function eqLowPass(c, o, fs, fc, q) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.45 * fs)) / fs, cosw = Math.cos(w0), alpha = Math.sin(w0) / (2 * q);
+  eqSet(c, o, (1 - cosw) * 0.5, 1 - cosw, (1 - cosw) * 0.5, 1 + alpha, -2 * cosw, 1 - alpha);
+}
+
+function eqHighPass(c, o, fs, fc, q) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.45 * fs)) / fs, cosw = Math.cos(w0), alpha = Math.sin(w0) / (2 * q);
+  eqSet(c, o, (1 + cosw) * 0.5, -(1 + cosw), (1 + cosw) * 0.5, 1 + alpha, -2 * cosw, 1 - alpha);
+}
+
+// decaying filter states are cleared before they turn into denormal numbers (JavaScript has no flush-to-zero mode)
+const flush = (v) => (Math.abs(v) < 1.0e-30 ? 0 : v);
+
+function onePoleG(fs, fc) {
+  const g = Math.tan((PI * clamp(fc, 1, 0.45 * fs)) / fs);
+  return g / (1 + g);
+}
+
+// values that ramp linearly across a chunk: the first NUM_FAST ones step every oversampled sample, the rest every base-rate sample
+const R_A = 0, R_AC = 1, R_B = 2, R_MASTER = 3, R_PRE = 4, R_PA = 5, R_PRES = 6, NUM_FAST = 7,
+      R_COMP = 7, R_Q = 8, R_SAG = 9, R_BX = 10, R_BXG = 11, R_HUMU = 12, R_HUMPRE = 13, R_RIP = 14, NUM_RAMPS = 15;
+const NUM_MIX = 9;
+
+class AmpFx {
+  constructor() {
+    this.fs = 48000; this.fsOs = 192000; this.variant = 0; this.dirty = true;
+    this.os = null;
+    this.target = Float32Array.from([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1, 0.5, 0, 0.5, 0.5, 1]);
+    this.cur = new Float32Array(NUM_KNOBS);
+    this.slewPerSample = 0;
+    this.ramp = new Float64Array(NUM_RAMPS); this.rampTarget = new Float64Array(NUM_RAMPS); this.rampStep = new Float64Array(NUM_RAMPS);
+    this.mixC = new Float64Array(NUM_MIX); this.mixT = new Float64Array(NUM_MIX); this.mixStep = new Float64Array(NUM_MIX); // the tone section's output mix
+    // the model
+    this.numStages = 2; this.drivePos = 1; this.tonePos = 1;
+    this.parallel = false; this.toneFmv = true; this.hasCut = false;
+    this.sGain = new Float64Array(MAX_STAGES); this.sBias = new Float64Array(MAX_STAGES); this.sInvP = new Float64Array(MAX_STAGES);
+    this.sInvN = new Float64Array(MAX_STAGES); this.sOff = new Float64Array(MAX_STAGES); this.sNorm = new Float64Array(MAX_STAGES);
+    this.sShelfG = new Float64Array(MAX_STAGES); this.sShelfK = new Float64Array(MAX_STAGES); this.sHpG = new Float64Array(MAX_STAGES);
+    this.sLpG = new Float64Array(MAX_STAGES); this.sSqP = new Float64Array(MAX_STAGES); this.sSqN = new Float64Array(MAX_STAGES);
+    this.idleF = new Float64Array(MAX_STAGES);
+    this.makeup = 1; this.presLin = 1; this.trimLin = 1;
+    this.preLin = 1; this.paDrive = 1; this.piInv = 0.4; this.piLimit = 2.5; this.nfbK = 0; this.mm = 0.9; this.invN = 0.5;
+    this.postC = new Float64Array(20); // output transformer and speaker-impedance filters (base rate)
+    // knob-dependent
+    this.tP = new Float64Array(9); this.tQ = new Float64Array(3); this.eqA = new Float64Array(9);
+    this.brG = 0.5; this.cutG = 0.5; this.presG = 0.5;
+    this.xAtk = 0; this.xRel = 0; this.sAtk = 0; this.sRel = 0;
+    // state (the oversampled path is in double in C++ too)
+    this.stShelf = new Float64Array(MAX_STAGES); this.stHp = new Float64Array(MAX_STAGES); this.stLp = new Float64Array(MAX_STAGES);
+    this.stA = new Float64Array(MAX_STAGES); this.stF = new Float64Array(MAX_STAGES); this.pX = 0; // last tube inputs and antiderivatives
+    this.tz = new Float64Array(4); this.eqZ = new Float64Array(6); this.postZ = new Float64Array(8);
+    this.brS = 0; this.cutS = 0; this.presS = 0; this.envX = 0; this.envS = 0; this.dcS = 0; this.dcG = 0;
+    this.humC = 1; this.humS = 0; this.humCw = 1; this.humSw = 0;
+    this.outGain = new Smoothed(1); this.mixB = new Smoothed(1);
+    this.fb = new Float64Array(4); this.fa = new Float64Array(4); this.sc = new Float64Array(6); // scratch for coefficient maths
+  }
+
+  prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
+    this.fsOs = 4 * sampleRate;
+    this.os = new Oversampler4x(maxBlock);
+    this.slewPerSample = f32(1 / (0.05 * this.fs));
+    this.xAtk = 1 - Math.exp(-1 / (0.003 * this.fsOs)); // bias excursion: the coupling caps charge fast...
+    this.xRel = 1 - Math.exp(-1 / (0.060 * this.fsOs)); // ...and recover slowly
+    this.sAtk = 1 - Math.exp(-1 / (0.012 * this.fsOs)); // supply sag
+    this.sRel = 1 - Math.exp(-1 / (0.160 * this.fsOs));
+    this.humCw = Math.cos((2 * PI * 60) / this.fs);
+    this.humSw = Math.sin((2 * PI * 60) / this.fs);
+    this.dcG = 1 - Math.exp((-2 * PI * 7) / this.fs);
+    this.outGain.reset(this.fs, 0.05);
+    this.mixB.reset(this.fs, 0.05);
+    this.reset();
+  }
+
+  reset() {
+    this.configure();
+    this.cur.set(this.target);
+    this.updateChunk(CHUNK, true);
+    this.outGain.setCurrentAndTarget(this.outGain.target);
+    this.mixB.setCurrentAndTarget(this.mixB.target);
+    this.stShelf.fill(0); this.stHp.fill(0); this.stLp.fill(0);
+    this.stA.set(this.sBias);
+    this.stF.set(this.idleF);
+    this.tz.fill(0); this.eqZ.fill(0); this.postZ.fill(0);
+    this.brS = this.cutS = this.presS = this.envX = this.envS = this.pX = this.dcS = 0;
+    this.humC = 1;
+    this.humS = 0;
+    if (this.os) this.os.reset();
+    this.dirty = false;
+  }
+
+  setModel(variant) {
+    variant = clamp(variant | 0, 0, NUM_AMPS - 1);
+    this.dirty = this.dirty || variant !== this.variant;
+    this.variant = variant;
+  }
+
+  /** Drive, Bass, Mid, Treble, Presence, Ch Vol, Master, Sag, Hum, Bias, Bias X [%], Power Amp (0 = On, 1 = Off). */
+  setParameters(k) {
+    const t = this.target;
+    for (let i = 0; i < NUM_KNOBS - 1; ++i) t[i] = clamp(f32(f32(k[i]) * f32(0.01)), 0, 1);
+    t[11] = k[11] < 0.5 ? 1 : 0;
+  }
+
+  process(left, right, n) {
+    if (this.dirty) this.reset(); // a model was picked without the reset() that should follow it
+
+    for (let i = 0; i < n; ++i) left[i] = 0.5 * (left[i] + right[i]);
+
+    const x = this.os.up(left, n);
+    for (let pos = 0; pos < n; pos += CHUNK) {
+      const len = Math.min(CHUNK, n - pos);
+      this.updateChunk(len, false);
+      this.processChunk(x, 4 * pos, len);
+    }
+    this.os.down(left, n);
+
+    // base rate: output transformer and speaker-impedance response (full amp only), a DC blocker at 7 Hz
+    // (lopsided waves leave a little DC in the Pre model's line stage), then Ch Vol
+    const c = this.postC, postZ = this.postZ, mixB = this.mixB, outGain = this.outGain;
+    let dcState = this.dcS;
+    const dcCoeff = this.dcG;
+    let p0 = postZ[0], p1 = postZ[1], p2 = postZ[2], p3 = postZ[3], p4 = postZ[4], p5 = postZ[5], p6 = postZ[6], p7 = postZ[7];
+    for (let i = 0; i < n; ++i) {
+      let z = left[i];
+      let y = c[0] * z + p0;       // transformer low end
+      p0 = c[1] * z - c[3] * y + p1;
+      p1 = c[2] * z - c[4] * y;
+      let w = c[5] * y + p2;       // transformer top end
+      p2 = c[6] * y - c[8] * w + p3;
+      p3 = c[7] * y - c[9] * w;
+      y = c[10] * w + p4;          // speaker resonance
+      p4 = c[11] * w - c[13] * y + p5;
+      p5 = c[12] * w - c[14] * y;
+      w = c[15] * y + p6;          // the voice coil's rising impedance
+      p6 = c[16] * y - c[18] * w + p7;
+      p7 = c[17] * y - c[19] * w;
+      z += mixB.next() * (w - z);
+      dcState += (z - dcState) * dcCoeff;
+      z = (z - dcState) * outGain.next();
+      if (Math.abs(z) > 2) { // protection far above any normal level: whatever the knobs, the output stays below 4
+        const over = Math.abs(z) - 2, limited = 2 + over / (1 + 0.5 * over);
+        z = z > 0 ? limited : -limited;
+      }
+      left[i] = z;
+      right[i] = z;
+    }
+    postZ[0] = flush(p0); postZ[1] = flush(p1); postZ[2] = flush(p2); postZ[3] = flush(p3);
+    postZ[4] = flush(p4); postZ[5] = flush(p5); postZ[6] = flush(p6); postZ[7] = flush(p7);
+    this.dcS = flush(dcState);
+  }
+
+  /** Everything that depends only on the model and the sample rate. */
+  configure() {
+    const sp = SPECS[this.variant], fsOs = this.fsOs;
+    this.numStages = sp.numStages;
+    this.drivePos = sp.drivePos;
+    this.tonePos = sp.tonePos;
+    this.parallel = (sp.flags & flagParallel) !== 0;
+    this.toneFmv = sp.toneType === toneStack;
+    this.hasCut = sp.midMode === midCut || sp.midMode === midDivide;
+
+    let polarity = 1;
+    for (let s = 0; s < MAX_STAGES; ++s) {
+      const st = s < this.numStages ? sp.stage[s] : noStage; // [gain, bias, limPos, limNeg, pol, hpHz, lpHz, shelfK, shelfHz]
+      this.sGain[s] = st[0];
+      this.sBias[s] = st[1];
+      this.sInvP[s] = 1 / st[2];
+      this.sInvN[s] = 1 / st[3];
+      this.sSqP[s] = st[2] * st[2];
+      this.sSqN[s] = st[3] * st[3];
+      const w = this.sBias[s] * (this.sBias[s] >= 0 ? this.sInvP[s] : this.sInvN[s]), root = Math.sqrt(1 + w * w);
+      this.sOff[s] = this.sBias[s] / root; // exactly what the stage gives with no signal
+      this.sNorm[s] = st[4] * root * root * root;
+      this.idleF[s] = (this.sBias[s] >= 0 ? this.sSqP[s] : this.sSqN[s]) * (root - 1);
+      this.sShelfG[s] = onePoleG(fsOs, st[8]);
+      this.sShelfK[s] = 1 - st[7];
+      this.sHpG[s] = onePoleG(fsOs, st[5]);
+      this.sLpG[s] = onePoleG(fsOs, st[6]);
+      if (s < this.numStages && !(this.parallel && s === 1)) polarity *= st[4];
+    }
+
+    this.makeup = 1;
+    if (this.toneFmv) {
+      fmvAnalog(STACKS[sp.stack], 0.5, sp.midMode === midCut ? 1 : midTaper(0.5), bassTaper(0.5), this.fb, this.fa);
+      this.makeup = 0.5 / fmvMagnitude(this.fb, this.fa, 1000); // the stack's loss is made up by the stage after it
+    }
+
+    this.piLimit = sp.piLimit;
+    this.piInv = 1 / sp.piLimit;
+    this.nfbK = sp.feedback;
+    this.mm = sp.match;
+    this.invN = 1 / (1 + sp.match);
+    this.presLin = Math.pow(10, sp.presenceDb / 20) - 1;
+    this.trimLin = Math.pow(10, TRIMS[this.variant][0] / 20);
+    this.preLin = polarity * Math.pow(10, TRIMS[this.variant][1] / 20);
+    this.paDrive = polarity * sp.paDrive;
+
+    eqHighPass(this.postC, 0, this.fs, sp.lowHz, 0.7071);
+    eqLowPass(this.postC, 5, this.fs, sp.highHz, 0.7071);
+    eqPeak(this.postC, 10, this.fs, sp.resHz, 1.2, sp.resDb);
+    eqShelf(this.postC, 15, this.fs, 4500, 0.5 * sp.resDb, true);
+  }
+
+  /** Moves the knobs towards their targets (50 ms for the full travel) and recomputes what depends on them. */
+  updateChunk(len, force) {
+    const step = f32(len * this.slewPerSample), cur = this.cur, target = this.target;
+    let changed = force ? 0xfff : 0;
+    for (let i = 0; i < NUM_KNOBS; ++i) {
+      const d = f32(target[i] - cur[i]);
+      if (d !== 0) {
+        cur[i] = Math.abs(d) <= step ? target[i] : cur[i] + (d > 0 ? step : -step);
+        changed |= 1 << i;
+      }
+    }
+
+    if (changed !== 0) this.derive(changed);
+
+    const perBase = 1 / len, perOver = 0.25 * perBase;
+    const ramp = this.ramp, rampTarget = this.rampTarget, rampStep = this.rampStep;
+    for (let r = 0; r < NUM_RAMPS; ++r) {
+      if (force) ramp[r] = rampTarget[r];
+      rampStep[r] = (rampTarget[r] - ramp[r]) * (r < NUM_FAST ? perOver : perBase);
+    }
+    const mixC = this.mixC, mixT = this.mixT, mixStep = this.mixStep;
+    for (let i = 0; i < NUM_MIX; ++i) {
+      if (force) mixC[i] = mixT[i];
+      mixStep[i] = (mixT[i] - mixC[i]) * perOver;
+    }
+  }
+
+  derive(changed) {
+    const sp = SPECS[this.variant], cur = this.cur, fsOs = this.fsOs, rampTarget = this.rampTarget;
+    const bass = cur[1], mid = cur[2], treble = cur[3];
+
+    if ((changed & 0x003) !== 0) { // Drive: the volume / gain pot, with its bright cap
+      const alpha = Math.pow(10, (-sp.driveRangeDb * (1 - cur[0])) / 20);
+      if (sp.brightHz > 0) {
+        // H = alpha + (1 - alpha) * highpass at brightHz / (alpha (1 - alpha)): full treble, the rest turned down
+        rampTarget[R_A] = 1;
+        rampTarget[R_AC] = 1 - alpha;
+        this.brG = onePoleG(fsOs, sp.brightHz / (alpha * (1 - alpha) + 1.0e-4));
+      } else {
+        rampTarget[R_A] = alpha;
+        rampTarget[R_AC] = 0;
+      }
+      rampTarget[R_B] = sp.midMode === midDivide ? Math.pow(10, (-sp.driveRangeDb * (1 - bass)) / 20) : 1;
+    }
+
+    if ((changed & 0x00e) !== 0) { // Bass, Mid, Treble
+      const mixT = this.mixT;
+      if (this.toneFmv) {
+        fmvStateSpace(STACKS[sp.stack], treble, sp.midMode === midCut ? 1 : midTaper(mid), bassTaper(bass), fsOs, this.makeup, this.tP, this.tQ, mixT);
+      } else {
+        const e = EQS[sp.eq], c = this.sc, eqA = this.eqA; // e: [bassHz, bassDb, midHz, midQ, midDb, trebleHz, trebleDb]
+        svfShelf(c, fsOs, e[0], (bass - 0.5) * 2 * e[1], false);
+        eqA[0] = c[0]; eqA[1] = c[1]; eqA[2] = c[2]; mixT[0] = c[3]; mixT[1] = c[4]; mixT[2] = c[5];
+        if (sp.midMode === midTone || sp.midMode === midDivide) svfLowPass(c, fsOs, 700 * Math.pow(20, mid), 0.7071);
+        else svfPeak(c, fsOs, e[2], e[3], (mid - 0.5) * 2 * e[4]);
+        eqA[3] = c[0]; eqA[4] = c[1]; eqA[5] = c[2]; mixT[3] = c[3]; mixT[4] = c[4]; mixT[5] = c[5];
+        svfShelf(c, fsOs, e[5], (treble - 0.5) * 2 * e[6], true);
+        eqA[6] = c[0]; eqA[7] = c[1]; eqA[8] = c[2]; mixT[6] = c[3]; mixT[7] = c[4]; mixT[8] = c[5];
+      }
+
+      if (this.hasCut) this.cutG = onePoleG(fsOs, 900 * Math.pow(28, sp.midMode === midCut ? mid : treble));
+    }
+
+    if ((changed & 0x014) !== 0) { // Presence (its corner follows Mid on the Elektrik)
+      rampTarget[R_PRES] = cur[4] * this.presLin;
+      this.presG = onePoleG(fsOs, sp.presenceHz * ((sp.flags & flagInteract) !== 0 ? 1.6 - 1.2 * mid : 1));
+    }
+
+    if ((changed & 0x020) !== 0) // Ch Vol: 50 % = the calibrated level, 100 % = +9.5 dB
+      this.outGain.setTarget(f32(this.trimLin * Math.pow(2 * cur[5], 1.585)));
+
+    if ((changed & 0x940) !== 0) { // Master, Power Amp, Hum
+      const cutDb = 36 * Math.pow(1 - cur[6], 1.2), giveBack = Math.pow(10, (0.55 * cutDb) / 20), on = cur[11];
+      rampTarget[R_MASTER] = this.paDrive * Math.pow(10, -cutDb / 20);
+      rampTarget[R_PA] = on * giveBack; // part of the level lost by turning Master down is given back
+      rampTarget[R_PRE] = 1 - on;
+      this.mixB.setTarget(cur[11]);
+
+      const hum = 0.0012 * cur[8] * cur[8]; // at the output, before Ch Vol
+      rampTarget[R_HUMU] = hum / (giveBack * this.trimLin);
+      rampTarget[R_HUMPRE] = hum / this.trimLin;
+      rampTarget[R_RIP] = 0.04 * cur[8] * cur[8];
+    }
+
+    if ((changed & 0x080) !== 0) rampTarget[R_SAG] = Math.min(0.8, 2 * cur[7] * sp.sagDepth);
+
+    if ((changed & 0x200) !== 0) { // Bias: the output tubes' idle point, from cold (crossover notch) to class A
+      let q = -1.15 + 1.15 * cur[9];
+      if (q < -0.575) q = -0.575 + (q + 0.575) / (1 + 0.5 * sp.feedback); // feedback straightens part of the crossover notch
+      const qc = Math.max(q, -0.6);
+      rampTarget[R_Q] = q;
+      rampTarget[R_COMP] = Math.pow(1 + qc * qc, 1.5); // unit gain for small signals, down to the ideal class AB point
+    }
+
+    if ((changed & 0x400) !== 0) { // Bias X: how far hard drive pushes the idle point colder, and how much gain that costs
+      rampTarget[R_BX] = (0.8 * cur[10]) / (1 + sp.feedback);
+      rampTarget[R_BXG] = 0.7 * cur[10];
+    }
+  }
+
+  /** `len` base-rate samples = 4 * len oversampled ones of x from `offset`, in place: preamp stages, tone stack, power amp. */
+  processChunk(x, offset, len) {
+    const nSt = this.numStages, dPos = this.drivePos, tPos = this.tonePos;
+    const par = this.parallel, fmv = this.toneFmv, cut = this.hasCut;
+    const ramp = this.ramp, rampTarget = this.rampTarget, rampStep = this.rampStep;
+    const paActive = ramp[R_PA] !== 0 || rampTarget[R_PA] !== 0;
+    const preActive = ramp[R_PRE] !== 0 || rampTarget[R_PRE] !== 0;
+
+    let gA = ramp[R_A], gAc = ramp[R_AC], gB = ramp[R_B], gMaster = ramp[R_MASTER], gPre = ramp[R_PRE], gPa = ramp[R_PA], pGain = ramp[R_PRES];
+    const dA = rampStep[R_A], dAc = rampStep[R_AC], dB = rampStep[R_B], dMaster = rampStep[R_MASTER], dPre = rampStep[R_PRE],
+          dPa = rampStep[R_PA], dPres = rampStep[R_PRES];
+    let cmp = ramp[R_COMP], qIdle = ramp[R_Q], sag = ramp[R_SAG], bxK = ramp[R_BX], bxG = ramp[R_BXG], hU = ramp[R_HUMU], hPre = ramp[R_HUMPRE], hRip = ramp[R_RIP];
+    const dCmp = rampStep[R_COMP], dQ = rampStep[R_Q], dSag = rampStep[R_SAG], dBxK = rampStep[R_BX], dBxG = rampStep[R_BXG],
+          dHU = rampStep[R_HUMU], dHPre = rampStep[R_HUMPRE], dHRip = rampStep[R_RIP];
+
+    const shelfS = this.stShelf, hpS = this.stHp, lpS = this.stLp, tubeA = this.stA, tubeF = this.stF;
+    const sGain = this.sGain, sBias = this.sBias, sInvP = this.sInvP, sInvN = this.sInvN, sOff = this.sOff, sNorm = this.sNorm,
+          sShelfG = this.sShelfG, sShelfK = this.sShelfK, sHpG = this.sHpG, sLpG = this.sLpG, sSqP = this.sSqP, sSqN = this.sSqN;
+
+    // tone stack (state-space) or the three-band EQ (state-variable filters), and their output mixes
+    const tP = this.tP, tQ = this.tQ, tz = this.tz, eqA = this.eqA, eqZ = this.eqZ, mixC = this.mixC, mixT = this.mixT, mixStep = this.mixStep;
+    const P0 = tP[0], P1 = tP[1], P2 = tP[2], P3 = tP[3], P4 = tP[4], P5 = tP[5], P6 = tP[6], P7 = tP[7], P8 = tP[8];
+    const Q0 = tQ[0], Q1 = tQ[1], Q2 = tQ[2];
+    let z0 = tz[0], z1 = tz[1], z2 = tz[2], zu = tz[3];
+    const A0 = eqA[0], A1 = eqA[1], A2 = eqA[2], A3 = eqA[3], A4 = eqA[4], A5 = eqA[5], A6 = eqA[6], A7 = eqA[7], A8 = eqA[8];
+    let e0 = eqZ[0], e1 = eqZ[1], e2 = eqZ[2], e3 = eqZ[3], e4 = eqZ[4], e5 = eqZ[5];
+    let k0 = mixC[0], k1 = mixC[1], k2 = mixC[2], k3 = mixC[3], k4 = mixC[4], k5 = mixC[5], k6 = mixC[6], k7 = mixC[7], k8 = mixC[8];
+    const dk0 = mixStep[0], dk1 = mixStep[1], dk2 = mixStep[2], dk3 = mixStep[3], dk4 = mixStep[4], dk5 = mixStep[5],
+          dk6 = mixStep[6], dk7 = mixStep[7], dk8 = mixStep[8];
+
+    let bs = this.brS, cs = this.cutS, ps = this.presS, ex = this.envX, es = this.envS, px = this.pX;
+    const bG = this.brG, cG = this.cutG, pG = this.presG, pLin = this.preLin, pInv = this.piInv, pLimit = this.piLimit;
+    const fb = this.nfbK, match = this.mm, norm = this.invN;
+    const xAtk = this.xAtk, xRel = this.xRel, sAtk = this.sAtk, sRel = this.sRel;
+    let hc = this.humC, hs = this.humS;
+    const hcw = this.humCw, hsw = this.humSw;
+    let p = offset;
+
+    for (let i = 0; i < len; ++i) {
+      // heater hum (60 Hz and its 3rd harmonic) and supply ripple (120 Hz): one value per base-rate sample
+      const nc = hc * hcw - hs * hsw, ns = hs * hcw + hc * hsw;
+      hc = nc;
+      hs = ns;
+      const heater = ns + 0.35 * ns * (3 - 4 * ns * ns);
+      const humIn = hU * heater, humOut = hPre * heater;
+
+      // the output tubes' idle point: driven hard, the grids charge the coupling caps and the bias goes colder,
+      // which opens a crossover notch and takes gain away (Bias X)
+      const q = qIdle - bxK * ex;
+      const rq = q / Math.sqrt(1 + q * q), dcq = (rq - match * rq) * norm; // what the tubes give with no signal
+      const normC = norm / cmp;
+      const gx = 1 / (1 + bxG * ex), supply = (1 - hRip * (2 * ns * nc)) * gx, sagG = sag * gx;
+      // the tubes' antiderivative at the last sample, for this idle point
+      const pc = cmp * px, pa1 = q + pc, pa2 = q - pc;
+      let pF = (Math.sqrt(1 + pa1 * pa1) + match * Math.sqrt(1 + pa2 * pa2)) * normC - dcq * px;
+
+      for (let j = 0; j < 4; ++j) {
+        let v = x[p];
+        const in0 = v;
+        let acc = 0;
+
+        for (let s = 0; ; ++s) {
+          if (s === tPos) {
+            if (fmv) { // tone stack: x = the three capacitor voltages
+              const us = zu + v;
+              const n0 = P0 * z0 + P1 * z1 + P2 * z2 + Q0 * us;
+              const n1 = P3 * z0 + P4 * z1 + P5 * z2 + Q1 * us;
+              const n2 = P6 * z0 + P7 * z1 + P8 * z2 + Q2 * us;
+              z0 = n0; z1 = n1; z2 = n2; zu = v;
+              v = k0 * z0 + k1 * z1 + k2 * z2 + k3 * v;
+              k0 += dk0; k1 += dk1; k2 += dk2; k3 += dk3;
+            } else { // bass shelf, mid peak (or Tone low-pass), treble shelf
+              let v3 = v - e1, v1 = A0 * e0 + A1 * v3, v2 = e1 + A1 * e0 + A2 * v3;
+              e0 = 2 * v1 - e0;
+              e1 = 2 * v2 - e1;
+              const y = k0 * v + k1 * v1 + k2 * v2;
+              v3 = y - e3; v1 = A3 * e2 + A4 * v3; v2 = e3 + A4 * e2 + A5 * v3;
+              e2 = 2 * v1 - e2;
+              e3 = 2 * v2 - e3;
+              const w = k3 * y + k4 * v1 + k5 * v2;
+              v3 = w - e5; v1 = A6 * e4 + A7 * v3; v2 = e5 + A7 * e4 + A8 * v3;
+              e4 = 2 * v1 - e4;
+              e5 = 2 * v2 - e5;
+              v = k6 * w + k7 * v1 + k8 * v2;
+              k0 += dk0; k1 += dk1; k2 += dk2; k3 += dk3; k4 += dk4; k5 += dk5; k6 += dk6; k7 += dk7; k8 += dk8;
+            }
+          }
+
+          if (s === nSt) break;
+
+          if (s === dPos) { // the volume / gain pot and its bright cap
+            const t = (v - bs) * bG, lp = t + bs;
+            bs = lp + t;
+            v = v * gA - lp * gAc;
+          } else if (par && s === 1) { // the second channel takes the input too
+            acc = v;
+            v = in0 * gB;
+          }
+
+          // cathode / treble-peaking shelf
+          let t, lp;
+          if (sShelfK[s] !== 0) {
+            t = (v - shelfS[s]) * sShelfG[s];
+            lp = t + shelfS[s];
+            shelfS[s] = lp + t;
+            v -= sShelfK[s] * lp;
+          }
+
+          // the tube, anti-aliased: the mean of its curve between the last sample and this one, which is
+          // the difference quotient of the curve's antiderivative F = lim^2 (sqrt (1 + (a / lim)^2) - 1)
+          const a = v * sGain[s] + sBias[s];
+          const w = a * (a >= 0 ? sInvP[s] : sInvN[s]);
+          const F = (a >= 0 ? sSqP[s] : sSqN[s]) * (Math.sqrt(1 + w * w) - 1);
+          const da = a - tubeA[s];
+          let y;
+          if (Math.abs(da) > 1.0e-6) {
+            y = (F - tubeF[s]) / da;
+          } else {
+            const am = 0.5 * (a + tubeA[s]), wm = am * (am >= 0 ? sInvP[s] : sInvN[s]);
+            y = am / Math.sqrt(1 + wm * wm);
+          }
+          tubeA[s] = a;
+          tubeF[s] = F;
+          y = (y - sOff[s]) * sNorm[s];
+
+          // coupling capacitor, then the stage's treble roll-off
+          t = (y - hpS[s]) * sHpG[s];
+          lp = t + hpS[s];
+          hpS[s] = lp + t;
+          y -= lp;
+          t = (y - lpS[s]) * sLpG[s];
+          lp = t + lpS[s];
+          lpS[s] = lp + t;
+          v = lp;
+
+          if (par && s === 1) v += acc;
+        }
+
+        if (cut) { // Vox-style Cut
+          const t = (v - cs) * cG, lp = t + cs;
+          cs = lp + t;
+          v = lp;
+        }
+
+        { // Presence: less feedback at high frequencies = a treble shelf in front of the output tubes
+          const t = (v - ps) * pG, lp = t + ps;
+          ps = lp + t;
+          v += pGain * (v - lp);
+        }
+
+        let o = 0;
+        if (preActive) { // the "Pre" model: the preamp's output through a line stage with plenty of headroom
+          const w = v * 0.3333333333333333;
+          o = ((v / Math.sqrt(1 + w * w)) * pLin + humOut) * gPre;
+        }
+
+        if (paActive) {
+          // Master, then the phase inverter (soft, symmetrical, reaches its limit at twice that drive)
+          let u = v * gMaster * pInv;
+          u = u > 2 ? 2 : (u < -2 ? -2 : u);
+          u = (u - 0.25 * u * Math.abs(u)) * pLimit + humIn;
+
+          let e = Math.abs(u) - 1;
+          e = e < 0 ? 0 : (e > 1.5 ? 1.5 : e);
+          ex += (e - ex) * (e > ex ? xAtk : xRel);
+
+          // negative feedback: about what the output tubes fail to deliver (nothing up to half their swing, all
+          // of it beyond clipping) is added to their drive: a straighter curve with a sharper knee
+          let d = Math.abs(u) - 0.5;
+          d = d <= 0 ? 0 : (d < 0.7 ? d * d * 0.7142857142857143 : d - 0.35);
+          const xp = u + (u >= 0 ? fb * d : -fb * d);
+
+          // output tubes: each one a sigmoid a / sqrt (1 + a^2) around its idle point q, the pair (or the single
+          // tube) combined; anti-aliased like the preamp tubes
+          const cu = cmp * xp, a1 = q + cu, a2 = q - cu;
+          const F = (Math.sqrt(1 + a1 * a1) + match * Math.sqrt(1 + a2 * a2)) * normC - dcq * xp;
+          const dx = xp - px;
+          let y;
+          if (Math.abs(dx) > 1.0e-6) {
+            y = (F - pF) / dx;
+          } else {
+            const cm = cmp * 0.5 * (xp + px), b1 = q + cm, b2 = q - cm;
+            y = (b1 / Math.sqrt(1 + b1 * b1) - match * (b2 / Math.sqrt(1 + b2 * b2))) * norm - dcq;
+          }
+          px = xp;
+          pF = F;
+
+          // the supply sags with the current drawn, and carries the rectifier's ripple
+          const ay = Math.min(Math.abs(y), 1);
+          es += (ay - es) * (ay > es ? sAtk : sRel);
+          o += y * (supply - sagG * es) * gPa;
+        }
+
+        x[p++] = o;
+        gA += dA; gAc += dAc; gB += dB; gMaster += dMaster; gPre += dPre; gPa += dPa; pGain += dPres;
+      }
+
+      cmp += dCmp; qIdle += dQ; sag += dSag; bxK += dBxK; bxG += dBxG; hU += dHU; hPre += dHPre; hRip += dHRip;
+    }
+
+    for (let s = 0; s < MAX_STAGES; ++s) {
+      shelfS[s] = flush(shelfS[s]); hpS[s] = flush(hpS[s]); lpS[s] = flush(lpS[s]);
+    }
+    tz[0] = flush(z0); tz[1] = flush(z1); tz[2] = flush(z2); tz[3] = zu;
+    eqZ[0] = flush(e0); eqZ[1] = flush(e1); eqZ[2] = flush(e2); eqZ[3] = flush(e3); eqZ[4] = flush(e4); eqZ[5] = flush(e5);
+    this.brS = flush(bs); this.cutS = flush(cs); this.presS = flush(ps); this.envX = flush(ex); this.envS = flush(es); this.pX = px;
+    this.humC = hc;
+    this.humS = hs;
+    ramp.set(rampTarget);
+    mixC.set(mixT);
+  }
+}
+
+/** In the order of AmpFx's variants: the 30 stock amps, then the model packs. */
+const AMP_MODELS = SPECS.map((sp, i) => model(sp.key, sp.name, CATEGORY.amp, ENGINE.ampFx, i, sp.basedOn, [
+  percent("Drive", sp.def[0]), percent("Bass", sp.def[1]), percent("Mid", sp.def[2]), percent("Treble", sp.def[3]),
+  percent("Presence", sp.def[4]), percent("Ch Vol", sp.def[5]), percent("Master", sp.def[6]), percent("Sag", sp.def[7]),
+  percent("Hum", sp.def[8]), percent("Bias", sp.def[9]), percent("Bias X", sp.def[10]), choice("Power Amp", POWER_AMP_NAMES, 0),
+]));
+
+return { AmpFx, AMP_MODELS };
+})();
+// ---- dsp/cab.js
+const { CabFx, CAB_MODELS } = (() => {
+// The speaker cabinet and its microphone (Source/DSP/fx/Cab.h): the HD500X's 17 cabinets, the 4 model-pack
+// cabinets and this project's original voicing ("412 Classic"), each through one of 14 microphones. Mono.
+//
+// What it models:  Low Cut (12 dB/octave high-pass, off at 20 Hz)  ->  the speaker's bass resonance (Res Level /
+//                  Thump / Decay)  ->  the cabinet's biquads  ->  the comb of a second speaker and of the back wave
+//                  ->  the microphone's biquads  ->  E.R. (six early reflections)  ->  level
+//
+// The order the filters run in is a different one, which gives the same response (they are all linear): every
+// biquad below 500 Hz first (Low Cut, resonance, the cabinet's low stages, the microphone's low stages), then
+// the rest. Float rounding only matters in those low biquads (a 40 Hz high-pass at 48 kHz has its poles a hair
+// from z = 1): the C++ keeps its samples and filter states in floats, and in doubles these biquads would come
+// out 70 to 90 dB below the signal apart from it. So that first part imitates float arithmetic exactly here
+// (runLow: every operation rounded with f32, on input that is still bit-identical to the C++'s), and the rest
+// runs in plain doubles (runHigh), five times faster. Nothing here allocates after prepare().
+
+/** The Mic knob: the HD500X's 8 guitar-cab microphones, then the bass-cab microphones that are not among them. */
+const MIC_NAMES = ["57 On Xs", "57 Off Xs", "409 Dyn", "421 Dyn", "4038 Rbn", "121 Rbn", "67 Cond", "87 Cond",
+                   "12 Dyn", "112 Dyn", "20 Dyn", "7 Dyn", "40 Dyn", "47 Cond"];
+
+const NUM_CABS = 22, NUM_MICS = 14;
+const MAX_CAB_STAGES = 8, MAX_BANK_STAGES = 8;
+const CHUNK = 32;                 // filter coefficients follow a moving knob in steps of this many samples
+const NUM_ROOM_TAPS = 6;
+const MAX_RESONANCE_DB = 16;
+const LOW_STAGE_HZ = 500;         // biquads below this frequency run first, in float arithmetic
+const CLASSIC = 21;               // the variant of "412 Classic"
+
+// stage types: [type, hz, q, dB] is one biquad of a cabinet's or a microphone's response
+const HP = 1, LP = 2, PK = 3, LS = 4, HS = 5;
+
+// A cabinet, built from what is known about the speaker and the box (there are no measured responses in here):
+// - resHz / resQ / resDb: the bass resonance of the speaker in its box, as a peak the Res Level, Thump and
+//   Decay knobs scale (the values here are what 50 % / 50 % / 50 % gives)
+// - tap1: a second speaker reaching the microphone late (comb ripple); tap2: the back wave, coming out of an
+//   open back in opposite polarity or bouncing off the back panel of a closed box. Both only below tapLowPassHz.
+// - stages: the box's low roll-off, the body and box dips, the cone break-up peaks with the dips around them and
+//   the steep roll-off above the speaker's range (two 12 dB/octave low-passes)
+// - trimDb: brings every cabinet to the same loudness at its default knobs
+const CAB_DEFS = [
+  // 212 Blackface Double: Fender Twin Reverb, open back, 2 x Jensen C12N. Loose, not very deep bass (open back),
+  // a big combo's thump at 130 Hz, mids scooped at 480 Hz, a glassy break-up peak at 3.3 kHz, the most
+  // extended top of the Fenders.
+  { resHz: 95, resQ: 1.6, resDb: 2.5, tap1Ms: 1.1, tap1Gain: 0.16, tap2Ms: 1.6, tap2Gain: -0.2, tapLowPassHz: 1300, trimDb: -1.1,
+    stages: [[HP, 80, 0.7, 0], [PK, 130, 1, 1.5], [PK, 480, 0.9, -2.5], [PK, 1300, 1.2, 1.5],
+             [PK, 3300, 1.3, 4.5], [LP, 5300, 0.7, 0], [LP, 6500, 0.9, 0]] },
+
+  // 412 Hiway: Hiwatt 4x12, closed back, Fane 12287. Tight and even: no box dip, full mids around 900 Hz,
+  // a modest break-up peak and a clear top that reaches further than a Celestion's.
+  { resHz: 105, resQ: 1.3, resDb: 2.5, tap1Ms: 0.9, tap1Gain: 0.14, tap2Ms: 1.8, tap2Gain: 0.1, tapLowPassHz: 1200, trimDb: -1.8,
+    stages: [[HP, 78, 0.8, 0], [PK, 900, 0.8, 2.5], [PK, 2700, 1.2, 2], [PK, 4500, 1.8, 2],
+             [LP, 5600, 0.65, 0], [LP, 6700, 0.9, 0]] },
+
+  // 6x9 Super O: Supro S6616, one small oval speaker in a little open box. No bass to speak of (resonance at
+  // 140 Hz), a nasal honk around 1 kHz and an early roll-off.
+  { resHz: 140, resQ: 2, resDb: 3.5, tap1Ms: 1, tap1Gain: 0, tap2Ms: 1.1, tap2Gain: -0.25, tapLowPassHz: 2000, trimDb: -0.3,
+    stages: [[HP, 125, 0.8, 0], [PK, 330, 1.2, -2], [PK, 950, 1.1, 4], [PK, 1700, 2.5, -1.5],
+             [PK, 2400, 1.6, 3], [LP, 3300, 0.7, 0], [LP, 4000, 1, 0]] },
+
+  // 112 Field Coil: Gibson EH-185, a 1939 field-coil 12" in an open-back combo. Mid-heavy and dark: a broad
+  // 750 Hz hump, a low break-up peak at 2 kHz and the earliest, softest roll-off of the 12" speakers.
+  { resHz: 92, resQ: 1.8, resDb: 3, tap1Ms: 1, tap1Gain: 0, tap2Ms: 1.7, tap2Gain: -0.22, tapLowPassHz: 1500, trimDb: -1.8,
+    stages: [[HP, 85, 0.7, 0], [PK, 240, 0.9, 1.5], [PK, 750, 0.8, 3], [PK, 2000, 1.5, 2.5],
+             [LP, 3100, 0.6, 0], [LP, 4200, 0.9, 0]] },
+
+  // 410 Tweed: '59 Bassman, open back, 4 x 10" Jensen alnico. The tens resonate higher (112 Hz) and punch at
+  // 180 Hz, forward mids, a bright break-up peak at 2.9 kHz.
+  { resHz: 112, resQ: 1.5, resDb: 3, tap1Ms: 0.8, tap1Gain: 0.18, tap2Ms: 2.6, tap2Gain: -0.18, tapLowPassHz: 1600, trimDb: -2.8,
+    stages: [[HP, 95, 0.75, 0], [PK, 180, 0.9, 2], [PK, 1100, 0.8, 2], [PK, 2900, 1.5, 4],
+             [PK, 4200, 2.2, 1.5], [LP, 5000, 0.7, 0], [LP, 6100, 0.95, 0]] },
+
+  // 112 BF 'Lux: Deluxe Reverb, small open-back combo, Oxford 12K5-6. Soft, scooped mids, a gentle break-up
+  // peak at 3 kHz and a smooth top that gives up before 5 kHz.
+  { resHz: 100, resQ: 1.7, resDb: 2.5, tap1Ms: 1, tap1Gain: 0, tap2Ms: 1.3, tap2Gain: -0.24, tapLowPassHz: 1500, trimDb: 0.4,
+    stages: [[HP, 92, 0.7, 0], [PK, 250, 0.9, 1.5], [PK, 600, 0.8, -3.5], [PK, 1500, 1.5, -1],
+             [PK, 3000, 1.3, 3.5], [LP, 4300, 0.65, 0], [LP, 5400, 0.9, 0]] },
+
+  // 112 Celest 12-H: Divided by 13 combo, open back, Celestion G12H Heritage. The heavy-magnet speaker: a low
+  // resonance and thick low mids, no mid scoop, a bark at 1.4 kHz and a strong break-up peak at 2.8 kHz.
+  { resHz: 85, resQ: 1.5, resDb: 3, tap1Ms: 1, tap1Gain: 0, tap2Ms: 1.6, tap2Gain: -0.2, tapLowPassHz: 1500, trimDb: -3.1,
+    stages: [[HP, 75, 0.7, 0], [PK, 200, 0.8, 2.5], [PK, 700, 1, 1], [PK, 1400, 0.9, 2.5],
+             [PK, 2800, 1.5, 4.5], [PK, 4100, 2.5, 1.5], [LP, 4900, 0.7, 0], [LP, 6000, 0.95, 0]] },
+
+  // 212 PhD Ported: Dr. Z "Z Best", a ported 2x12 with one G12H Heritage and one Vintage 30. The port keeps the
+  // bass flat to 70 Hz and then drops at 24 dB/octave; full low mids, and the two different speakers give
+  // two break-up peaks (2.2 and 3.3 kHz).
+  { resHz: 88, resQ: 1.2, resDb: 2, tap1Ms: 0.7, tap1Gain: 0.15, tap2Ms: 1.6, tap2Gain: 0.1, tapLowPassHz: 1300, trimDb: -3.3,
+    stages: [[HP, 70, 1.1, 0], [HP, 55, 0.6, 0], [PK, 280, 0.7, 2.5], [PK, 1300, 0.9, 2],
+             [PK, 2200, 1.4, 3], [PK, 3300, 1.6, 4], [LP, 5000, 0.7, 0], [LP, 6000, 0.95, 0]] },
+
+  // 112 Blue Bell: '61 Vox AC-15, open back, Celestion Alnico Blue. Soft lows, relaxed mids and the chime:
+  // break-up peaks at 2.6 and 4.4 kHz with a top that stays open to 6 kHz.
+  { resHz: 90, resQ: 1.6, resDb: 2, tap1Ms: 1, tap1Gain: 0, tap2Ms: 1.5, tap2Gain: -0.24, tapLowPassHz: 1500, trimDb: -1.6,
+    stages: [[HP, 88, 0.7, 0], [PK, 300, 0.8, 1.5], [PK, 800, 1, -2], [PK, 2600, 1.3, 4],
+             [PK, 4400, 1.8, 3], [LP, 5400, 0.7, 0], [LP, 6500, 1, 0]] },
+
+  // 212 Silver Bell: Vox AC-30, open back, 2 x Celestion Alnico Silver. The same chime from a bigger box:
+  // a lower resonance, fuller low mids, the Vox's forward upper mids and the ripple of two speakers.
+  { resHz: 84, resQ: 1.5, resDb: 2.5, tap1Ms: 0.85, tap1Gain: 0.16, tap2Ms: 1.3, tap2Gain: -0.2, tapLowPassHz: 1400, trimDb: -2.5,
+    stages: [[HP, 78, 0.7, 0], [PK, 200, 0.8, 2], [PK, 1400, 0.9, 2], [PK, 2500, 1.2, 3],
+             [PK, 4200, 1.6, 2.5], [LP, 5500, 0.7, 0], [LP, 6600, 1, 0]] },
+
+  // 412 Greenback 25: Marshall 4x12, closed back, Celestion G12M. The closed box pushes the resonance up to a
+  // 118 Hz thump; warm low mids with only a shallow box dip, woody mids at 850 Hz, break-up peaks at 2.3 and
+  // 3.5 kHz and the earliest roll-off of the Celestions.
+  { resHz: 118, resQ: 1.4, resDb: 3, tap1Ms: 1, tap1Gain: 0.18, tap2Ms: 2.05, tap2Gain: 0.14, tapLowPassHz: 1200, trimDb: -2.2,
+    stages: [[HP, 85, 0.8, 0], [PK, 220, 0.9, 1.5], [PK, 400, 1.1, -1], [PK, 850, 0.8, 2],
+             [PK, 2300, 1.4, 4], [PK, 3500, 2, 2.5], [LP, 4300, 0.65, 0], [LP, 5400, 0.9, 0]] },
+
+  // 412 Blackback 30: Marshall 4x12, Celestion G12H30. Tighter and deeper than the Greenback, a stronger and
+  // higher break-up peak (3 kHz), more top.
+  { resHz: 105, resQ: 1.3, resDb: 3.5, tap1Ms: 1, tap1Gain: 0.18, tap2Ms: 2.05, tap2Gain: 0.14, tapLowPassHz: 1200, trimDb: -1.8,
+    stages: [[HP, 72, 0.85, 0], [PK, 450, 1, -2.5], [PK, 1200, 1, 1], [PK, 3000, 1.5, 5.5],
+             [PK, 4400, 2.2, 2.5], [LP, 5100, 0.7, 0], [LP, 6000, 0.95, 0]] },
+
+  // 412 Brit T-75: Marshall 4x12, Celestion G12T-75. Big lows, scooped mids and the fizzy, extended top: the
+  // break-up peaks sit at 3.9 and 5.3 kHz and the roll-off starts near 6 kHz.
+  { resHz: 112, resQ: 1.2, resDb: 3.5, tap1Ms: 1, tap1Gain: 0.18, tap2Ms: 2.05, tap2Gain: 0.14, tapLowPassHz: 1200, trimDb: 0.2,
+    stages: [[HP, 84, 0.8, 0], [PK, 650, 0.7, -4.5], [PK, 1500, 1.5, -1], [PK, 3900, 1.4, 2.5],
+             [PK, 5300, 2.2, 2], [LP, 5800, 0.7, 0], [LP, 6600, 1, 0]] },
+
+  // 412 Uber: Bogner Uberkab, an oversized closed 4x12 with two G12T-75 and two Vintage 30. The deepest guitar
+  // bass, a wide mid scoop, the V30's 2.2 kHz peak and the T-75's 4.3 kHz one with a dip between them.
+  { resHz: 95, resQ: 1.2, resDb: 4.5, tap1Ms: 1.1, tap1Gain: 0.2, tap2Ms: 2.3, tap2Gain: 0.15, tapLowPassHz: 1200, trimDb: -1.5,
+    stages: [[HP, 68, 0.9, 0], [PK, 500, 0.9, -3], [PK, 2200, 1.5, 3.5], [PK, 3100, 2.5, -1.5],
+             [PK, 4300, 1.7, 3], [LP, 5400, 0.7, 0], [LP, 6300, 1, 0]] },
+
+  // 412 Tread V-30: Mesa/Boogie Rectifier 4x12, oversized, Celestion Vintage 30. Big low end, a deep box dip,
+  // the Vintage 30's pushed mids and its spike at 2.3 kHz, a notch above it, a second peak at 4.1 kHz, gone above 5 kHz.
+  { resHz: 104, resQ: 1.3, resDb: 4, tap1Ms: 1.05, tap1Gain: 0.18, tap2Ms: 2.2, tap2Gain: 0.15, tapLowPassHz: 1200, trimDb: -2,
+    stages: [[HP, 76, 0.9, 0], [PK, 420, 1, -3.5], [PK, 1300, 0.9, 2.5], [PK, 2300, 1.6, 4.5],
+             [PK, 3300, 2.5, -2.5], [PK, 4100, 2, 2.5], [LP, 4800, 0.7, 0], [LP, 5700, 0.95, 0]] },
+
+  // 412 XXL V-30: Engl Pro 4x12, Vintage 30. Tighter than the Mesa: less sub-bass, lean low mids (a dip at
+  // 300 Hz), focused mids at 1.6 kHz, the Vintage 30 peaks at 2.6 and 4.2 kHz, a smooth roll-off.
+  { resHz: 115, resQ: 1.1, resDb: 2.5, tap1Ms: 0.95, tap1Gain: 0.16, tap2Ms: 1.9, tap2Gain: 0.12, tapLowPassHz: 1200, trimDb: -2,
+    stages: [[HP, 95, 0.8, 0], [PK, 300, 1, -3], [PK, 1600, 0.8, 3.5], [PK, 2600, 1.7, 4],
+             [PK, 4200, 2, 3], [LP, 5200, 0.65, 0], [LP, 6300, 0.9, 0]] },
+
+  // 115 Flip Top: Ampeg B-15, one 15" CTS in a closed double-baffle box. Bass down to 45 Hz with a round bump
+  // at 70 Hz, a 15" cone's break-up at 1.5 kHz and nothing above 3 kHz.
+  { resHz: 70, resQ: 1.2, resDb: 4, tap1Ms: 1, tap1Gain: 0, tap2Ms: 2.3, tap2Gain: 0.12, tapLowPassHz: 900, trimDb: -1.3,
+    stages: [[HP, 42, 0.8, 0], [PK, 160, 0.8, 2], [PK, 450, 0.9, -2], [PK, 1500, 1.2, 3],
+             [LP, 2400, 0.7, 0], [LP, 3300, 1, 0]] },
+
+  // 212 Jazz Rivet: Roland JC-120's open-back 2x12. Stiff, clean, hi-fi speakers: even mids, little resonance
+  // (a solid-state amp damps it) and the brightest, most extended top of the guitar cabinets.
+  { resHz: 92, resQ: 1.2, resDb: 1.5, tap1Ms: 1.2, tap1Gain: 0.16, tap2Ms: 1.9, tap2Gain: -0.18, tapLowPassHz: 1400, trimDb: -0.6,
+    stages: [[HP, 85, 0.7, 0], [PK, 400, 1, 1], [PK, 1500, 1, -1.5], [PK, 3600, 1.2, 2.5],
+             [PK, 5600, 1.8, 2.5], [LP, 6300, 0.7, 0], [LP, 7400, 0.95, 0]] },
+
+  // 108 Small Tweed: tweed Fender Champ, one 8" speaker in a tiny open box. Resonance at 150 Hz, a boxy 600 Hz
+  // hump, a break-up peak at 2.8 kHz.
+  { resHz: 150, resQ: 1.8, resDb: 3, tap1Ms: 1, tap1Gain: 0, tap2Ms: 0.95, tap2Gain: -0.26, tapLowPassHz: 2200, trimDb: -0.5,
+    stages: [[HP, 135, 0.75, 0], [PK, 600, 0.9, 3], [PK, 1400, 1.5, -1.5], [PK, 2800, 1.4, 4],
+             [LP, 4000, 0.7, 0], [LP, 5000, 0.95, 0]] },
+
+  // 810 SV Beast: Ampeg SVT 8x10, sealed. Deep bass with the low-mid punch of eight tens, their grind at
+  // 2.4 kHz, rolled off above 4 kHz.
+  { resHz: 78, resQ: 1.1, resDb: 3.5, tap1Ms: 0.8, tap1Gain: 0.22, tap2Ms: 2.4, tap2Gain: 0.14, tapLowPassHz: 1100, trimDb: -2.5,
+    stages: [[HP, 52, 0.75, 0], [PK, 200, 0.8, 2.5], [PK, 600, 1, -2], [PK, 2400, 1.3, 4],
+             [LP, 3700, 0.7, 0], [LP, 4600, 0.95, 0]] },
+
+  // 410 Rhino: Ampeg SVT-410HLF, ported and tuned low, with a horn. The deepest bass (24 dB/octave below 38 Hz),
+  // scooped low mids and the horn's top, which makes it the most extended cabinet here.
+  { resHz: 58, resQ: 1, resDb: 3.5, tap1Ms: 0.8, tap1Gain: 0.2, tap2Ms: 2.6, tap2Gain: 0.12, tapLowPassHz: 1100, trimDb: -1.2,
+    stages: [[HP, 38, 1, 0], [HP, 32, 0.6, 0], [PK, 350, 0.8, -3], [PK, 2000, 1.2, 2.5],
+             [PK, 5000, 1.2, 3], [LP, 6300, 0.7, 0], [LP, 7400, 0.9, 0]] },
+
+  // 412 Classic: this project's original cab voicing (Source/DSP/CabSim.h). With Low Cut at 75 Hz and Res Level,
+  // Thump and Decay at 50 % the chain is exactly CabSim's: HP 75 Hz, +3 dB at 120 Hz, -3.5 dB at 450 Hz,
+  // +4 dB at 2.3 kHz, low-passes at 5 and 6.5 kHz. No comb, no trim; its microphone is handled in setBank().
+  { resHz: 120, resQ: 1.4, resDb: 3, tap1Ms: 1, tap1Gain: 0, tap2Ms: 1, tap2Gain: 0, tapLowPassHz: 1000, trimDb: 0,
+    stages: [[PK, 450, 1, -3.5], [PK, 2300, 1.3, 4], [LP, 5000, 0.6, 0], [LP, 6500, 0.9, 0]] },
+];
+
+// A microphone in front of the speaker: shelves and peaks only, so a response can be undone exactly
+// (the 412 Classic needs that). trimDb keeps the loudness the same when the microphone is changed.
+const MIC_DEFS = [
+  // 57 On Xs: Shure SM57 on axis. Thin lows, a rise from 3 kHz into the presence peak near 6 kHz.
+  { trimDb: 0, stages: [[LS, 160, 0, -2.5], [PK, 3200, 0.7, 1.5], [PK, 5800, 1.3, 4.5]] },
+  // 57 Off Xs: the SM57 turned away from the cone: most of the presence peak is gone, the top is dull and
+  // there is a cancellation dip at 2.6 kHz.
+  { trimDb: 0.6, stages: [[LS, 160, 0, -1], [PK, 2600, 1.5, -2], [PK, 5000, 1, 1.5], [HS, 3800, 0, -5]] },
+  // 409 Dyn: Sennheiser MD 409. Warm low mids without deep bass, a smooth presence lift at 3.6 kHz, a soft top.
+  { trimDb: -1.1, stages: [[LS, 100, 0, -1], [PK, 300, 0.7, 2], [PK, 3600, 1, 3.5], [HS, 7500, 0, -3]] },
+  // 421 Dyn: Sennheiser MD 421. Scooped clarity: solid lows, a dip at 420 Hz, a strong peak at 4.2 kHz, open top.
+  { trimDb: 0, stages: [[LS, 110, 0, 2], [PK, 420, 0.8, -3.5], [PK, 4200, 1.2, 5], [HS, 8500, 0, 1]] },
+  // 4038 Rbn: Coles 4038 ribbon. A figure-8's big proximity bass, no presence peak, the darkest top.
+  { trimDb: -1.8, stages: [[LS, 190, 0, 5], [PK, 3000, 0.8, -1.5], [HS, 4600, 0, -5]] },
+  // 121 Rbn: Royer R-121 ribbon. Proximity bass, a slight push at 2.9 kHz, a smooth top that falls less than the Coles'.
+  { trimDb: -1.6, stages: [[LS, 160, 0, 4], [PK, 2900, 0.8, 1.5], [HS, 6500, 0, -3]] },
+  // 67 Cond: Neumann U67. Nearly flat: slightly warm lows, a very broad +1 dB around 5 kHz, a soft top.
+  { trimDb: -0.4, stages: [[LS, 120, 0, 1.5], [PK, 5200, 0.6, 1], [HS, 10000, 0, -2]] },
+  // 87 Cond: Neumann U87. Flat lows and mids, a little forward at 3.6 kHz, a lifted, extended top.
+  { trimDb: -0.2, stages: [[LS, 90, 0, -1], [PK, 3600, 0.7, 1.5], [HS, 7500, 0, 3.5]] },
+  // 12 Dyn: AKG D12, the vintage kick-drum microphone. A bass-chamber bump at 85 Hz, scooped at 400 Hz,
+  // presence at 3 kHz, a rolled-off top.
+  { trimDb: -1.4, stages: [[PK, 85, 0.9, 5], [PK, 400, 0.8, -3], [PK, 3000, 1, 3], [HS, 7500, 0, -4]] },
+  // 112 Dyn: AKG D112. A bump at 100 Hz, the deepest mid scoop, a narrow, strong click peak at 4 kHz.
+  { trimDb: -0.7, stages: [[PK, 100, 1, 4], [PK, 500, 0.7, -4.5], [PK, 4000, 1.6, 6], [HS, 9000, 0, -3]] },
+  // 20 Dyn: Electro-Voice RE20. Variable-D: no proximity boost (the leanest lows here), and the flattest
+  // dynamic; a small lift at 7 kHz before the top falls away.
+  { trimDb: 0.7, stages: [[LS, 100, 0, -2], [PK, 380, 0.8, -1.5], [PK, 7000, 1, 2], [HS, 11000, 0, -3]] },
+  // 7 Dyn: Shure SM7B. Warm lows, a dip at 3.2 kHz, a presence lift at 6.5 kHz, a soft top.
+  { trimDb: -0.8, stages: [[LS, 150, 0, 3], [PK, 3200, 1.2, -2], [PK, 6500, 1.2, 2.5], [HS, 10000, 0, -4]] },
+  // 40 Dyn: Heil PR40. Deep, tight lows, flat mids, a broad rise around 5.5 kHz that stays open to the top.
+  { trimDb: -0.6, stages: [[LS, 80, 0, 2.5], [PK, 5500, 0.6, 3.5], [HS, 9000, 0, 2]] },
+  // 47 Cond: Neumann U47. Rich lows, slightly recessed mids, a broad upper-mid presence at 3.8 kHz, a smooth top.
+  { trimDb: -1.5, stages: [[LS, 150, 0, 4], [PK, 700, 0.7, -1.5], [PK, 3800, 0.8, 4.5], [HS, 12000, 0, -1]] },
+];
+
+// E.R.: six early reflections of a small room, alternating in polarity (so they add no bass) and darker than the direct sound.
+const ROOM_TAP_MS = [5.3, 9.1, 13.7, 19.9, 26.3, 34.1];
+const ROOM_TAP_GAIN = Float32Array.from([0.42, -0.36, 0.30, -0.24, 0.19, -0.15]);
+
+// ---- biquad coefficients: the formulas of core.js's Biquad (DspUtils.h), written out so that nothing is allocated
+function setCoefficients(bq, b0, b1, b2, a0, a1, a2) {
+  bq.b0 = f32(b0 / a0); bq.b1 = f32(b1 / a0); bq.b2 = f32(b2 / a0);
+  bq.a1 = f32(a1 / a0); bq.a2 = f32(a2 / a0);
+}
+function setLowPass(bq, fs, fc, q) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.49 * fs)) / fs, c = Math.cos(w0), a = Math.sin(w0) / (2 * q);
+  setCoefficients(bq, (1 - c) * 0.5, 1 - c, (1 - c) * 0.5, 1 + a, -2 * c, 1 - a);
+}
+function setHighPass(bq, fs, fc, q) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.49 * fs)) / fs, c = Math.cos(w0), a = Math.sin(w0) / (2 * q);
+  setCoefficients(bq, (1 + c) * 0.5, -(1 + c), (1 + c) * 0.5, 1 + a, -2 * c, 1 - a);
+}
+function setPeak(bq, fs, fc, q, gainDb) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.49 * fs)) / fs, c = Math.cos(w0), a = Math.sin(w0) / (2 * q);
+  const A = Math.pow(10, gainDb / 40);
+  setCoefficients(bq, 1 + a * A, -2 * c, 1 - a * A, 1 + a / A, -2 * c, 1 - a / A);
+}
+function setLowShelf(bq, fs, fc, gainDb) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.49 * fs)) / fs, c = Math.cos(w0), a = Math.sin(w0) / (2 * 0.70710678);
+  const A = Math.pow(10, gainDb / 40), k = 2 * Math.sqrt(A) * a;
+  setCoefficients(bq, A * ((A + 1) - (A - 1) * c + k), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - k),
+                  (A + 1) + (A - 1) * c + k, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - k);
+}
+function setHighShelf(bq, fs, fc, gainDb) {
+  const w0 = (2 * PI * clamp(fc, 1, 0.49 * fs)) / fs, c = Math.cos(w0), a = Math.sin(w0) / (2 * 0.70710678);
+  const A = Math.pow(10, gainDb / 40), k = 2 * Math.sqrt(A) * a;
+  setCoefficients(bq, A * ((A + 1) + (A - 1) * c + k), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - k),
+                  (A + 1) - (A - 1) * c + k, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - k);
+}
+function setStage(bq, fs, s, gainSign) {
+  switch (s[0]) {
+    case HP: setHighPass(bq, fs, s[1], s[2]); break;
+    case LP: setLowPass(bq, fs, s[1], s[2]); break;
+    case PK: setPeak(bq, fs, s[1], s[2], gainSign * s[3]); break;
+    case LS: setLowShelf(bq, fs, s[1], gainSign * s[3]); break;
+    case HS: setHighShelf(bq, fs, s[1], gainSign * s[3]); break;
+    default: break;
+  }
+}
+
+/** Sets up the stages of `list` that lie below (low = true) or at and above LOW_STAGE_HZ, in their listed order. */
+function addStages(filters, count, fs, list, low, gainSign) {
+  for (let i = 0; i < list.length; ++i)
+    if ((list[i][1] < LOW_STAGE_HZ) === low) setStage(filters[count++], fs, list[i], gainSign);
+  return count;
+}
+
+function powerOfTwoAbove(n) {
+  let size = 64;
+  while (size < n) size *= 2;
+  return size;
+}
+
+/** Biquad::process over a buffer, in float arithmetic like the C++: for the low biquads. */
+function runLow(bq, x, n) {
+  const b0 = bq.b0, b1 = bq.b1, b2 = bq.b2, a1 = bq.a1, a2 = bq.a2;
+  let z1 = bq.z1, z2 = bq.z2;
+  for (let i = 0; i < n; ++i) {
+    const v = x[i];
+    const y = f32(f32(b0 * v) + z1);
+    z1 = f32(f32(f32(b1 * v) - f32(a1 * y)) + z2);
+    z2 = f32(f32(b2 * v) - f32(a2 * y));
+    x[i] = y;
+  }
+  bq.z1 = z1; bq.z2 = z2;
+}
+
+/** Biquad::process over a buffer, in doubles. */
+function runHigh(bq, x, n) {
+  const b0 = bq.b0, b1 = bq.b1, b2 = bq.b2, a1 = bq.a1, a2 = bq.a2;
+  let z1 = bq.z1, z2 = bq.z2;
+  for (let i = 0; i < n; ++i) {
+    const v = x[i];
+    const y = b0 * v + z1;
+    z1 = b1 * v - a1 * y + z2;
+    z2 = b2 * v - a2 * y;
+    x[i] = y;
+  }
+  bq.z1 = z1; bq.z2 = z2;
+}
+
+/** 0..1 -> 0..1 with no kink at either end: the shape of the Mic and Low Cut fades (in float arithmetic). */
+function smoothStep(t) { return f32(f32(t * t) * f32(3 - 2 * t)); }
+
+/** One microphone: its low stages first (`low` of them), then the others, then its loudness trim. */
+function makeBank() {
+  const stages = [];
+  for (let i = 0; i < MAX_BANK_STAGES; ++i) stages.push(new Biquad());
+  return { stages, low: 0, count: 0, gain: 1 };
+}
+
+function runBank(bank, x, n) {
+  for (let s = 0; s < bank.low; ++s) runLow(bank.stages[s], x, n);
+  for (let s = bank.low; s < bank.count; ++s) runHigh(bank.stages[s], x, n);
+  const gain = bank.gain;
+  for (let i = 0; i < n; ++i) x[i] = x[i] * gain;
+}
+
+/** A knob value gliding to its target in steps of one chunk. Doubles and an integer counter only, so that it
+    arrives at exactly the C++'s values: the coefficients of a biquad at 50 Hz turn on the last bit. */
+class KnobRamp {
+  constructor(initial) { this.start = this.target = this.current = initial; this.length = 1; this.left = 0; }
+  prepare(lengthInChunks) { this.length = Math.max(1, lengthInChunks); this.snap(); }
+  snap() { this.start = this.current = this.target; this.left = 0; }
+  isMoving() { return this.left > 0; }
+  setTarget(v) {
+    if (v !== this.target) { this.start = this.current; this.target = v; this.left = this.length; }
+  }
+  /** One chunk further. */
+  next() {
+    if (this.left > 0) {
+      --this.left;
+      this.current = this.left === 0 ? this.target : this.target + (this.start - this.target) * (this.left / this.length);
+    }
+    return this.current;
+  }
+}
+
+// Knobs: Mic | E.R. | Low Cut | Res Level | Thump | Decay
+//   - Res Level scales the speaker's bass resonance peak and raises the overall level (0.03 dB per %);
+//     Thump scales the peak's height, Decay its Q (how long the cone rings on). Peak height in dB =
+//     the cabinet's own value x Res Level / 50 x Thump / 50, so Thump and Decay do nothing at Res Level 0.
+//   - the Mic switch crossfades over 30 ms, Low Cut fades in and out (at 20 Hz) over 30 ms; the other knobs
+//     glide over 50 ms.
+class CabFx {
+  constructor() {
+    this.fs = 48000;
+    this.variant = CLASSIC; this.micTarget = 0; this.micActive = 0; this.micFading = 0;
+    this.modelChanged = true;
+
+    // knob values, moving in steps of one chunk (the filter coefficients are computed from them)
+    this.lowCutHz = new KnobRamp(20); this.resLevel = new KnobRamp(50); this.thump = new KnobRamp(50); this.decay = new KnobRamp(50);
+    // per sample
+    this.roomGain = new Smoothed(0); this.outGain = new Smoothed(1);
+
+    this.lowCut = new Biquad(); this.resonance = new Biquad();
+    this.stages = [];
+    for (let i = 0; i < MAX_CAB_STAGES; ++i) this.stages.push(new Biquad());
+    this.numLowStages = 0; this.numStages = 0;
+    this.lowCutOn = false; this.lowCutRunning = false;
+    this.lowCutFade = 0; // 0 = out ... fadeLength = fully in
+
+    this.combOn = false;
+    this.combBuffer = new Float32Array(64);
+    this.combMask = 63; this.combPos = 0; this.combDelay1 = 1; this.combDelay2 = 1;
+    this.combGain1 = 0; this.combGain2 = 0;
+    this.combLowPass = new OnePole();
+
+    this.bankA = makeBank(); this.bankB = makeBank();
+    this.fadeLeft = 0; this.fadeLength = 1; // fadeLength: 30 ms, for the microphones and for Low Cut
+
+    this.roomBuffer = new Float32Array(64);
+    this.roomMask = 63; this.roomPos = 0;
+    this.roomDelay = new Int32Array(NUM_ROOM_TAPS);
+    this.roomLowPass = new OnePole();
+
+    this.work = new Float32Array(CHUNK); this.work2 = new Float32Array(CHUNK);
+  }
+
+  prepare(sampleRate, maxBlock) {
+    const fs = this.fs = sampleRate;
+
+    const rampChunks = Math.round((0.05 * fs) / CHUNK);
+    this.lowCutHz.prepare(rampChunks); this.resLevel.prepare(rampChunks); this.thump.prepare(rampChunks); this.decay.prepare(rampChunks);
+
+    this.roomGain.reset(fs, 0.05);
+    this.outGain.reset(fs, 0.05);
+    this.fadeLength = Math.max(1, Math.floor(0.03 * fs));
+
+    this.combBuffer = new Float32Array(powerOfTwoAbove(Math.floor(0.004 * fs) + 8));
+    this.combMask = this.combBuffer.length - 1;
+    this.roomBuffer = new Float32Array(powerOfTwoAbove(Math.floor(0.04 * fs) + 8));
+    this.roomMask = this.roomBuffer.length - 1;
+
+    for (let k = 0; k < NUM_ROOM_TAPS; ++k)
+      this.roomDelay[k] = Math.max(1, Math.round(ROOM_TAP_MS[k] * 0.001 * fs));
+    this.roomLowPass.setCutoff(fs, 4200);
+
+    this.reset();
+  }
+
+  reset() {
+    this.lowCutHz.snap(); this.resLevel.snap(); this.thump.snap(); this.decay.snap();
+    this.roomGain.setCurrentAndTarget(this.roomGain.target); this.outGain.setCurrentAndTarget(this.outGain.target);
+    this.lowCutFade = this.lowCutOn ? this.fadeLength : 0;
+
+    this.micActive = this.micFading = this.micTarget;
+    this.fadeLeft = 0;
+    this.configure();
+
+    this.lowCut.reset();
+    this.resonance.reset();
+    for (let i = 0; i < MAX_CAB_STAGES; ++i) this.stages[i].reset();
+    for (let i = 0; i < MAX_BANK_STAGES; ++i) { this.bankA.stages[i].reset(); this.bankB.stages[i].reset(); }
+    this.combLowPass.reset();
+    this.roomLowPass.reset();
+    this.combBuffer.fill(0);
+    this.roomBuffer.fill(0);
+    this.combPos = this.roomPos = 0;
+    this.lowCutRunning = this.lowCutOn;
+  }
+
+  setModel(variant) {
+    const newVariant = clamp(variant | 0, 0, NUM_CABS - 1);
+    this.modelChanged = this.modelChanged || newVariant !== this.variant;
+    this.variant = newVariant;
+  }
+
+  setParameters(k) {
+    this.micTarget = clamp(Math.round(k[0]), 0, NUM_MICS - 1);
+    this.roomGain.setTarget(f32(f32(0.007) * clamp(k[1], 0, 100)));
+
+    const cut = clamp(k[2], 20, 500);
+    this.lowCutHz.setTarget(cut);
+    this.lowCutOn = cut > 20.5; // 20 Hz = off
+
+    const res = clamp(k[3], 0, 100);
+    this.resLevel.setTarget(res);
+    this.thump.setTarget(clamp(k[4], 0, 100));
+    this.decay.setTarget(clamp(k[5], 0, 100));
+    const db = f32(f32(CAB_DEFS[this.variant].trimDb) + f32(f32(0.03) * f32(res - 50)));
+    this.outGain.setTarget(f32(Math.pow(10, f32(db * f32(0.05))))); // dbToGain on floats
+  }
+
+  process(left, right, numSamples) {
+    const x = this.work;
+
+    for (let pos = 0; pos < numSamples; pos += CHUNK) {
+      const n = Math.min(CHUNK, numSamples - pos);
+      this.updateChunk();
+
+      for (let i = 0; i < n; ++i) x[i] = 0.5 * (left[pos + i] + right[pos + i]);
+
+      // ---- the low biquads, in float arithmetic: Low Cut ...
+      if (this.lowCutRunning) {
+        if (this.lowCutOn && this.lowCutFade >= this.fadeLength) {
+          runLow(this.lowCut, x, n);
+        } else { // fading in or out
+          const bq = this.lowCut, b0 = bq.b0, b1 = bq.b1, b2 = bq.b2, a1 = bq.a1, a2 = bq.a2;
+          const fadeLength = this.fadeLength, direction = this.lowCutOn ? 1 : -1;
+          let z1 = bq.z1, z2 = bq.z2, fade = this.lowCutFade;
+          for (let i = 0; i < n; ++i) {
+            fade = clamp(fade + direction, 0, fadeLength);
+            const v = x[i];
+            const cut = f32(f32(b0 * v) + z1);
+            z1 = f32(f32(f32(b1 * v) - f32(a1 * cut)) + z2);
+            z2 = f32(f32(b2 * v) - f32(a2 * cut));
+            x[i] = v + f32(smoothStep(f32(fade / fadeLength)) * f32(cut - v));
+          }
+          bq.z1 = z1; bq.z2 = z2; this.lowCutFade = fade;
+          this.lowCutRunning = this.lowCutOn || fade > 0;
+        }
+      }
+
+      // ... the speaker's bass resonance and the cabinet's low stages ...
+      runLow(this.resonance, x, n);
+      for (let s = 0; s < this.numLowStages; ++s) runLow(this.stages[s], x, n);
+
+      // ... and the microphone (two of them while the Mic switch crossfades)
+      if (this.fadeLeft > 0) {
+        const y = this.work2, fadeLength = this.fadeLength, done = fadeLength - this.fadeLeft;
+        for (let i = 0; i < n; ++i) y[i] = x[i];
+
+        runBank(this.bankA, x, n);
+        runBank(this.bankB, y, n);
+
+        for (let i = 0; i < n; ++i) {
+          const t = Math.min(1, f32((done + i + 1) / fadeLength));
+          x[i] = x[i] + smoothStep(t) * (y[i] - x[i]);
+        }
+
+        this.fadeLeft -= n;
+        if (this.fadeLeft <= 0) {
+          this.fadeLeft = 0;
+          const swap = this.bankA; this.bankA = this.bankB; this.bankB = swap;
+          this.micActive = this.micFading;
+        }
+      } else {
+        runBank(this.bankA, x, n);
+      }
+
+      // ---- the rest of the cabinet, in doubles
+      for (let s = this.numLowStages; s < this.numStages; ++s) runHigh(this.stages[s], x, n);
+
+      // the second speaker and the back wave, arriving late
+      if (this.combOn) {
+        const buffer = this.combBuffer, mask = this.combMask, d1 = this.combDelay1, d2 = this.combDelay2;
+        const g1 = this.combGain1, g2 = this.combGain2, G = this.combLowPass.G;
+        let p = this.combPos, state = this.combLowPass.s;
+        for (let i = 0; i < n; ++i) {
+          const v = x[i];
+          const late = g1 * buffer[(p - d1) & mask] + g2 * buffer[(p - d2) & mask];
+          buffer[p] = v;
+          p = (p + 1) & mask;
+          const step = (late - state) * G, lp = step + state;   // OnePole::lowPass
+          state = lp + step;
+          x[i] = v + lp;
+        }
+        this.combPos = p; this.combLowPass.s = state;
+      }
+
+      // E.R.
+      {
+        const buffer = this.roomBuffer, mask = this.roomMask, gain = this.roomGain;
+        let p = this.roomPos;
+        if (gain.isSmoothing() || gain.target > 0) {
+          const delay = this.roomDelay, tap = ROOM_TAP_GAIN, G = this.roomLowPass.G;
+          const d0 = delay[0], d1 = delay[1], d2 = delay[2], d3 = delay[3], d4 = delay[4], d5 = delay[5];
+          const g0 = tap[0], g1 = tap[1], g2 = tap[2], g3 = tap[3], g4 = tap[4], g5 = tap[5];
+          let state = this.roomLowPass.s;
+          for (let i = 0; i < n; ++i) {
+            const v = x[i];
+            buffer[p] = v;
+            const sum = g0 * buffer[(p - d0) & mask] + g1 * buffer[(p - d1) & mask] + g2 * buffer[(p - d2) & mask]
+                      + g3 * buffer[(p - d3) & mask] + g4 * buffer[(p - d4) & mask] + g5 * buffer[(p - d5) & mask];
+            p = (p + 1) & mask;
+            const step = (sum - state) * G, lp = step + state;   // OnePole::lowPass
+            state = lp + step;
+            x[i] = v + gain.next() * lp;
+          }
+          this.roomLowPass.s = state;
+        } else {
+          for (let i = 0; i < n; ++i) {
+            buffer[p] = x[i];
+            p = (p + 1) & mask;
+          }
+        }
+        this.roomPos = p;
+      }
+
+      const level = this.outGain;
+      for (let i = 0; i < n; ++i) {
+        const out = f32(x[i] * level.next());
+        left[pos + i] = out;
+        right[pos + i] = out;
+      }
+    }
+  }
+
+  // The microphone's filters. On the 412 Classic, whose voicing already is a finished, mic'd sound, the
+  // microphones act relative to the 57 On Xs: that one is exactly flat (no filters at all), the others are
+  // their own response with the 57's taken out (the same shelves and peaks with the opposite gain).
+  setBank(bank, mic) {
+    const m = MIC_DEFS[mic], fs = this.fs, relative = this.variant === CLASSIC;
+    bank.low = bank.count = 0;
+    bank.gain = f32(Math.pow(10, f32(f32(m.trimDb) * f32(0.05)))); // dbToGain on floats
+
+    if (relative && mic === 0) return;
+
+    bank.count = addStages(bank.stages, bank.count, fs, m.stages, true, 1);
+    if (relative) bank.count = addStages(bank.stages, bank.count, fs, MIC_DEFS[0].stages, true, -1);
+    bank.low = bank.count;
+    bank.count = addStages(bank.stages, bank.count, fs, m.stages, false, 1);
+    if (relative) bank.count = addStages(bank.stages, bank.count, fs, MIC_DEFS[0].stages, false, -1);
+  }
+
+  setResonance(res, thumpAmount, decayAmount) {
+    const c = CAB_DEFS[this.variant];
+    const gainDb = Math.min(MAX_RESONANCE_DB, c.resDb * (res / 50) * (thumpAmount / 50));
+    const q = c.resQ * Math.pow(2, (decayAmount - 50) * 0.03); // 0.35 to 2.8 times the cabinet's Q
+    setPeak(this.resonance, this.fs, c.resHz, q, gainDb);
+  }
+
+  /** Every coefficient for the model and the current knob values (audio state is left alone). */
+  configure() {
+    const c = CAB_DEFS[this.variant], fs = this.fs;
+
+    this.numLowStages = addStages(this.stages, 0, fs, c.stages, true, 1);
+    this.numStages = addStages(this.stages, this.numLowStages, fs, c.stages, false, 1);
+
+    this.combOn = c.tap1Gain !== 0 || c.tap2Gain !== 0;
+    this.combDelay1 = Math.max(1, Math.round(c.tap1Ms * 0.001 * fs));
+    this.combDelay2 = Math.max(1, Math.round(c.tap2Ms * 0.001 * fs));
+    this.combGain1 = f32(c.tap1Gain);
+    this.combGain2 = f32(c.tap2Gain);
+    this.combLowPass.setCutoff(fs, c.tapLowPassHz);
+
+    setHighPass(this.lowCut, fs, this.lowCutHz.current, 0.707);
+    this.setResonance(this.resLevel.current, this.thump.current, this.decay.current);
+    this.setBank(this.bankA, this.micActive);
+    if (this.fadeLeft > 0) this.setBank(this.bankB, this.micFading);
+    this.modelChanged = false;
+  }
+
+  /** Once per chunk: lets the filters follow the knobs. */
+  updateChunk() {
+    if (this.modelChanged) this.configure(); // a model picked without reset(): the slot always resets, so this is only a safety net
+
+    if (this.lowCutHz.isMoving()) setHighPass(this.lowCut, this.fs, this.lowCutHz.next(), 0.707);
+
+    if (this.lowCutOn && !this.lowCutRunning) {
+      this.lowCut.reset();
+      this.lowCutRunning = true;
+    }
+
+    if (this.resLevel.isMoving() || this.thump.isMoving() || this.decay.isMoving()) {
+      const r = this.resLevel.next(), t = this.thump.next(), d = this.decay.next();
+      this.setResonance(r, t, d);
+    }
+
+    if (this.fadeLeft <= 0 && this.micTarget !== this.micActive) {
+      this.micFading = this.micTarget;
+      this.setBank(this.bankB, this.micFading);
+      for (let i = 0; i < MAX_BANK_STAGES; ++i) this.bankB.stages[i].reset();
+      this.fadeLeft = this.fadeLength;
+    }
+  }
+}
+
+// In the order of the variants. Knobs: Mic, E.R., Low Cut (20 Hz = off), Res Level, Thump, Decay.
+const knobs = (mic, room, lowCut, res, thump, decay) =>
+  [choice("Mic", MIC_NAMES, mic), percent("E.R.", room), freq("Low Cut", 20, 500, lowCut, 100), percent("Res Level", res),
+   percent("Thump", thump), percent("Decay", decay)];
+const cab = (key, name, variant, basedOn, k) => model(key, name, CATEGORY.cab, ENGINE.cabFx, variant, basedOn, k);
+
+const CAB_MODELS = [
+  cab("cab_212_blackface", "212 Blackface Double", 0, "Fender Blackface Twin Reverb combo, 2x12 Jensen", knobs(0, 20, 20, 50, 50, 50)),
+  cab("cab_412_hiway", "412 Hiway", 1, "Hiwatt cabinet, 4x12 Fane 12287", knobs(3, 12, 20, 50, 50, 45)),
+  cab("cab_6x9_super_o", "6x9 Super O", 2, "Supro S6616 combo, 6x9 oval speaker", knobs(5, 20, 20, 50, 50, 55)),
+  cab("cab_112_field_coil", "112 Field Coil", 3, "Gibson EH-185 combo, 1x12 field-coil speaker", knobs(6, 20, 20, 50, 50, 55)),
+  cab("cab_410_tweed", "410 Tweed", 4, "'59 Fender Tweed Bassman combo, 4x10 Jensen alnico", knobs(0, 20, 20, 50, 50, 50)),
+  cab("cab_112_bf_lux", "112 BF 'Lux", 5, "Fender Blackface Deluxe Reverb combo, 1x12 Oxford 12K5-6", knobs(0, 20, 20, 50, 50, 50)),
+  cab("cab_112_celest_12h", "112 Celest 12-H", 6, "Divided by 13 9/15 combo, 1x12 Celestion G12H Heritage", knobs(0, 20, 20, 50, 50, 50)),
+  cab("cab_212_phd_ported", "212 PhD Ported", 7, "Dr. Z Z Best ported cabinet, G12H Heritage + Vintage 30", knobs(0, 15, 20, 50, 55, 45)),
+  cab("cab_112_blue_bell", "112 Blue Bell", 8, "'61 Vox AC-15 combo, 1x12 Celestion Alnico Blue", knobs(0, 20, 20, 50, 50, 50)),
+  cab("cab_212_silver_bell", "212 Silver Bell", 9, "Vox AC-30 Top Boost, 2x12 Celestion Alnico Silver", knobs(2, 20, 20, 50, 50, 50)),
+  cab("cab_412_greenback", "412 Greenback 25", 10, "Marshall cabinet, 4x12 Celestion G12M Greenback", knobs(0, 12, 20, 50, 50, 50)),
+  cab("cab_412_blackback", "412 Blackback 30", 11, "Marshall cabinet, 4x12 Celestion Rola G12H30 Blackback", knobs(0, 12, 20, 50, 50, 50)),
+  cab("cab_412_brit_t75", "412 Brit T-75", 12, "Marshall cabinet, 4x12 Celestion G12T-75", knobs(1, 12, 20, 50, 50, 50)),
+  cab("cab_412_uber", "412 Uber", 13, "Bogner Uberschall cabinet, 4x12 G12T-75 + Vintage 30", knobs(0, 10, 20, 50, 50, 40)),
+  cab("cab_412_tread_v30", "412 Tread V-30", 14, "Mesa/Boogie cabinet, 4x12 Celestion Vintage 30", knobs(0, 10, 20, 50, 50, 40)),
+  cab("cab_412_xxl_v30", "412 XXL V-30", 15, "Engl Pro cabinet, 4x12 Celestion Vintage 30", knobs(3, 10, 20, 50, 50, 40)),
+  cab("cab_115_flip_top", "115 Flip Top", 16, "Ampeg B-15 cabinet, 1x15 CTS (bass)", knobs(10, 8, 20, 50, 55, 55)),
+  cab("cab_212_jazz_rivet", "212 Jazz Rivet", 17, "Roland JC-120 cabinet, 2x12", knobs(7, 20, 20, 50, 50, 50)),
+  cab("cab_108_small_tweed", "108 Small Tweed", 18, "Fender tweed Champ cabinet, 1x8", knobs(5, 20, 20, 50, 50, 55)),
+  cab("cab_810_sv_beast", "810 SV Beast", 19, "Ampeg SVT 8x10 cabinet (bass)", knobs(3, 8, 20, 50, 50, 45)),
+  cab("cab_410_rhino", "410 Rhino", 20, "Ampeg SVT-410HLF cabinet, 4x10 + horn (bass)", knobs(12, 8, 20, 50, 50, 50)),
+  cab("cab_412_classic", "412 Classic", 21, "this project's original cab voicing", knobs(0, 0, 75, 50, 50, 50)),
+];
+
+return { CabFx, CAB_MODELS };
+})();
+// ---- dsp/chain.js
+const { MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, Slot, FxChain } = (() => {
+// The model list and the signal chain (Source/DSP/Models.h, FxChain.*): eight FX slots plus the amp/cab block.
+
 /** Every model, in a fixed order (append only). Same list as the plugin; compare.mjs checks it. */
 const MODELS = (() => {
   const m = [];
   const add = (key, name, category, engine, variant, basedOn, knobs, extra = {}) =>
-    m.push({ key, name, category, engine, variant, basedOn, knobs, timeKnob: -1, noteKnob: -1, noteBeats: null, stereo: false, trails: false, ...extra });
+    m.push(model(key, name, category, engine, variant, basedOn, knobs, extra));
   add("empty", "Empty", CATEGORY.none, ENGINE.none, 0, "", []);
   add("noise_gate", "Noise Gate", CATEGORY.dynamics, ENGINE.gate, 0, "Noise suppressor with hysteresis",
     [decibels("Threshold", -90, -20, -65, 0.5), millis("Decay", 5, 500, 60, 80)]);
@@ -1069,7 +9015,7 @@ const MODELS = (() => {
       [hertz("Speed", 0.05, 10, 0.8, 1), percent("Depth", 50), percent(third, 50)], { stereo: true });
   mod("chorus", "Chorus", 0, "Stereo chorus", "Mix");
   mod("flanger", "Flanger", 1, "Stereo flanger", "Mix");
-  mod("phaser", "Phaser", 2, "6-stage phaser", "Mix");
+  mod("phaser", "Classic Phaser", 2, "6-stage phaser", "Mix"); // "Phaser" is the HD500X one (phaser_hd)
   mod("tremolo", "Tremolo", 3, "Tremolo, sine to square", "Shape");
 
   add("analog_delay", "Analog Delay", CATEGORY.delay, ENGINE.delay, 0, "Stereo delay, darker repeats",
@@ -1079,35 +9025,22 @@ const MODELS = (() => {
   add("room_reverb", "Room Reverb", CATEGORY.reverb, ENGINE.reverb, 0, "Freeverb room / hall",
     [percent("Size", 55), percent("Damp", 45), percent("Mix", 25), millis("Pre-Delay", 0, 500, 0, 120), choice("Note", REVERB_NOTE_NAMES, 0)],
     { timeKnob: 3, noteKnob: 4, noteBeats: REVERB_NOTE_BEATS, stereo: true, trails: true });
+
+  // the fx/ engines, each with its own model list (same order as Source/DSP/Models.h)
+  m.push(...DYNAMICS_MODELS);
+  m.push(...MOD_MODELS);
+  m.push(...FILTER_MODELS);
+  m.push(...PITCH_MODELS);
+  m.push(...EQ_MODELS);
+  m.push(...DELAY_MODELS);
+  m.push(...VERB_MODELS);
+  m.push(...WAH_MODELS);
+  m.push(...VOLUME_MODELS);
   return m;
 })();
 const MODEL_INDEX = new Map(MODELS.map((m, i) => [m.key, i]));
 const modelIndex = (key) => (typeof key === "number" ? clamp(key | 0, 0, MODELS.length - 1) : MODEL_INDEX.get(key) ?? 0);
 const modelInfo = (key) => MODELS[modelIndex(key)];
-
-// knob travel (0..1) <-> value, juce::NormalisableRange style
-function knobSkew(spec) { return spec.centre > 0 ? Math.log(0.5) / Math.log((spec.centre - spec.min) / (spec.max - spec.min)) : 1; }
-function knobFromNorm(spec, n) {
-  let p = clamp(n, 0, 1);
-  if (spec.centre > 0 && p > 0) p = Math.exp(Math.log(p) / knobSkew(spec));
-  let v = spec.min + (spec.max - spec.min) * p;
-  if (spec.step > 0) v = spec.min + spec.step * Math.round((v - spec.min) / spec.step);
-  return clamp(v, spec.min, spec.max);
-}
-function knobToNorm(spec, v) {
-  const p = clamp((v - spec.min) / (spec.max - spec.min), 0, 1);
-  return spec.centre > 0 ? Math.pow(p, knobSkew(spec)) : p;
-}
-function knobText(spec, v) {
-  switch (spec.unit) {
-    case UNIT.percent: return `${Math.round(v)} %`;
-    case UNIT.db: return `${v.toFixed(1)} dB`;
-    case UNIT.ms: return `${Math.round(v)} ms`;
-    case UNIT.hz: return `${v.toFixed(2)} Hz`;
-    case UNIT.choice: return spec.choices[clamp(Math.round(v), 0, spec.choices.length - 1)];
-    default: return v.toFixed(1);
-  }
-}
 
 /** A slot holding `key` with every knob at its default. */
 function makeSlot(key, on) {
@@ -1118,13 +9051,92 @@ function makeSlot(key, on) {
 /** Tempo sync: when the note knob is not "ms", the time knob follows the tempo. */
 function resolveTempo(slot, bpm) {
   const m = modelInfo(slot.model);
-  if (m.timeKnob < 0 || m.noteKnob < 0 || !(bpm > 0)) return slot;
-  const note = Math.round(slot.knobs[m.noteKnob]);
-  if (note > 0) {
-    const spec = m.knobs[m.timeKnob];
-    slot.knobs[m.timeKnob] = f32(clamp((60000 / bpm) * m.noteBeats[note], spec.min, spec.max));
+  if (!(bpm > 0)) return slot;
+  for (const [timeKnob, noteKnob] of [[m.timeKnob, m.noteKnob], [m.timeKnob2, m.noteKnob2]]) {
+    if (timeKnob < 0 || noteKnob < 0) continue;
+    const note = Math.round(slot.knobs[noteKnob]);
+    if (note > 0) {
+      const spec = m.knobs[timeKnob];
+      slot.knobs[timeKnob] = f32(clamp((60000 / bpm) * m.noteBeats[note], spec.min, spec.max));
+    }
   }
   return slot;
+}
+
+// The amp block's own lists: amp models and speaker cabinets (with their microphones)
+const AMPS = AMP_MODELS;
+const CABS = CAB_MODELS;
+const MAX_AMP_KNOBS = 12;
+const MAX_CAB_KNOBS = 8;
+const DEFAULT_CAB_KEY = "cab_412_classic"; // the cab this project has always used
+const AMP_INDEX = new Map(AMPS.map((m, i) => [m.key, i]));
+const CAB_INDEX = new Map(CABS.map((m, i) => [m.key, i]));
+/** Index of an amp / cab key, or -1 for none ("" or unknown). */
+const ampIndex = (key) => AMP_INDEX.get(key) ?? -1;
+const cabIndex = (key) => CAB_INDEX.get(key) ?? -1;
+
+/** The cabinet an amp is usually played through (the HD500X selects it with the amp), or "" to keep the current one. */
+const USUAL_CABS = {
+  blackface_double_normal: "cab_212_blackface",
+  blackface_double_vibrato: "cab_212_blackface",
+  hiway_100: "cab_412_hiway",
+  super_o: "cab_6x9_super_o",
+  gibtone_185: "cab_112_field_coil",
+  tweed_b_man_normal: "cab_410_tweed",
+  tweed_b_man_bright: "cab_410_tweed",
+  blackface_lux_normal: "cab_112_bf_lux",
+  blackface_lux_vibrato: "cab_112_bf_lux",
+  divide_9_15: "cab_112_celest_12h",
+  phd_motorway: "cab_212_phd_ported",
+  class_a_15: "cab_112_blue_bell",
+  class_a_30_tb: "cab_212_silver_bell",
+  brit_j_45_normal: "cab_412_greenback",
+  brit_j_45_bright: "cab_412_greenback",
+  plexi_lead_100_normal: "cab_412_blackback",
+  plexi_lead_100_bright: "cab_412_blackback",
+  brit_p_75_normal: "cab_412_greenback",
+  brit_p_75_bright: "cab_412_greenback",
+  brit_j_800: "cab_412_brit_t75",
+  bomber_uber: "cab_412_uber",
+  treadplate: "cab_412_tread_v30",
+  angel_f_ball: "cab_412_xxl_v30",
+  line6_elektrik: "cab_412_xxl_v30",
+  solo_100_clean: "cab_412_tread_v30",
+  solo_100_crunch: "cab_412_tread_v30",
+  solo_100_od: "cab_412_tread_v30",
+  line6_doom: "cab_412_uber",
+  line6_epic: "cab_412_xxl_v30",
+  flip_top: "cab_115_flip_top",
+  pv_panama: "cab_412_tread_v30",
+  mahadeva: "cab_412_tread_v30",
+  brit_2204: "cab_412_brit_t75",
+  line6_insane: "cab_412_uber",
+  line6_big_bottom: "cab_412_uber",
+  line6_variaced_plexi: "cab_412_greenback",
+  line6_purge: "cab_412_xxl_v30",
+  line6_aggro: "cab_412_tread_v30",
+  line6_smash: "cab_412_brit_t75",
+  line6_octone: "cab_412_greenback",
+  jazz_rivet: "cab_212_jazz_rivet",
+  small_tweed: "cab_108_small_tweed",
+  mandarin_80: "cab_412_greenback",
+  a30_fawn_nrm: "cab_212_silver_bell",
+  a30_fawn_brt: "cab_212_silver_bell",
+  black_panel_pete: "cab_212_blackface",
+  line6_acoustic: "cab_212_jazz_rivet",
+  svt_nrm: "cab_810_sv_beast",
+  svt_brt: "cab_810_sv_beast",
+  g_cougar_800: "cab_410_rhino",
+};
+const defaultCabFor = (ampKey) => USUAL_CABS[ampKey] || "";
+
+/** An amp block with this amp and cab ("" = none), every knob at its default. */
+function makeAmp(ampKey, cabKey, on = true) {
+  const amp = ampIndex(ampKey), cab = cabIndex(cabKey);
+  const ampKnobs = new Array(MAX_AMP_KNOBS).fill(0), cabKnobs = new Array(MAX_CAB_KNOBS).fill(0);
+  if (amp >= 0) AMPS[amp].knobs.forEach((k, i) => (ampKnobs[i] = k.def));
+  if (cab >= 0) CABS[cab].knobs.forEach((k, i) => (cabKnobs[i] = k.def));
+  return { on, amp: amp >= 0 ? ampKey : "", cab: cab >= 0 ? cabKey : "", ampKnobs, cabKnobs };
 }
 
 /** The board as it first opens: Noise Gate > Screamer > cab > Chorus (off) > Analog Delay (off) > Room Reverb. */
@@ -1132,7 +9144,8 @@ function defaultBoard() {
   const slots = [makeSlot("noise_gate", true), makeSlot("screamer", true), makeSlot("chorus", false),
                  makeSlot("analog_delay", false), makeSlot("room_reverb", true), makeSlot("empty", false),
                  makeSlot("empty", false), makeSlot("empty", false)];
-  return { inputGainDb: 0, outputGainDb: 0, mute: false, cabOn: true, ampPosition: 2, eqOn: true, eq: defaultEq(), slots };
+  return { inputGainDb: 0, outputGainDb: 0, mute: false, amp: makeAmp("", DEFAULT_CAB_KEY, true), ampPosition: 2,
+           eqOn: true, eq: defaultEq(), humMode: 0, denoise: 0, slots };
 }
 const defaultParams = defaultBoard;
 
@@ -1143,76 +9156,153 @@ class Fade {
   isFullyOn() { return !this.amount.isSmoothing() && this.amount.current >= 1; }
 }
 
-/** One FX slot: an instance of every engine; picking another model fades the old one out, then the new one in. */
+const KIND = { none: 0, first: 1, insert: 2, send: 3 };
+const kindOf = (engine) =>
+  engine === ENGINE.none ? KIND.none
+  : engine <= ENGINE.reverb ? KIND.first
+  : engine === ENGINE.delayFx || engine === ENGINE.reverbFx ? KIND.send : KIND.insert;
+
+/** One FX slot: an instance of every engine; picking another model fades the old one out, then the new one in.
+    Three kinds of engine (see Source/DSP/FxChain.h): the first engines, inserts (with a warm-up for
+    modulation, filter and pitch) and sends (delay, reverb: wet only, their tails ring out when switched off). */
 class Slot {
   prepare(sampleRate, maxBlock) {
+    this.fs = sampleRate;
     this.gate = new NoiseGate(); this.gate.prepare(sampleRate);
     this.distortion = new Distortion(); this.distortion.prepare(sampleRate, maxBlock);
     this.modulation = new Modulation(); this.modulation.prepare(sampleRate);
     this.delay = new Delay(); this.delay.prepare(sampleRate);
     this.reverb = new ReverbFx(); this.reverb.prepare(sampleRate, maxBlock);
+
+    // the fx/ engines, by ENGINE number. Unlike the C++ (which owns them all up front, so the audio thread never
+    // allocates), each one is created the first time its slot needs it: a phone need not hold 8 of everything.
+    this.maxBlock = maxBlock;
+    this.refs = new Array(ENGINE.cabFx + 1).fill(null);
+    this.makers = new Array(ENGINE.cabFx + 1).fill(null);
+    this.makers[ENGINE.dynamicsFx] = () => new DynamicsFx();
+    this.makers[ENGINE.modFx] = () => new ModFx();
+    this.makers[ENGINE.filterFx] = () => new FilterFx();
+    this.makers[ENGINE.pitchFx] = () => new PitchFx();
+    this.makers[ENGINE.eqFx] = () => new EqFx();
+    this.makers[ENGINE.delayFx] = () => new DelayFx();
+    this.makers[ENGINE.reverbFx] = () => new VerbFx();
+    this.makers[ENGINE.wahFx] = () => new WahFx();
+    this.makers[ENGINE.volumeFx] = () => new VolumeFx();
+
     this.fade = new Fade(sampleRate);
+    this.send = new Smoothed(0); this.send.reset(sampleRate, 0.03);
+    this.mix = new Smoothed(0); this.mix.reset(sampleRate, 0.05);
     this.active = this.requested = 0;
     this.on = false; this.needsReset = false;
+    this.warmupLeft = 0; this.running = false; this.silentSamples = 0;
     this.knobs = new Float32Array(MAX_KNOBS); this.pendingKnobs = new Float32Array(MAX_KNOBS);
     this.reset();
+  }
+  ref() {
+    const engine = MODELS[this.active].engine;
+    if (!this.refs[engine] && this.makers[engine]) {
+      this.refs[engine] = this.makers[engine]();
+      this.refs[engine].prepare(this.fs, this.maxBlock);
+    }
+    return this.refs[engine];
   }
   reset() {
     for (const e of [this.gate, this.distortion, this.modulation, this.delay, this.reverb]) e.reset();
     if (this.active !== this.requested) this.knobs.set(this.pendingKnobs);
     this.active = this.requested;
     this.needsReset = false;
+    this.warmupLeft = 0;
+    this.silentSamples = 0;
     this.configure(); this.resetEngine(); this.configure();
-    const info = MODELS[this.active];
-    this.fade.amount.setCurrentAndTarget(info.engine !== ENGINE.none && (this.on || info.trails) ? 1 : 0);
+
+    const info = MODELS[this.active], kind = kindOf(info.engine);
+    const audible = kind === KIND.send || (kind === KIND.first && info.trails) ? true : this.on;
+    this.fade.amount.setCurrentAndTarget(kind !== KIND.none && audible ? 1 : 0);
+    this.running = kind === KIND.send && this.on;
+    this.send.setCurrentAndTarget(this.running ? 1 : 0);
+    if (kind === KIND.send && this.ref()) this.mix.setCurrentAndTarget(f32(this.ref().getMix()));
   }
   setParameters(p) {
     this.requested = modelIndex(p.model);
     this.on = !!p.on;
     if (this.requested === this.active) this.knobs.set(p.knobs); else this.pendingKnobs.set(p.knobs);
-    if (MODELS[this.active].engine === ENGINE.none) this.fade.amount.setCurrentAndTarget(0);
+
+    const activeKind = kindOf(MODELS[this.active].engine);
+    if (activeKind === KIND.none || (activeKind === KIND.send && !this.running && this.requested !== this.active))
+      this.fade.amount.setCurrentAndTarget(0);
     if (this.requested !== this.active && this.fade.isOff()) this.start();
     this.configure();
-    const info = MODELS[this.active];
-    this.fade.set(this.requested === this.active && info.engine !== ENGINE.none && (this.on || info.trails));
+
+    const info = MODELS[this.active], same = this.requested === this.active;
+    switch (kindOf(info.engine)) {
+      case KIND.none: this.fade.set(false); break;
+      case KIND.first: this.fade.set(same && (this.on || info.trails)); break;
+      case KIND.send: this.fade.set(same); break;
+      default:
+        if (!(same && this.on)) this.fade.set(false);
+        else if (!this.needsReset && this.warmupLeft === 0) this.fade.set(true);
+    }
   }
   start() {
     this.active = this.requested;
     this.knobs.set(this.pendingKnobs);
-    this.needsReset = false;
-    this.configure(); this.resetEngine(); this.configure();
+    this.warmupLeft = 0;
+    this.running = false;
+    this.silentSamples = 0;
+    if (kindOf(MODELS[this.active].engine) === KIND.first) {
+      this.needsReset = false;
+      this.configure(); this.resetEngine(); this.configure();
+    } else this.needsReset = true;
   }
   configure() {
     const info = MODELS[this.active], k = this.knobs, enabled = this.on && this.active === this.requested;
     switch (info.engine) {
+      case ENGINE.none: break;
       case ENGINE.gate: this.gate.setParameters(k[0], k[1]); break;
       case ENGINE.distortion: this.distortion.setModel(info.variant); this.distortion.setParameters(k); break;
       case ENGINE.modulation: this.modulation.setParameters(info.variant, k[0], f32(k[1] / 100), f32(k[2] / 100)); break;
       case ENGINE.delay: this.delay.setParameters(enabled, k[0], f32(k[2] / 100), f32(k[3] / 100), f32(k[4] / 10)); break;
       case ENGINE.reverb: this.reverb.setParameters(enabled, f32(k[0] / 100), f32(k[1] / 100), f32(k[2] / 100), k[3]); break;
-      default: break;
+      default: { const e = this.ref(); if (e) { e.setModel(info.variant); e.setParameters(k); } }
     }
   }
   resetEngine() {
     switch (MODELS[this.active].engine) {
+      case ENGINE.none: break;
       case ENGINE.gate: this.gate.reset(); break;
       case ENGINE.distortion: this.distortion.reset(); break;
       case ENGINE.modulation: this.modulation.restart(); break;
       case ENGINE.delay: this.delay.reset(); break;
       case ENGINE.reverb: this.reverb.reset(); break;
-      default: break;
+      default: { const e = this.ref(); if (e) e.reset(); }
     }
   }
   process(left, right, n, scratch) {
     const info = MODELS[this.active];
-    // the chorus / flanger lines always hold the slot's recent input (see the C++)
+    // the original chorus / flanger lines always hold the slot's recent input (see the C++)
     if (info.engine !== ENGINE.modulation || this.fade.isOff()) this.modulation.feed(left, right, n);
-    if (info.engine === ENGINE.none) return;
+    switch (kindOf(info.engine)) {
+      case KIND.none: break;
+      case KIND.first: this.processFirst(left, right, n, scratch); break;
+      case KIND.insert: if (this.ref()) this.processInsert(left, right, n, scratch); break;
+      default: if (this.ref()) this.processSend(left, right, n, scratch);
+    }
+  }
+  crossfade(left, right, n, scratch) {
+    const a = this.fade.amount, dl = scratch.dryLeft, dr = scratch.dryRight;
+    for (let i = 0; i < n; ++i) {
+      const g = a.next();
+      left[i] = dl[i] + g * (left[i] - dl[i]);
+      right[i] = dr[i] + g * (right[i] - dr[i]);
+    }
+  }
+  processFirst(left, right, n, scratch) {
+    const info = MODELS[this.active];
     if (this.fade.isOff()) { this.needsReset = true; return; }
     if (this.needsReset) { if (info.engine !== ENGINE.modulation) this.resetEngine(); this.needsReset = false; }
 
-    const full = this.fade.isFullyOn(), dl = scratch.dryLeft, dr = scratch.dryRight;
-    if (!full) { dl.set(left.subarray(0, n)); dr.set(right.subarray(0, n)); }
+    const full = this.fade.isFullyOn();
+    if (!full) { scratch.dryLeft.set(left.subarray(0, n)); scratch.dryRight.set(right.subarray(0, n)); }
     if (info.stereo) {
       if (info.engine === ENGINE.modulation) this.modulation.process(left, right, n);
       else if (info.engine === ENGINE.delay) this.delay.process(left, right, n);
@@ -1223,10 +9313,128 @@ class Slot {
       if (info.engine === ENGINE.gate) this.gate.process(m, n); else this.distortion.process(m, n);
       for (let i = 0; i < n; ++i) left[i] = right[i] = m[i];
     }
+    if (!full) this.crossfade(left, right, n, scratch);
+  }
+  processInsert(left, right, n, scratch) {
+    const e = this.ref(), wanted = this.on && this.requested === this.active;
+    if (!wanted && this.fade.isOff()) { this.needsReset = true; this.warmupLeft = 0; return; }
+
+    if (this.needsReset) {
+      e.reset();
+      this.needsReset = false;
+      const engine = MODELS[this.active].engine;
+      const needsWarmup = engine === ENGINE.modFx || engine === ENGINE.filterFx || engine === ENGINE.pitchFx;
+      this.warmupLeft = needsWarmup ? Math.floor(0.05 * this.fs) : 0;
+      if (this.warmupLeft === 0) this.fade.set(wanted);
+    }
+    if (this.warmupLeft > 0) {
+      const wl = scratch.wetLeft.subarray(0, n), wr = scratch.wetRight.subarray(0, n);
+      wl.set(left.subarray(0, n)); wr.set(right.subarray(0, n));
+      e.process(wl, wr, n);
+      this.warmupLeft = Math.max(0, this.warmupLeft - n);
+      if (this.warmupLeft === 0) this.fade.set(wanted);
+      return;
+    }
+    if (this.fade.isFullyOn()) { e.process(left, right, n); return; }
+    scratch.dryLeft.set(left.subarray(0, n)); scratch.dryRight.set(right.subarray(0, n));
+    e.process(left, right, n);
+    this.crossfade(left, right, n, scratch);
+  }
+  processSend(left, right, n, scratch) {
+    const e = this.ref(), enabled = this.on && this.requested === this.active;
+    if (!this.running) {
+      if (!enabled) return;
+      e.reset();
+      this.running = true;
+      this.needsReset = false;
+      this.silentSamples = 0;
+      this.send.setCurrentAndTarget(0);
+      this.mix.setCurrentAndTarget(f32(e.getMix()));
+    } else if (this.needsReset) { e.reset(); this.needsReset = false; }
+
+    this.send.setTarget(enabled ? 1 : 0);
+    this.mix.setTarget(f32(e.getMix()));
+
+    const gain = scratch.gain, dl = scratch.dryLeft, dr = scratch.dryRight;
+    const wl = scratch.wetLeft.subarray(0, n), wr = scratch.wetRight.subarray(0, n);
+    for (let i = 0; i < n; ++i) {
+      const g = this.send.next();
+      gain[i] = g;
+      dl[i] = left[i]; dr[i] = right[i];
+      wl[i] = left[i] * g; wr[i] = right[i] * g;
+    }
+    if (e.processDry) e.processDry(dl.subarray(0, n), dr.subarray(0, n), n);
+    e.process(wl, wr, n);
+
+    const fullFade = this.fade.isFullyOn();
+    let peak = 0;
+    for (let i = 0; i < n; ++i) {
+      const m = this.mix.next();
+      const f = fullFade ? 1 : this.fade.amount.next();
+      const dryGain = Math.min(1, 2 - 2 * m), wetGain = Math.min(1, 2 * m);
+      const a = gain[i] * f, l = wl[i], r = wr[i];
+      left[i] += a * (dl[i] * dryGain - left[i]) + f * wetGain * l;
+      right[i] += a * (dr[i] * dryGain - right[i]) + f * wetGain * r;
+      peak = Math.max(peak, Math.abs(l), Math.abs(r));
+    }
+    if (!enabled && !this.send.isSmoothing()) {
+      this.silentSamples = peak < 1e-5 ? this.silentSamples + n : 0;
+      if (this.silentSamples > e.getTailSeconds() * this.fs) this.running = false;
+    } else this.silentSamples = 0;
+  }
+}
+
+/** The amp block: amp model -> speaker cabinet + microphone (both mono; either can be "none").
+    Switching it, picking another amp or cab, or moving it crossfades through the dry signal. */
+class AmpBlock {
+  prepare(sampleRate, maxBlock) {
+    this.amp = new AmpFx(); this.amp.prepare(sampleRate, maxBlock);
+    this.cab = new CabFx(); this.cab.prepare(sampleRate, maxBlock);
+    this.fade = new Fade(sampleRate);
+    const none = () => ({ on: true, amp: -1, cab: -1, ampKnobs: new Float32Array(MAX_AMP_KNOBS), cabKnobs: new Float32Array(MAX_CAB_KNOBS) });
+    this.active = none(); this.requested = none();
+    this.needsReset = true; this.held = false;
+    this.reset();
+  }
+  static copy(from, to) {
+    to.on = from.on; to.amp = from.amp; to.cab = from.cab;
+    to.ampKnobs.set(from.ampKnobs); to.cabKnobs.set(from.cabKnobs);
+  }
+  reset() {
+    AmpBlock.copy(this.requested, this.active);
+    this.configure();
+    this.amp.reset(); this.cab.reset();
+    this.needsReset = false;
+    const a = this.active;
+    this.fade.amount.setCurrentAndTarget(a.on && !this.held && (a.amp >= 0 || a.cab >= 0) ? 1 : 0);
+  }
+  setParameters(p, hold) {
+    const r = this.requested, a = this.active;
+    r.on = !!p.on; r.amp = ampIndex(p.amp); r.cab = cabIndex(p.cab);
+    r.ampKnobs.set(p.ampKnobs); r.cabKnobs.set(p.cabKnobs);
+    this.held = hold;
+    const same = () => r.amp === a.amp && r.cab === a.cab;
+    if (same()) AmpBlock.copy(r, a);
+    else if (this.fade.isOff()) { AmpBlock.copy(r, a); this.needsReset = true; }
+    this.configure();
+    this.fade.set(r.on && !hold && same() && (a.amp >= 0 || a.cab >= 0));
+  }
+  configure() {
+    const a = this.active;
+    if (a.amp >= 0) { this.amp.setModel(a.amp); this.amp.setParameters(a.ampKnobs); }
+    if (a.cab >= 0) { this.cab.setModel(a.cab); this.cab.setParameters(a.cabKnobs); }
+  }
+  isOff() { return this.fade.isOff(); }
+  process(left, right, n, scratch) {
+    if (this.fade.isOff()) { this.needsReset = true; return; }
+    if (this.needsReset) { this.amp.reset(); this.cab.reset(); this.needsReset = false; }
+    const full = this.fade.isFullyOn(), dl = scratch.dryLeft, dr = scratch.dryRight;
+    if (!full) { dl.set(left.subarray(0, n)); dr.set(right.subarray(0, n)); }
+    if (this.active.amp >= 0) this.amp.process(left, right, n);
+    if (this.active.cab >= 0) this.cab.process(left, right, n);
     if (!full) {
-      const a = this.fade.amount;
       for (let i = 0; i < n; ++i) {
-        const g = a.next();
+        const g = this.fade.amount.next();
         left[i] = dl[i] + g * (left[i] - dl[i]);
         right[i] = dr[i] + g * (right[i] - dr[i]);
       }
@@ -1241,26 +9449,30 @@ class FxChain {
     this.maxBlock = Math.max(1, maxBlock);
     this.slots = Array.from({ length: NUM_SLOTS }, () => { const s = new Slot(); s.prepare(sampleRate, this.maxBlock); return s; });
     this.ampPosition = this.requestedAmpPosition = 2;
-    this.cabWanted = true;
-    this.cab = new CabSim(); this.cab.prepare(sampleRate);
+    this.ampBlock = new AmpBlock(); this.ampBlock.prepare(sampleRate, this.maxBlock);
+    this.hum = new HumFilter(); this.hum.prepare(sampleRate);
+    this.denoiser = new Denoiser(); this.denoiser.prepare(sampleRate);
     this.eqLeft = new Equalizer(); this.eqLeft.prepare(sampleRate);
     this.eqRight = new Equalizer(); this.eqRight.prepare(sampleRate);
-    this.cabFade = new Fade(sampleRate); this.eqFade = new Fade(sampleRate);
-    this.cabNeedsReset = this.eqNeedsReset = true;
+    this.eqFade = new Fade(sampleRate);
+    this.eqNeedsReset = true;
     this.inputGain = new Smoothed(1); this.outputGain = new Smoothed(1);
     this.inputGain.reset(sampleRate, 0.05); this.outputGain.reset(sampleRate, 0.05);
     this.mono = new Float32Array(this.maxBlock);
-    this.scratch = { dryLeft: new Float32Array(this.maxBlock), dryRight: new Float32Array(this.maxBlock), mid: new Float32Array(this.maxBlock) };
+    const buffer = () => new Float32Array(this.maxBlock);
+    this.scratch = { dryLeft: buffer(), dryRight: buffer(), mid: buffer(), wetLeft: buffer(), wetRight: buffer(), gain: buffer() };
     this.spareR = new Float32Array(this.maxBlock);
     this.analyzerTap = null;
     this.reset();
   }
   reset() {
     for (const s of this.slots) s.reset();
-    this.cab.reset(); this.eqLeft.reset(); this.eqRight.reset();
-    this.cabNeedsReset = this.eqNeedsReset = false;
     this.ampPosition = this.requestedAmpPosition;
-    this.cabFade.amount.setCurrentAndTarget(this.cabWanted ? 1 : 0);
+    this.ampBlock.reset();
+    this.hum.reset();
+    this.denoiser.reset();
+    this.eqLeft.reset(); this.eqRight.reset();
+    this.eqNeedsReset = false;
     this.eqFade.amount.setCurrentAndTarget(this.eqFade.amount.target);
     this.inputGain.setCurrentAndTarget(this.inputGain.target);
     this.outputGain.setCurrentAndTarget(this.outputGain.target);
@@ -1271,12 +9483,13 @@ class FxChain {
     this.outputGain.setTarget(p.mute ? 0 : f32(dbToGain(p.outputGainDb)));
     for (let s = 0; s < NUM_SLOTS; ++s) this.slots[s].setParameters(p.slots[s]);
     this.requestedAmpPosition = clamp(p.ampPosition | 0, 0, NUM_SLOTS);
-    this.cabWanted = !!p.cabOn;
-    if (this.requestedAmpPosition !== this.ampPosition && this.cabFade.isOff()) this.ampPosition = this.requestedAmpPosition;
-    this.cabFade.set(this.cabWanted && this.requestedAmpPosition === this.ampPosition);
+    if (this.requestedAmpPosition !== this.ampPosition && this.ampBlock.isOff()) this.ampPosition = this.requestedAmpPosition;
+    this.ampBlock.setParameters(p.amp, this.requestedAmpPosition !== this.ampPosition);
     this.eqFade.set(p.eqOn);
     this.eqLeft.setParameters(p.eq);
     this.eqRight.setParameters(p.eq);
+    this.hum.setMode(p.humMode || 0);
+    this.denoiser.setAmount(p.denoise || 0);
   }
   getActiveModel(slot) { return MODELS[this.slots[slot].active].key; }
   /** Mono in, stereo out. outRight may be null for a mono mix. */
@@ -1296,13 +9509,15 @@ class FxChain {
       m[i] = input[i] * this.inputGain.next();
       this.inputPeak = Math.max(this.inputPeak, Math.abs(m[i]));
     }
+    this.hum.process(m, n); // before anything can amplify the hum
     for (let i = 0; i < n; ++i) left[i] = right[i] = m[i];
     for (let s = 0; s < NUM_SLOTS; ++s) {
-      if (s === this.ampPosition) this.runCab(left, right, n);
+      if (s === this.ampPosition) this.ampBlock.process(left, right, n, this.scratch);
       this.slots[s].process(left, right, n, this.scratch);
     }
-    if (this.ampPosition >= NUM_SLOTS) this.runCab(left, right, n);
+    if (this.ampPosition >= NUM_SLOTS) this.ampBlock.process(left, right, n, this.scratch);
     this.runEq(left, right, n);
+    this.denoiser.process(left, right, n);
     if (this.analyzerTap) {
       const mid = this.scratch.mid;
       for (let i = 0; i < n; ++i) mid[i] = 0.5 * (left[i] + right[i]);
@@ -1313,19 +9528,6 @@ class FxChain {
       left[i] = clamp(left[i] * g, -2, 2);
       right[i] = clamp(right[i] * g, -2, 2);
       this.outputPeak = Math.max(this.outputPeak, Math.abs(left[i]), Math.abs(right[i]));
-    }
-  }
-  runCab(left, right, n) {
-    if (this.cabFade.isOff()) { this.cabNeedsReset = true; return; }
-    if (this.cabNeedsReset) { this.cab.reset(); this.cabNeedsReset = false; }
-    const m = this.scratch.mid;
-    for (let i = 0; i < n; ++i) m[i] = 0.5 * (left[i] + right[i]);
-    this.cab.process(m, n);
-    if (this.cabFade.isFullyOn()) { for (let i = 0; i < n; ++i) left[i] = right[i] = m[i]; return; }
-    for (let i = 0; i < n; ++i) {
-      const a = this.cabFade.amount.next();
-      left[i] += a * (m[i] - left[i]);
-      right[i] += a * (m[i] - right[i]);
     }
   }
   runEq(left, right, n) {
@@ -1342,6 +9544,13 @@ class FxChain {
     }
   }
 }
+
+
+return { MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, Slot, FxChain };
+})();
+// ---- dsp/tools.js
+const { PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer } = (() => {
+// Tuner, spectrum analyser, tap tempo and the test signals (no guitar needed).
 
 // ============================================================================
 // Tuner: YIN on input decimated to ~24 kHz
@@ -1758,13 +9967,16 @@ class TestSignalPlayer {
   }
 }
 
-return { PI, dbToGain, gainToDb, Smoothed, Biquad, OnePole, DcBlocker, DelayLine, NoiseGate, OVERSAMPLER_COEFFS, Oversampler4x, Distortion, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, NUM_SLOTS, MAX_KNOBS, CATEGORY, CATEGORY_NAMES, ENGINE, UNIT, DELAY_NOTE_NAMES, DELAY_NOTE_BEATS, REVERB_NOTE_NAMES, REVERB_NOTE_BEATS, MODELS, modelIndex, modelInfo, knobSkew, knobFromNorm, knobToNorm, knobText, makeSlot, resolveTempo, defaultBoard, defaultParams, Slot, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
+return { PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
+})();
+return { PI, dbToGain, gainToDb, clamp, Smoothed, f32, Biquad, OnePole, DcBlocker, DelayLine, OVERSAMPLER_COEFFS, Oversampler4x, NoiseGate, Distortion, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, NUM_SLOTS, MAX_KNOBS, CATEGORY, CATEGORY_NAMES, CATEGORY_ORDER, ENGINE, UNIT, knobSpec, knob10, percent, decibels, levelDb, millis, hertz, freq, semitones, choice, DELAY_NOTE_NAMES, DELAY_NOTE_BEATS, REVERB_NOTE_NAMES, REVERB_NOTE_BEATS, model, knobSkew, knobFromNorm, knobToNorm, knobText, HUM_MODES, HumFilter, Denoiser, DynamicsFx, DYNAMICS_MODELS, ModFx, MOD_MODELS, FilterFx, FILTER_MODELS, PitchFx, PITCH_MODELS, EqFx, EQ_MODELS, DelayFx, DELAY_MODELS, VerbFx, VERB_MODELS, WahFx, WAH_MODELS, VolumeFx, VOLUME_MODELS, AmpFx, AMP_MODELS, CabFx, CAB_MODELS, MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, Slot, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
 })();
 
 // AudioWorklet processor: runs the whole pedalboard on the audio thread.
 // The build prepends dsp.js as `const DSP = (...)()`.
 //
-// Messages in:  {type:"params", params} | {type:"source", source} | {type:"pluck", index} | {type:"file", samples, rate} | {type:"playing", playing} | {type:"strum", index}
+// Messages in:  {type:"monitor", tuner, analyzer}  (what the page is showing; nothing is sent back for what is off)
+//               {type:"params", params} | {type:"source", source} | {type:"pluck", index} | {type:"file", samples, rate} | {type:"playing", playing} | {type:"strum", index}
 //               {type:"chord", index} | {type:"chordStop"} | {type:"chordSettings", pattern, bpm}
 // Messages out: {tuner, analyzer, inPeak, outPeak, progress} every 1024 frames
 //               (raw input for the tuner, post-EQ signal for the spectrum analyser)
@@ -1789,10 +10001,12 @@ class PedalboardProcessor extends AudioWorkletProcessor {
     if (init.chordPattern !== undefined) this.player.setChordPattern(init.chordPattern);
     if (init.chordTempo !== undefined) this.player.setChordTempo(init.chordTempo);
 
+    this.wantTuner = init.tuner !== false;
+    this.wantAnalyzer = init.analyzer !== false;
     this.mono = new Float32Array(128);
     this.postEq = new Float32Array(128);
     this.postEqLength = 0;
-    this.chain.analyzerTap = (data, n) => {
+    this.analyzerTap = (data, n) => {
       if (this.postEqLength + n > this.postEq.length) {
         const grown = new Float32Array((this.postEqLength + n) * 2);
         grown.set(this.postEq.subarray(0, this.postEqLength));
@@ -1801,14 +10015,15 @@ class PedalboardProcessor extends AudioWorkletProcessor {
       this.postEq.set(data.subarray(0, n), this.postEqLength);
       this.postEqLength += n;
     };
+    this.chain.analyzerTap = this.wantAnalyzer ? this.analyzerTap : null;
 
     this.newBatch();
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
 
   newBatch() {
-    this.tuner = new Float32Array(BATCH);
-    this.analyzer = new Float32Array(BATCH);
+    this.tuner = this.wantTuner ? new Float32Array(BATCH) : null;
+    this.analyzer = this.wantAnalyzer ? new Float32Array(BATCH) : null;
     this.fill = 0;
     this.inPeak = 0;
     this.outPeak = 0;
@@ -1816,6 +10031,10 @@ class PedalboardProcessor extends AudioWorkletProcessor {
 
   onMessage(m) {
     if (m.type === "params") { this.params = m.params; }
+    else if (m.type === "monitor") {
+      this.wantTuner = m.tuner; this.wantAnalyzer = m.analyzer; // from the next batch on
+      this.chain.analyzerTap = this.wantAnalyzer ? this.analyzerTap : null;
+    }
     else if (m.type === "source") { this.player.setSource(m.source); }
     else if (m.type === "pluck") { this.player.pluck(m.index); }
     else if (m.type === "strum") { this.player.strum(m.index); }
@@ -1844,8 +10063,8 @@ class PedalboardProcessor extends AudioWorkletProcessor {
     // hand raw input + post-EQ audio to the page in batches
     for (let i = 0; i < n; ) {
       const take = Math.min(n - i, BATCH - this.fill);
-      this.tuner.set(mono.subarray(i, i + take), this.fill);
-      this.analyzer.set(this.postEq.subarray(i, i + take), this.fill);
+      if (this.tuner) this.tuner.set(mono.subarray(i, i + take), this.fill);
+      if (this.analyzer && this.postEqLength >= i + take) this.analyzer.set(this.postEq.subarray(i, i + take), this.fill);
       this.fill += take;
       i += take;
       if (this.fill === BATCH) this.flush();
@@ -1859,7 +10078,7 @@ class PedalboardProcessor extends AudioWorkletProcessor {
     this.port.postMessage(
       { tuner: this.tuner, analyzer: this.analyzer, inPeak: this.inPeak, outPeak: this.outPeak, progress: this.player.progress,
         chord: this.player.loopingChord() },
-      [this.tuner.buffer, this.analyzer.buffer]
+      [this.tuner, this.analyzer].filter(Boolean).map((a) => a.buffer)
     );
     this.newBatch();
   }

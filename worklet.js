@@ -9847,7 +9847,7 @@ class TestSignalPlayer {
 
   setChordPattern(p) { this.chordPattern = clamp(p | 0, 0, 2); if (this.chordPattern === CHORD_PATTERNS.single) this.loopChord = this.nextLoopChord = -1; }
   setChordTempo(bpm) { this.chordTempo = clamp(bpm, 40, 240); }
-  /** Plays a chord with the current pattern; while looping, the new chord takes over on the next eighth note. */
+  /** Plays a chord with the current pattern; while looping, the new chord takes over on the next eighth note (strum loop: the next beat). */
   playChord(i) {
     if (!CHORDS[i]) return;
     if (this.chordPattern === CHORD_PATTERNS.single) { this.strum(i); return; }
@@ -9865,7 +9865,10 @@ class TestSignalPlayer {
     if (this.loopChord < 0) return;
     const stepLength = Math.max(1, Math.round((this.fs * 30) / this.chordTempo)); // eighth notes
     while (this.samplesToStep < n) {
-      if (this.nextLoopChord >= 0) { this.loopChord = this.nextLoopChord; this.nextLoopChord = -1; this.loopStep = 0; }
+      // a new chord takes over on the next eighth (the strum loop: on the next beat, so it stays on the beat)
+      if (this.nextLoopChord >= 0 && (this.chordPattern !== CHORD_PATTERNS.strumLoop || this.loopStep % 2 === 0)) {
+        this.loopChord = this.nextLoopChord; this.nextLoopChord = -1; this.loopStep = 0;
+      }
       this.playStep(CHORDS[this.loopChord], this.loopStep, this.samplesToStep);
       this.loopStep = (this.loopStep + 1) % 8;
       this.samplesToStep += stepLength;
@@ -9891,17 +9894,11 @@ class TestSignalPlayer {
       const s = step === 0 ? bass : step === 4 ? altBass : upper[step];
       if (step === 0) muteUnplayed();
       pluckAt(s, offset, step === 0 ? 0.3 : step === 4 ? 0.26 : 0.2);
-    } else {
-      // down, -, down, up, -, up, down, up
-      const kind = [1, 0, 1, 2, 0, 2, 1, 2][step];
-      if (kind === 1) {
-        muteUnplayed();
-        const spacing = Math.floor(0.009 * this.fs);
-        played.forEach((s, k) => pluckAt(s, offset + k * spacing, (step === 0 ? 0.19 : 0.16) * (1 - 0.04 * k)));
-      } else if (kind === 2) { // up-strums catch only the top four strings, lighter
-        const spacing = Math.floor(0.007 * this.fs);
-        played.slice(-4).reverse().forEach((s, k) => pluckAt(s, offset + k * spacing, 0.11));
-      }
+    } else if (step % 2 === 0) {
+      // one down-strum per beat (quarter notes), beat 1 a little stronger
+      muteUnplayed();
+      const spacing = Math.floor(0.009 * this.fs);
+      played.forEach((s, k) => pluckAt(s, offset + k * spacing, (step === 0 ? 0.19 : 0.16) * (1 - 0.04 * k)));
     }
   }
   /** Picking the demo riff or a file also starts it playing. */

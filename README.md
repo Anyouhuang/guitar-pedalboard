@@ -3,6 +3,7 @@
 在瀏覽器裡就能用的電吉他綜合效果器，介面和訊號鏈仿 Line 6 POD HD500X。電腦、手機都能用，不需要安裝。
 
 ### ▶ 立即使用：**https://anyouhuang.github.io/guitar-pedalboard/**
+### ⬇ Windows 版（獨立程式 + VST3 外掛）：[到 Releases 下載](https://github.com/Anyouhuang/guitar-pedalboard/releases/latest)
 
 ![網頁版畫面](images/web.png)
 
@@ -96,7 +97,18 @@ Line 6、POD 以及各型號原型機器的名稱是各自所有者的商標，�
 
 ## Windows 版
 
-同一套音效也有 Windows 版，包含獨立程式和 VST3 外掛，可以在 DAW 裡使用，也可以用 ASIO 達到較低的延遲。Windows 版目前沒有在這裡提供下載。
+同一套音效也有 Windows 版（Windows 10 / 11，64 位元），包含獨立程式和 VST3 外掛，可以在 DAW 裡使用，也可以用 ASIO 達到較低的延遲。
+
+**下載：[Releases](https://github.com/Anyouhuang/guitar-pedalboard/releases/latest)**
+
+| 檔案 | 說明 |
+|---|---|
+| `GuitarPedalboard-版本-Setup.exe` | 安裝程式（建議）：開始功能表捷徑，可選擇同時安裝 VST3 外掛，可以解除安裝 |
+| `GuitarPedalboard-版本-Windows-Portable.zip` | 免安裝版：解壓縮後直接執行；`Install-VST3.cmd` 可另外安裝外掛 |
+
+- **第一次執行可能出現「Windows 已保護您的電腦」**：程式沒有付費的程式碼簽章，按「其他資訊」→「仍要執行」即可。
+- 接吉他：Options → Audio/MIDI Settings 選 **ASIO**（延遲最低；沒有 ASIO 驅動可以選 Windows Audio (Exclusive Mode)），只勾吉他的輸入聲道，並取消勾選 Mute audio input。
+- 在 DAW 裡：重新掃描外掛，新增單聲道音軌、開啟錄音監聽，掛上 **Guitar Pedalboard**。
 
 ![Windows 版畫面](images/windows.png)
 
@@ -104,13 +116,25 @@ Line 6、POD 以及各型號原型機器的名稱是各自所有者的商標，�
 
 吉他的聲音只在你自己的瀏覽器裡處理，不會上傳到任何地方。設定只存在你的瀏覽器裡。
 
-## 這個儲存庫
+## 原始碼
 
-這裡只放網頁版建置好的檔案，由 GitHub Pages 提供網址：
-
-| 檔案 | 說明 |
+| 位置 | 內容 |
 |---|---|
-| `index.html` | 完整的網頁 |
-| `worklet.js` | 在瀏覽器音訊執行緒裡執行的音效處理 |
+| `Source/` | C++ 版（JUCE）：外掛 / 獨立程式、所有效果引擎（`Source/DSP/fx/`） |
+| `web/src/` | 網頁版原始碼：C++ 音效逐行移植的 JavaScript、介面 |
+| `Tests/` | 離線測試、各類效果的獨立測試 |
+| `packaging/` | Windows 安裝檔與免安裝版的打包腳本 |
+| `docs/` | HD500X 型號清單、效果引擎的介面規格 |
+| `index.html`、`worklet.js` | 建置好的網頁版，由 GitHub Pages 提供上面的網址 |
 
-網頁版的音效處理是 C++（JUCE）版逐行移植的 JavaScript。每次更新都會把同一段聲音分別跑過兩個版本做比對，確認每個效果的差異都在 -60 dB 以下。
+自行編譯、測試、程式結構的完整說明見 **[GUIDE.md](GUIDE.md)**。簡單來說：Windows 版需要 Visual Studio 2022 和 [JUCE](https://github.com/juce-framework/JUCE) 9.0.3；網頁版只需要 Node.js（`node web/build.mjs`）。
+
+網頁版的音效處理是 C++ 版逐行移植的 JavaScript。每次更新都會把同一段聲音分別跑過兩個版本做比對，確認每個效果的差異都在 -60 dB 以下。
+
+## 授權
+
+Copyright (C) 2026 Anyouhuang
+
+自由軟體，以 **[GNU Affero General Public License 第 3 版（AGPLv3）](LICENSE)** 授權：可以自由使用、修改和散佈；散佈修改後的版本、或把修改後的版本放在網路上給別人使用時，也必須以同樣的授權公開原始碼。本程式不提供任何擔保。
+
+使用的第三方元件：JUCE（AGPLv3）、Steinberg ASIO SDK（GPLv3，隨 JUCE 提供）、Steinberg VST3 SDK（MIT，隨 JUCE 提供）；網頁版的字型 Barlow、Barlow Condensed、IBM Plex Mono（SIL Open Font License）從 Google Fonts 載入。

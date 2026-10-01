@@ -1,0 +1,66 @@
+Guitar Pedalboard 電吉他效果器 - 快速上手
+==========================================
+
+【開啟】
+  雙擊 Guitar Pedalboard.exe（安裝版：開始功能表 / 桌面捷徑）。
+  第一次開啟約需 10 秒偵測音效裝置，請稍候。
+  若出現「Windows 已保護您的電腦」：這是因為程式沒有付費的數位簽章，
+  按「其他資訊」→「仍要執行」即可。
+
+【沒有吉他也能玩】
+  上方 INPUT 列選 DEMO RIFF，就會播放內建的吉他樂句，
+  可以直接試所有效果。也可以按 LOAD FILE... 載入自己的音檔
+  (WAV / MP3 / FLAC / AIFF / OGG)，或按 PLUCK 的 E A D G B e 撥空弦試調音器。
+  STOP / PLAY 可以停止或從頭播放樂句；按 PLUCK 時會自動停止樂句，只聽那根弦。
+  CHORD 列有 C D E F G A Am Dm Em 九個基本和弦：選 Arpeggio（分散和弦）或
+  Strum loop（每一拍往下刷一次）會一直循環彈奏，Single 只刷一次；BPM 欄位可輸入速度，
+  循環中按別的和弦會在下一拍換過去，STOP 停止。
+
+【接真的吉他】
+  1. 吉他接到錄音介面 (Audio Interface) 的 Hi-Z / Instrument 輸入。
+  2. 左上角 Options → Audio/MIDI Settings：
+       - Audio device type 選 ASIO（沒有 ASIO 驅動可選 Windows Audio (Exclusive Mode)）
+       - 只勾選吉他所在的輸入聲道
+       - Audio buffer size 設 64～128，延遲比較低
+       - 取消勾選 Mute audio input（JUCE 預設的防回授保護）
+  3. INPUT 列切到 LIVE INPUT。
+  4. 用耳機 / 監聽喇叭聽時開 AMP / CAB 方塊；接真的吉他音箱時關掉。
+  5. 有電源哼聲時，把 EQ 區左下角 NOISE 的 Hum 設成 60 Hz（台灣）；
+     嘶聲太大時把 Denoise 往右拉（30～50% 通常就夠）。
+  ※ 請戴耳機，不要用筆電內建麥克風 + 喇叭，否則會回授尖叫。
+
+【效果：HD500X 式訊號鏈】
+  中間那一排是訊號鏈，從左（IN）到右（OUT）依序處理：
+  8 個效果格 + 1 個 AMP / CAB 方塊，最後是整體 EQ 和雜訊處理。
+  - 點一個方塊：下方顯示它的旋鈕，可以換「效果類型」和「型號」
+  - 雙擊方塊，或踩右邊的腳踏開關：開 / 關
+  - 用滑鼠拖曳方塊，或按 < MOVE / MOVE >：換位置（例如把 AMP 放到破音前面）
+  - 空的格子：選一個效果類型就會放進去；CLEAR 清空
+  - 效果格可放 POD HD500X 的各類效果，共 118 種：
+      Dynamics 9、Distortion 15、Modulation 26、Filter / Synth 16、Pitch 3、
+      Preamp + EQ 6、Delay 20、Reverb 13、Wah 8、Volume / Pan 2
+  - AMP / CAB 方塊：50 種音箱頭、22 種音箱、14 種麥克風。
+    選音箱頭時會自動換成它通常搭配的音箱，之後可以自己換。
+  - 名稱照 HD500X 的清單，聲音是依原型機器自己做的近似模型，
+    不是 Line 6 的原始演算法，也沒有對照實機量測。
+  - 沒有的部分：Vocoder、FX Loop、Looper、雙音箱頭並聯、表情踏板
+    （Wah / Volume 的 Position 是一般旋鈕，可用 DAW 自動化控制）
+  - 右上的 TAP：跟著拍子點 3～4 下設定速度；延遲的 Note 選音符值（例如 1/4）時，
+    延遲時間會跟著這個速度（Room Reverb 的 pre-delay 也一樣）
+  - 旋鈕上下拖曳調整，雙擊回預設值
+  - EQ（在最後輸出端）：拖曳圖上的彩色點調整，滾輪調 Q，雙擊重設
+  - 調音器：點一下開 / 關
+
+【在 DAW 裡使用 (VST3)】
+  安裝版：安裝時勾選 VST3 plugin 即可。
+  免安裝版：對 Install-VST3.cmd 按右鍵「以系統管理員身分執行」，
+  外掛會被複製到 C:\Program Files\Common Files\VST3。
+  之後在 DAW 重新掃描外掛，掛上 Guitar Pedalboard。
+
+【授權與原始碼】
+  Copyright (C) 2026 Anyouhuang
+  本程式是自由軟體，以 GNU Affero General Public License 第 3 版（AGPLv3）授權，
+  全文見同一資料夾的 LICENSE.txt。本程式不提供任何擔保。
+  原始碼、網頁版與最新版下載：https://github.com/Anyouhuang/guitar-pedalboard
+  使用的第三方元件：JUCE（AGPLv3）、Steinberg ASIO SDK（GPLv3）、Steinberg VST3 SDK（MIT）。
+  型號名稱參考 Line 6 POD HD500X 的清單，聲音是自行撰寫的近似模型，與 Line 6 無關。

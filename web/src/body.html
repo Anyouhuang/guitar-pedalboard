@@ -1,0 +1,117 @@
+<div class="board">
+  <header class="rack">
+    <div class="brand">
+      <h1><span>Guitar</span> <span class="brand-bottom">Pedalboard</span></h1>
+      <p class="chain">8 FX slots + amp/cab · HD500X-style chain</p>
+    </div>
+    <button class="power" id="power" type="button" aria-pressed="false" title="Start / stop the sound">
+      <span class="power-led"></span><span class="power-label">POWER</span><span class="power-sub">9V DC</span>
+    </button>
+    <div class="io" id="io-in"></div>
+    <div class="tuner-wrap"><canvas id="tuner" role="button" tabindex="0" aria-pressed="true" aria-label="Chromatic tuner: click to switch it on or off" title="調音器：點一下開 / 關"></canvas></div>
+    <div class="io" id="io-out"></div>
+    <div class="toggles">
+      <button class="led-btn" id="cab" type="button" aria-pressed="true" title="The amp block (amp + speaker cabinet + microphone): keep a cabinet on for headphones, switch the block off when playing into a real guitar amp"><i></i>Amp / Cab</button>
+      <button class="led-btn" id="mute" type="button" data-led="red" aria-pressed="false" title="Silence the output, e.g. while tuning"><i></i>Mute</button>
+    </div>
+  </header>
+
+  <section class="source" aria-label="Input source">
+    <span class="eyebrow">Input</span>
+    <div class="chips" role="radiogroup" aria-label="Input source">
+      <button class="chip" type="button" role="radio" data-source="live" style="--chip: var(--led-green)" aria-checked="false">Live input</button>
+      <button class="chip" type="button" role="radio" data-source="demo" style="--chip: var(--amber)" aria-checked="true">Demo riff</button>
+      <button class="chip" type="button" role="radio" data-source="file" style="--chip: var(--led-blue)" aria-checked="false">Audio file</button>
+    </div>
+    <button class="btn transport" id="transport" type="button" title="Stop / play the demo riff or audio file (plucked strings still sound)"><span class="icon" aria-hidden="true"></span><span class="label">Stop</span></button>
+    <label class="btn" for="file">Load file…</label>
+    <input type="file" id="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aif,.aiff" hidden>
+    <div class="status">
+      <span id="status-text">按 POWER 開始播放內建的吉他樂句</span>
+      <div class="progress"><div id="progress-bar"></div></div>
+    </div>
+    <div class="pluck" aria-label="Pluck an open string">
+      <span class="eyebrow">Pluck</span>
+      <button type="button" data-string="0" title="Low E (82.41 Hz)">E</button>
+      <button type="button" data-string="1" title="A (110.00 Hz)">A</button>
+      <button type="button" data-string="2" title="D (146.83 Hz)">D</button>
+      <button type="button" data-string="3" title="G (196.00 Hz)">G</button>
+      <button type="button" data-string="4" title="B (246.94 Hz)">B</button>
+      <button type="button" data-string="5" title="High E (329.63 Hz)">e</button>
+    </div>
+    <div class="pluck chords" id="chords" aria-label="Strum a chord">
+      <span class="eyebrow">Chord</span>
+      <div class="chord-body">
+        <div class="chord-buttons" id="chord-buttons"></div>
+        <div class="chord-controls">
+          <select id="chord-pattern" aria-label="How the chord buttons play"></select>
+          <label class="bpm"><input id="chord-bpm" type="number" inputmode="numeric" min="40" max="240" step="1" value="90" aria-label="Chord loop tempo in BPM"> BPM</label>
+          <button class="btn" id="chord-stop" type="button" title="Stop the chord loop">Stop</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="signal-chain" aria-label="Signal chain">
+    <span class="jack" aria-hidden="true">In</span>
+    <ol class="chain-row" id="chain-row"></ol>
+    <span class="jack" aria-hidden="true">Out</span>
+    <div class="tempo-box">
+      <button class="tap" id="tap" type="button" title="跟著拍子點 3–4 下設定速度；選了音符值的延遲時間、殘響 pre-delay 會跟著這個速度"><i></i><span>TAP</span></button>
+      <label class="bpm"><input id="tempo" type="number" inputmode="decimal" min="30" max="300" step="1" value="120" aria-label="Tempo in BPM"> BPM</label>
+    </div>
+  </section>
+
+  <section class="editor" id="editor" aria-label="Selected block">
+    <span class="screw tl" aria-hidden="true"></span><span class="screw tr" aria-hidden="true"></span>
+    <span class="screw bl" aria-hidden="true"></span><span class="screw br" aria-hidden="true"></span>
+    <div class="ed-side">
+      <div class="ed-head"><h2 id="ed-title">Screamer</h2><span class="ed-slot" id="ed-slot">Slot 2</span></div>
+      <select id="ed-category" aria-label="Effect type"></select>
+      <select id="ed-model" aria-label="Model"></select>
+      <p class="ed-based" id="ed-based"></p>
+      <div class="ed-buttons">
+        <button class="btn" id="ed-left" type="button" title="往輸入端移一格">‹ Move</button>
+        <button class="btn" id="ed-right" type="button" title="往輸出端移一格">Move ›</button>
+        <button class="btn" id="ed-clear" type="button" title="清空這一格">Clear</button>
+      </div>
+    </div>
+    <div class="ed-knobs" id="ed-knobs"></div>
+    <div class="switch-plate">
+      <span class="pedal-led" id="ed-led" aria-hidden="true"></span>
+      <button class="stomp" id="ed-stomp" type="button" aria-label="On / off"></button>
+    </div>
+  </section>
+
+  <section class="eq" aria-label="Equalizer">
+    <div class="eq-side">
+      <h2>EQ</h2>
+      <p>6-band, at the output</p>
+      <button class="led-btn" id="eq-on" type="button" aria-pressed="true"><i></i>EQ on</button>
+      <button class="led-btn" id="analyzer" type="button" data-led="blue" aria-pressed="true" title="Live spectrum of the sound coming out of the EQ"><i></i>Analyzer</button>
+      <button class="btn" id="eq-flat" type="button" title="Reset every band">Flat</button>
+      <div class="noise">
+        <span class="eyebrow">Noise</span>
+        <select id="nr-hum" aria-label="Hum filter" title="濾掉電源哼聲（50 或 60 Hz 和它的泛音），作用在吉他輸入端。台灣、美洲是 60 Hz；歐洲、中國是 50 Hz。"></select>
+        <label class="denoise" title="降低嘶聲：彈奏時完全打開，聲音消失時把嘶聲壓下去。0 = 關閉，往右越強。">
+          <input id="nr-amount" type="range" min="0" max="100" step="1" value="0" aria-label="Denoise amount">
+          <output id="nr-amount-text">Denoise: off</output>
+        </label>
+      </div>
+    </div>
+    <div class="eq-graph"><canvas id="eq-canvas" aria-label="EQ curve: drag the coloured points"></canvas></div>
+    <div class="eq-bands">
+      <div class="band-chips" id="band-chips" role="radiogroup" aria-label="EQ band"></div>
+      <div class="band-knobs" id="band-knobs"></div>
+    </div>
+  </section>
+
+  <footer class="notes">
+    <p class="engine-info" id="engine-info">音訊狀態：尚未啟動（按 POWER）</p>
+    <p><strong>沒有吉他：</strong>選 DEMO RIFF 聽內建樂句，或 LOAD FILE 載入自己的音檔（吉他 DI 乾聲最適合）；按 PLUCK 撥空弦試調音器，按 CHORD 刷基本和弦（會自動停止樂句）。</p>
+    <p><strong>接吉他：</strong>吉他接 USB 錄音介面，選 LIVE INPUT 並允許使用麥克風；請戴耳機避免回授。延遲取決於瀏覽器和裝置，通常 10–40 ms。嵌在其他網站裡的頁面（例如 claude.ai）不能使用麥克風，請開 <a href="https://anyouhuang.github.io/guitar-pedalboard/" target="_blank" rel="noopener">anyouhuang.github.io/guitar-pedalboard</a>。</p>
+    <p><strong>訊號鏈：</strong>仿 POD HD500X：8 個效果格加一個 AMP / CAB 方塊，由左到右依序處理。點方塊在下方編輯，雙擊開關；用滑鼠拖曳或按 MOVE 換位置；空的格子選「效果類型」就能放效果。效果格有 HD500X 各類效果共 118 種（Dynamics、Distortion、Modulation、Filter / Synth、Pitch、Preamp + EQ、Delay、Reverb、Wah、Volume / Pan）；AMP / CAB 方塊有 50 種音箱頭、22 種音箱、14 種麥克風，選音箱頭時會自動換成它通常搭配的音箱。名稱照 HD500X 清單，聲音是依原型機器自己做的近似模型，不是 Line 6 的原始演算法。沒有 Vocoder、Looper、FX Loop 和表情踏板（Wah / Volume 的 Position 是一般旋鈕）。</p>
+    <p><strong>操作：</strong>旋鈕上下拖曳（按住 Shift 微調），雙擊回預設值，點一下後也可用滾輪或方向鍵；TAP 跟著拍子點 3–4 下設定速度，延遲的 Note 選音符值就會跟著速度；EQ 在最後輸出端，拖曳彩色點，游標在點上時滾輪調 Q。EQ 左下的 NOISE：Hum 濾掉電源哼聲（台灣選 60 Hz），Denoise 在不彈時壓低嘶聲。點調音器可以開 / 關。效果開得多時較舊的手機可能斷音，請減少同時開啟的效果。</p>
+    <p><strong>原始碼與授權：</strong>自由軟體，以 AGPLv3 授權，原始碼和 Windows 版（含 VST3 外掛）下載都在 <a href="https://github.com/Anyouhuang/guitar-pedalboard" target="_blank" rel="noopener">github.com/Anyouhuang/guitar-pedalboard</a>。型號名稱參考 Line 6 POD HD500X，與 Line 6 沒有關係。</p>
+  </footer>
+</div>

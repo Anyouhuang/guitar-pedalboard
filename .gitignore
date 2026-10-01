@@ -1,0 +1,14 @@
+# JUCE 9.0.3 is cloned here separately (see GUIDE.md)
+/JUCE/
+
+# build output
+/build/
+/build-standalone/
+/dist/
+/test_output/
+/web/dist/
+
+# local tools (Inno Setup, GitHub CLI) and editor settings
+/tools/
+/.claude/
+*.lnk

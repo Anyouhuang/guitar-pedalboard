@@ -11290,7 +11290,8 @@ function chainChanged() {
 
 function selectBlock(pos) {
   selectedPos = clamp(pos, 0, NUM_BLOCKS - 1);
-  renderChain();
+  // the tiles stay the same elements (only the highlight moves), so a click's second half still lands on them
+  for (const btn of chainRow.querySelectorAll(".block")) btn.setAttribute("aria-pressed", String(Number(btn.dataset.pos) === selectedPos));
   renderEditor();
 }
 
@@ -11338,17 +11339,22 @@ function toggleBlock(pos) {
 }
 
 // click / double-click / drag (mouse and pen; on touch screens the MOVE buttons reorder, so the page still scrolls)
-let chainDrag = null, suppressClick = false;
+let chainDrag = null, suppressClick = false, lastPointerType = "mouse", lastTap = { pos: -1, time: 0 };
+// Double-click is detected here rather than with "dblclick": switching a pedal re-renders the tiles, and a
+// "dblclick" aimed at a tile that was replaced in between never arrives. A mouse click carries the system's
+// click count (so its own double-click speed applies); taps on a touch screen are timed here.
 chainRow.addEventListener("click", (e) => {
   const btn = e.target.closest(".block");
   if (!btn || suppressClick) return;
-  selectBlock(Number(btn.dataset.pos));
-});
-chainRow.addEventListener("dblclick", (e) => {
-  const btn = e.target.closest(".block");
-  if (btn) toggleBlock(Number(btn.dataset.pos));
+  const pos = Number(btn.dataset.pos), now = performance.now();
+  const mouse = (e.pointerType || lastPointerType) === "mouse";
+  const double = e.detail === 2 || (!mouse && e.detail > 0 && lastTap.pos === pos && now - lastTap.time < 400);
+  lastTap = double ? { pos: -1, time: 0 } : { pos, time: now };
+  if (pos !== selectedPos) selectBlock(pos);
+  if (double) toggleBlock(pos);
 });
 chainRow.addEventListener("pointerdown", (e) => {
+  lastPointerType = e.pointerType;
   const btn = e.target.closest(".block");
   if (!btn || e.pointerType === "touch" || e.button !== 0) return;
   chainDrag = { from: Number(btn.dataset.pos), x: e.clientX, y: e.clientY, active: false, btn, target: -1, id: e.pointerId };

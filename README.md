@@ -35,7 +35,9 @@
 - **如果不小心按了「不允許」麥克風**：
   - iPhone Safari：網址列左邊「大小」→「網站設定」→「麥克風」→「允許」。
   - 電腦版 Chrome / Edge：網址列左邊的圖示 →「麥克風」→「允許」，然後重新整理頁面。
-- **延遲**：瀏覽器的延遲一般約 10–40 ms，視裝置而定；頁面最下方的「音訊狀態」會顯示瀏覽器回報的延遲。
+- **延遲**：頁面最下方的「音訊狀態」會顯示瀏覽器回報的輸出、輸入延遲。**延遲模式**預設是「低延遲」（向瀏覽器要求裝置最小的緩衝）；聲音斷斷續續時改成「穩定」。
+- **請用有線耳機**：藍牙耳機會多 100 ms 以上，無法即時彈奏。
+- 瀏覽器在 Windows 上只能和其他程式共用音效裝置，延遲有下限；要更低的延遲請用下面的 Windows 版。
 - **iPhone / iPad**：側邊的靜音開關會把網頁聲音關掉，請先打開。
 - **斷音**：效果開得很多時，較舊的手機可能會斷音，請減少同時開啟的效果。
 
@@ -107,7 +109,8 @@ Line 6、POD 以及各型號原型機器的名稱是各自所有者的商標，�
 | `GuitarPedalboard-版本-Windows-Portable.zip` | 免安裝版：解壓縮後直接執行；`Install-VST3.cmd` 可另外安裝外掛 |
 
 - **第一次執行可能出現「Windows 已保護您的電腦」**：程式沒有付費的程式碼簽章，按「其他資訊」→「仍要執行」即可。
-- 接吉他：Options → Audio/MIDI Settings 選 **ASIO**（延遲最低；沒有 ASIO 驅動可以選 Windows Audio (Exclusive Mode)），只勾吉他的輸入聲道，並取消勾選 Mute audio input。
+- 接吉他：Options → Audio/MIDI Settings 選 **ASIO**（延遲最低；沒有 ASIO 驅動可以選 Windows Audio (Exclusive Mode) 或 (Low Latency Mode)），Audio buffer size 設 64–256，只勾吉他的輸入聲道，並取消勾選 Mute audio input。
+- **標題下方會顯示目前的延遲**（驅動、緩衝大小、來回延遲；綠燈 15 ms 以下），點它可以直接開啟音訊設定。
 - 在 DAW 裡：重新掃描外掛，新增單聲道音軌、開啟錄音監聽，掛上 **Guitar Pedalboard**。
 
 ![Windows 版畫面](images/windows.png)

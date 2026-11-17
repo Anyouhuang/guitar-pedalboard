@@ -131,10 +131,17 @@ class DelayLine {
   getMaxDelay() { return this.buffer.length - 4; }
   push(x) { this.buffer[this.writePos] = x; if (++this.writePos === this.buffer.length) this.writePos = 0; }
   read(delay) {
-    delay = clamp(delay, 1, this.getMaxDelay());
-    const b = this.buffer, size = b.length, di = Math.floor(delay), frac = delay - di;
-    const at = (d) => { let i = this.writePos - d; while (i < 0) i += size; return b[i]; };
-    const xm1 = at(di - 1 < 1 ? 1 : di - 1), x0 = at(di), x1 = at(di + 1), x2 = at(di + 2);
+    // no closures or helper calls in here: this runs for every sample, and anything allocated on the audio
+    // thread has to be garbage-collected on the audio thread
+    const b = this.buffer, size = b.length, max = size - 4, w = this.writePos;
+    delay = delay < 1 ? 1 : delay > max ? max : delay;
+    const di = Math.floor(delay), frac = delay - di;
+    let im1 = w - (di - 1 < 1 ? 1 : di - 1), i0 = w - di, i1 = i0 - 1, i2 = i0 - 2;
+    if (im1 < 0) im1 += size;
+    if (i0 < 0) i0 += size;
+    if (i1 < 0) i1 += size;
+    if (i2 < 0) i2 += size;
+    const xm1 = b[im1], x0 = b[i0], x1 = b[i1], x2 = b[i2];
     const c1 = 0.5 * (x1 - xm1);
     const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;
     const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);

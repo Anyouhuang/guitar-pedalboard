@@ -111,8 +111,8 @@ EQ 在視窗最下方，圖上有兩層資訊：
 
 | 檔案 | 說明 |
 |---|---|
-| `dist\GuitarPedalboard-1.2.1-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
-| `dist\GuitarPedalboard-1.2.1-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
+| `dist\GuitarPedalboard-1.3.0-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
+| `dist\GuitarPedalboard-1.3.0-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
 
 - 程式已靜態連結 C++ 執行階段，**不需要另外安裝 Visual C++ Redistributable**，Windows 10 / 11 64 位元都能直接執行。
 - 因為沒有付費的程式碼簽章憑證，第一次執行可能出現「Windows 已保護您的電腦」：按「其他資訊」→「仍要執行」。
@@ -131,8 +131,32 @@ EQ 在視窗最下方，圖上有兩層資訊：
 - 修改網頁版：編輯 `web/src/`，執行 `node web/build.mjs` 重新產生 `web/dist/`，再用 `web\deploy-github.ps1` 發佈。
 - 麥克風權限：第一次選 LIVE INPUT 時瀏覽器會詢問，請按「允許」。如果按過「不允許」：iPhone Safari 點網址列左邊的「大小」圖示 →「網站設定」→「麥克風」→「允許」；電腦版 Chrome / Edge 點網址列左邊的圖示 →「麥克風」→「允許」，然後重新整理。
 - 瀏覽器規定 AudioWorklet 和麥克風只能在 HTTPS 或 localhost 使用，用 `http://電腦IP` 從手機連線是無法運作的。
-- 瀏覽器的延遲比 ASIO 高，一般約 10–40 ms，視裝置而定；要最低延遲請用 Windows 版 + ASIO。
+- 延遲：見下方「降低延遲」。頁面最下方的「音訊狀態」會顯示瀏覽器回報的輸出、輸入延遲和斷音次數。
 - iPhone / iPad：Web Audio 會被側邊的靜音開關關掉。頁面被嵌在別的網頁裡時（例如 claude.ai），聲音會改走 `<audio>` 媒體通道（跟影片一樣，不受靜音開關影響，延遲稍高）；放在自己的網站時則直接輸出，並把音訊類型設成「播放」。頁面最下方的「音訊狀態」會顯示目前走哪一條。
+
+## 降低延遲
+
+延遲（撥弦到聽見聲音）幾乎都來自音效裝置和系統的緩衝，效果本身只佔 0.1–0.3 ms。
+
+**Windows 版**（延遲最低的用法）
+
+- 標題下方會顯示目前的音訊驅動、緩衝大小和驅動回報的來回延遲，例如 `ASIO | 64 smp | 6.0 ms`；綠燈 15 ms 以下、黃燈 30 ms 以下、紅燈超過 30 ms。**點它會開啟音訊設定**。
+- 驅動類型的選擇順序：**ASIO**（錄音介面廠商的驅動）＞ **Windows Audio (Exclusive Mode)** ＞ **Windows Audio (Low Latency Mode)** ＞ Windows Audio。最後一種是程式第一次啟動時的預設，和其他程式共用裝置，Windows 的混音週期是 10 ms，延遲降不下去。
+- **Audio buffer size** 設 64–256 samples；聲音斷斷續續就往上調一級。
+- 沒有 ASIO 驅動的裝置（例如一般的 USB 音效卡）先試 Exclusive Mode；它會獨佔裝置，其他程式暫時沒有聲音。
+- `build\AudioProbe_artefacts\Release\AudioProbe.exe` 會列出這台電腦每種驅動類型能用的緩衝大小；加上 `open` 會實際開啟（靜音）並印出驅動回報的延遲。
+
+**網頁版**
+
+- 頁面最下方的 **延遲模式** 預設是「低延遲」：向瀏覽器要求裝置最小的輸出緩衝（`latencyHint: 0`），並把每次處理的區塊從 128 縮小到 64 個取樣（Chrome / Edge 153 以上的 `renderSizeHint`）。聲音斷斷續續時改成「穩定」。
+- 效果有多大取決於音效裝置的驅動：支援小緩衝的裝置，Chrome / Edge 在 Windows 上的輸出緩衝可以從 10 ms 降到約 3 ms；不支援的裝置不會有差別。實際數字請看「音訊狀態」。
+- 瀏覽器在 Windows 上只能用共用模式，不能用 ASIO 或獨佔模式，所以延遲有下限，通常比 Windows 版高出許多。
+- 輸入端已要求瀏覽器關閉回音消除、降噪、自動音量（這些語音處理會增加延遲、破壞音色）；如果瀏覽器沒有照做，頁面會提醒。
+
+**兩者都適用**
+
+- 用有線耳機或錄音介面的耳機孔。**藍牙耳機會多 100 ms 以上**，無法即時彈奏。
+- 輸入和輸出盡量用同一台錄音介面、同一個取樣率。
 
 ## 編譯好的檔案
 
@@ -150,7 +174,7 @@ EQ 在視窗最下方，圖上有兩層資訊：
 2. 開啟 `Guitar Pedalboard.exe`，按左上角 **Options → Audio/MIDI Settings**：
    - **Audio device type** 選 **ASIO**，選擇你的錄音介面驅動 (沒有 ASIO 驅動可以裝 [ASIO4ALL](https://asio4all.org/)，或改用 Windows Audio (Exclusive Mode))。
    - **Active input channels** 只勾吉他所在的那個輸入。
-   - **Audio buffer size** 設 64～128 samples，延遲比較低。
+   - **Audio buffer size** 設 64～128 samples，延遲比較低。設定好之後，視窗標題下方會顯示目前的延遲（見「降低延遲」）。
 3. 視窗上方黃色提示「Audio input is muted to avoid feedback loop」：這是 JUCE 預設的防回授保護，請到同一個設定畫面把 **Mute audio input** 取消勾選 (只要設定一次，之後會記住)。
    ⚠️ 請戴耳機或接音箱，不要用筆電內建麥克風 + 喇叭，否則會產生回授尖叫。
 4. 用耳機或監聽喇叭聽的時候請開 **AMP / CAB** 方塊；接真的吉他音箱時請關掉（或只留音箱頭、把 CAB 選成 No Cab）。
@@ -201,6 +225,7 @@ build\PedalTest_artefacts\Release\PedalTest.exe test_output
 - 測試訊號：撥弦的音準誤差 < 0.25 cent；DEMO RIFF 循環無接縫雜音；不同取樣率的音檔播放音高正確
 - TAP：穩定 / 不穩的點擊、停頓後重來、突然變速、按鍵彈跳都能正確處理；Reverb pre-delay 時間精準
 - 另外會在 `test_output\reference\` 輸出參考資料（含型號清單和一段不斷換型號、開關、移動方塊的腳本），給網頁版的 `node web/test/compare.mjs` 逐樣本比對
+- `node web/test/alloc.mjs`：量測網頁版每個效果在音訊執行緒上產生多少暫時記憶體（越少，瀏覽器在小緩衝下越不容易因垃圾回收而斷音）。這是比較用的報告，不是通過 / 失敗的測試
 - `node web/test/latency.mjs`：量測每個效果增加的延遲（每個破音型號約 0.1–0.25 ms、CAB 約 0.08 ms；整體延遲主要來自音訊介面、瀏覽器和耳機的輸入輸出緩衝）
 
 ## 程式碼結構
@@ -211,6 +236,7 @@ Source/
 ├─ PluginProcessor.*     參數定義、存檔/讀檔、音訊處理入口
 ├─ PluginEditor.*        主視窗排版
 ├─ TestSignalPlayer.h    測試訊號來源 (demo riff / 音檔 / 撥弦)
+├─ StandaloneAudio.h     獨立程式的音效裝置狀態（驅動、緩衝、延遲）與音訊設定視窗
 ├─ DSP/
 │  ├─ ModelTypes.h       型號資料的格式：類別、旋鈕（範圍、單位、預設值）、TAP 同步
 │  ├─ Models.h           型號清單（效果格、音箱頭、音箱），以及每個音箱頭通常搭配的音箱
@@ -233,6 +259,7 @@ Source/
 └─ UI/                   訊號鏈 (ChainStrip)、編輯區 (SlotEditor)、TAP、旋鈕、腳踏開關、電平表、調音器、EQ 畫面、輸入來源列
 Tests/RenderTest.cpp     離線測試
 Tests/UiSnapshot.cpp     不開視窗、不開音效裝置，把外掛畫面存成 PNG（檢查排版用）
+Tests/AudioProbe.cpp     列出這台電腦各種 Windows 音訊驅動類型的緩衝大小與延遲
 Tests/standalone/        各類效果引擎的獨立測試
 packaging/               Windows 安裝檔 (Inno Setup) 與免安裝版打包腳本，以及上傳到 GitHub 的腳本（原始碼、Releases）
 docs/                    HD500X 型號清單 (hd500x-models.md)、效果引擎的介面規格 (engine-contract.md)

@@ -49,6 +49,8 @@ PedalboardEditor::PedalboardEditor (PedalboardProcessor& p)
     for (auto* c : std::initializer_list<juce::Component*> { &tuner, &inputMeter, &outputMeter, &cabButton, &muteButton })
         addAndMakeVisible (c);
 
+    addChildComponent (latency); // shown once the standalone app has an audio device open
+
     setSize (editorWidth, editorHeight);
     startTimerHz (30);
 }
@@ -102,10 +104,13 @@ void PedalboardEditor::paint (juce::Graphics& g)
     g.drawText ("GUITAR", title.removeFromTop (28.0f), juce::Justification::centredLeft);
     g.setColour (ui::colours::drive);
     g.drawText ("PEDALBOARD", title.removeFromTop (28.0f), juce::Justification::centredLeft);
-    g.setFont (ui::plainFont (12.0f));
-    g.setColour (ui::colours::dimText);
-    g.drawFittedText ("8 FX slots + amp/cab, HD500X-style chain", title.removeFromTop (20.0f).toNearestInt(),
-                      juce::Justification::centredLeft, 1, 0.7f);
+    if (! latency.isVisible()) // the standalone app shows its audio latency on this line instead
+    {
+        g.setFont (ui::plainFont (12.0f));
+        g.setColour (ui::colours::dimText);
+        g.drawFittedText ("8 FX slots + amp/cab, HD500X-style chain", title.removeFromTop (20.0f).toNearestInt(),
+                          juce::Justification::centredLeft, 1, 0.7f);
+    }
 }
 
 void PedalboardEditor::resized()
@@ -119,6 +124,7 @@ void PedalboardEditor::resized()
     // header: title | input | tuner | master | buttons
     auto header = headerArea.reduced (18, 10);
     titleArea = header.removeFromLeft (230).toFloat().withSizeKeepingCentre (230.0f, 76.0f);
+    latency.setBounds (titleArea.withTrimmedTop (56.0f).toNearestInt());
 
     auto buttons = header.removeFromRight (104).withSizeKeepingCentre (104, 72);
     cabButton.setBounds (buttons.removeFromTop (32));
@@ -172,4 +178,14 @@ void PedalboardEditor::timerCallback()
 
     inputMeter.setPeak (processor.takeInputPeak());
     outputMeter.setPeak (processor.takeOutputPeak());
+
+    if (latencyTick++ % 15 == 0) // twice a second is plenty
+    {
+        const bool show = latency.refresh();
+        if (show != latency.isVisible())
+        {
+            latency.setVisible (show);
+            repaint (titleArea.toNearestInt());
+        }
+    }
 }

@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "UI/EqPanel.h"
+#include "UI/LatencyReadout.h"
 #include "UI/PedalLookAndFeel.h"
 #include "UI/ChainStrip.h"
 #include "UI/SlotEditor.h"
@@ -36,6 +37,8 @@ private:
     juce::Rectangle<float> titleArea;
 
     ui::TunerDisplay tuner;
+    ui::LatencyReadout latency; // standalone app only: driver, buffer and round trip, under the title
+    int latencyTick = 0;
     ui::LevelMeter inputMeter, outputMeter;
     juce::Slider inputKnob, masterKnob;
     juce::Label inputLabel, masterLabel;

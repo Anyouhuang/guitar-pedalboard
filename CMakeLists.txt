@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(GuitarPedalboard VERSION 1.2.1)
+project(GuitarPedalboard VERSION 1.3.0)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -111,6 +111,24 @@ if(PEDALBOARD_BUILD_TESTS)
         PRIVATE
             juce::juce_audio_utils
             juce::juce_dsp
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags)
+
+    # Lists the buffer sizes and latency each Windows audio driver type offers on this PC
+    juce_add_console_app(AudioProbe PRODUCT_NAME "AudioProbe")
+
+    target_sources(AudioProbe PRIVATE Tests/AudioProbe.cpp)
+
+    target_compile_definitions(AudioProbe
+        PRIVATE
+            JUCE_WEB_BROWSER=0
+            JUCE_USE_CURL=0
+            JUCE_ASIO=1)
+
+    target_link_libraries(AudioProbe
+        PRIVATE
+            juce::juce_audio_devices
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_warning_flags)

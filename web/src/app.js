@@ -152,6 +152,9 @@ loadAmp(DSP.defaultBoard().amp);
 let source = "demo";
 let playing = true; // demo riff / file transport (STOP / PLAY)
 let chordPattern = DSP.CHORD_PATTERNS.arpeggio, chordTempo = 90, loopingChord = -1;
+// "low": the smallest buffers the browser offers (the default). "stable": the browser's own choice, for a
+// device that crackles with the small ones.
+let latencyMode = "low";
 try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
   if (saved && saved.values) {
@@ -168,6 +171,7 @@ try {
     if (saved.source === "demo" || saved.source === "live") source = saved.source;
     if (Number.isInteger(saved.chordPattern) && saved.chordPattern >= 0 && saved.chordPattern <= 2) chordPattern = saved.chordPattern;
     if (Number.isFinite(saved.chordTempo)) chordTempo = clamp(Math.round(saved.chordTempo), 40, 240);
+    if (saved.latencyMode === "low" || saved.latencyMode === "stable") latencyMode = saved.latencyMode;
   }
 } catch { /* storage unavailable: defaults */ }
 
@@ -193,7 +197,7 @@ function persist() {
   const globals = {};
   for (const [id, v] of Object.entries(values)) if (!/^(s\d|ampk|cabk|ampModel|cabModel)/.test(id)) globals[id] = v;
   const slots = Array.from({ length: NUM_SLOTS }, (_, s) => readSlot(s));
-  try { localStorage.setItem(STORE_KEY, JSON.stringify({ values: globals, slots, amp: readAmp(), ampPosition, source, chordPattern, chordTempo })); } catch { /* ignore */ }
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ values: globals, slots, amp: readAmp(), ampPosition, source, chordPattern, chordTempo, latencyMode })); } catch { /* ignore */ }
 }
 
 function fxParams() {
@@ -212,7 +216,7 @@ function fxParams() {
 // ============================================================================
 // Audio engine
 const engine = { ctx: null, node: null, kind: "", mic: null, starting: null, wantOn: false, silentAudio: null,
-                 streamOut: null, outputElement: null };
+                 streamOut: null, outputElement: null, startedAt: 0, underrunsAtStart: -1 };
 const tunerDetector = new DSP.PitchDetector();
 const analyzer = new DSP.SpectrumAnalyzer();
 tunerDetector.prepare(48000);
@@ -340,6 +344,19 @@ function createScriptProcessorEngine(ctx, init) {
   return node;
 }
 
+/** The audio context, set up for the chosen latency mode.
+    Low: latencyHint 0 asks for the smallest output buffer the device has (on Windows Chrome / Edge that can be
+    a few ms instead of the usual 10, when the driver allows it), and renderSizeHint 64 (Chrome / Edge 153+)
+    halves the block the effects run in, so less audio waits between the device's buffers and ours.
+    Stable: "interactive", the browser's own low-latency choice, with its standard 128-sample blocks. */
+function createContext(Ctx) {
+  if (latencyMode === "low") {
+    try { return new Ctx({ latencyHint: 0, renderSizeHint: 64 }); } catch { /* a browser that refuses the size: next */ }
+    try { return new Ctx({ latencyHint: 0 }); } catch { /* fall through */ }
+  }
+  return new Ctx({ latencyHint: "interactive" });
+}
+
 /** Call directly from a tap/click handler (the first lines must run inside the gesture). */
 async function startAudio() {
   engine.wantOn = true;
@@ -356,7 +373,7 @@ async function startAudio() {
     setStatus("這個瀏覽器不支援 Web Audio，請改用新版 Safari、Chrome、Edge 或 Firefox。");
     return false;
   }
-  const ctx = new Ctx({ latencyHint: "interactive" });
+  const ctx = createContext(Ctx);
   unlockAudio(ctx);
 
   engine.starting = (async () => {
@@ -386,6 +403,8 @@ async function startAudio() {
     node.connect(useMediaElementOutput ? engine.streamOut : ctx.destination);
     engine.ctx = ctx;
     engine.node = node;
+    engine.underrunsAtStart = -1; // counted from a moment after the start (see renderEngineInfo)
+    engine.startedAt = performance.now();
     ctx.onstatechange = () => {
       const running = ctx.state === "running";
       setPower(running);
@@ -412,6 +431,24 @@ async function stopAudio() {
   setPower(false);
 }
 
+/** Switches the latency mode: the audio context's buffers are fixed when it is made, so a running engine is
+    replaced by a new one. Call from a click / change handler (the new context starts inside the gesture). */
+function setLatencyMode(mode) {
+  if (mode === latencyMode) return;
+  latencyMode = mode;
+  persist();
+  const old = { ctx: engine.ctx, mic: engine.mic, element: engine.outputElement };
+  const wasOn = !!old.ctx && old.ctx.state === "running";
+  if (old.ctx) old.ctx.onstatechange = null;
+  if (old.mic) old.mic.stream.getTracks().forEach((t) => t.stop());
+  if (old.element) { old.element.pause(); old.element.srcObject = null; }
+  engine.ctx = engine.node = engine.mic = engine.streamOut = engine.outputElement = engine.starting = null;
+  engine.kind = "";
+  if (old.ctx) old.ctx.close().catch(() => {});
+  if (wasOn) startAudio(); else setPower(false);
+  renderEngineInfo(performance.now(), true);
+}
+
 function onAudioData(m) {
   if (m.tuner && values.tunerOn) tunerDetector.pushSamples(m.tuner);
   if (m.analyzer) analyzer.push(m.analyzer);
@@ -432,11 +469,21 @@ async function enableMic() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       // no voice processing, and ask for the smallest input buffer the device allows
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1, latency: 0 },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, voiceIsolation: false, channelCount: 1, latency: 0 },
     });
+    const track = stream.getAudioTracks()[0];
     const src = engine.ctx.createMediaStreamSource(stream);
     src.connect(engine.node);
-    engine.mic = { stream, src, track: stream.getAudioTracks()[0] };
+    engine.mic = { stream, src, track };
+    // some browsers keep their voice processing on unless told again; it colours the guitar and adds delay
+    const processed = () => {
+      const st = track.getSettings ? track.getSettings() : {};
+      return st.echoCancellation === true || st.noiseSuppression === true || st.autoGainControl === true;
+    };
+    if (processed()) {
+      await track.applyConstraints({ echoCancellation: false, noiseSuppression: false, autoGainControl: false }).catch(() => {});
+      if (processed()) setStatus("瀏覽器仍在對輸入做語音處理（回音消除／降噪／自動音量），會影響音色並增加延遲。請在系統或瀏覽器的麥克風設定裡關閉這些功能。", 20000);
+    }
     return true;
   } catch (err) {
     const denied = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
@@ -1337,27 +1384,61 @@ function drawTuner() {
 // Audio status line (helps when there's no sound on a particular device)
 const engineInfo = $("#engine-info");
 const STATE_NAMES = { running: "運作中", suspended: "暫停", interrupted: "被系統中斷", closed: "已關閉" };
-let lastInfo = 0;
-function renderEngineInfo(t) {
-  if (t - lastInfo < 500) return;
+let lastInfo = 0, lastUnderrunCheck = 0, underrunsAtCheck = 0, suggestedStable = false;
+function renderEngineInfo(t, force = false) {
+  if (!force && t - lastInfo < 500) return;
   lastInfo = t;
   const ctx = engine.ctx;
-  if (!ctx) return;
+  if (!ctx) {
+    const idle = "音訊狀態：尚未啟動（按 POWER）";
+    if (engineInfo.textContent !== idle) engineInfo.textContent = idle;
+    return;
+  }
   const latency = Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000);
   const route = useMediaElementOutput
     ? `輸出：媒體通道（${engine.outputElement && !engine.outputElement.paused ? "播放中" : "未播放"}）`
     : "輸出：直接";
-  const parts = [`音訊狀態：${STATE_NAMES[ctx.state] || ctx.state}`, engine.kind, route, `${(ctx.sampleRate / 1000).toFixed(1)} kHz`];
+  const quantum = ctx.renderQuantumSize || 128;
+  const parts = [`音訊狀態：${STATE_NAMES[ctx.state] || ctx.state}`, engine.kind, route, `${(ctx.sampleRate / 1000).toFixed(1)} kHz`,
+                 `每次處理 ${quantum} 個取樣（${((quantum / ctx.sampleRate) * 1000).toFixed(1)} ms）`];
   if (latency > 0) parts.push(`輸出延遲約 ${latency} ms`);
   // input side, when the browser reports it (Chrome / Edge do; Safari may not)
-  const inputLatency = source === "live" && engine.mic && engine.mic.track.getSettings ? engine.mic.track.getSettings().latency : 0;
+  const settings = source === "live" && engine.mic && engine.mic.track.getSettings ? engine.mic.track.getSettings() : null;
+  const inputLatency = settings && settings.latency > 0 ? Math.round(settings.latency * 1000) : 0;
   if (inputLatency > 0) {
-    parts.push(`輸入延遲約 ${Math.round(inputLatency * 1000)} ms`);
-    if (latency > 0) parts.push(`合計約 ${latency + Math.round(inputLatency * 1000)} ms`);
+    parts.push(`輸入延遲約 ${inputLatency} ms`);
+    if (latency > 0) parts.push(`合計約 ${latency + inputLatency} ms`);
+  }
+  if (settings && settings.sampleRate && settings.sampleRate !== ctx.sampleRate) parts.push(`輸入 ${(settings.sampleRate / 1000).toFixed(1)} kHz（會轉換取樣率）`);
+
+  // dropouts, where the browser counts them (Chrome / Edge): from a moment after the start, which always has a few
+  const stats = ctx.playbackStats;
+  if (stats && ctx.state === "running") {
+    if (engine.underrunsAtStart < 0) {
+      if (t - engine.startedAt > 3000) { engine.underrunsAtStart = underrunsAtCheck = stats.underrunEvents; lastUnderrunCheck = t; }
+    } else {
+      const dropouts = stats.underrunEvents - engine.underrunsAtStart;
+      if (dropouts > 0) parts.push(`斷音 ${dropouts} 次`);
+      if (t - lastUnderrunCheck > 10000) {
+        // keeps dropping out with the small buffers: say how to trade a little latency for a clean sound
+        if (latencyMode === "low" && !suggestedStable && stats.underrunEvents - underrunsAtCheck >= 5) {
+          suggestedStable = true;
+          setStatus("偵測到斷音：可以把頁面最下方的「延遲模式」改成「穩定」，或關掉幾個效果。", 15000);
+        }
+        lastUnderrunCheck = t; underrunsAtCheck = stats.underrunEvents;
+      }
+    }
   }
   const text = parts.filter(Boolean).join(" · ");
   if (engineInfo.textContent !== text) engineInfo.textContent = text;
+  const high = latency + inputLatency > 30;
+  if (latencyTip.hidden === high) latencyTip.hidden = !high;
 }
+
+// latency mode (low / stable)
+const latencySelect = $("#latency-mode"), latencyTip = $("#latency-tip");
+latencySelect.value = latencyMode;
+latencySelect.addEventListener("change", () => setLatencyMode(latencySelect.value === "stable" ? "stable" : "low"));
 
 // ============================================================================
 // Frame loop: meters every frame, analysis + canvases ~30 fps
@@ -1369,7 +1450,6 @@ function frame(t) {
   levels.in = levels.out = 0;
   progressBar.style.width = source === "live" || !engine.ctx || !playing ? "0%" : `${(levels.progress * 100).toFixed(1)}%`;
   tickTempo();
-  renderEngineInfo(t);
   if (t - lastHeavy < 32) return;
   lastHeavy = t;
   updateTuner();
@@ -1378,6 +1458,8 @@ function frame(t) {
   drawEq();
 }
 requestAnimationFrame(frame);
+// the status line and the dropout check run on a timer, not on frames: they keep working in a background tab
+setInterval(() => renderEngineInfo(performance.now()), 500);
 document.fonts && document.fonts.ready.then(() => { drawTuner(); drawEq(); });
 
 // debugging handle for local testing only

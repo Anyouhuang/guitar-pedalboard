@@ -21,9 +21,13 @@ Guitar Pedalboard 電吉他效果器 - 快速上手
   2. 左上角 Options → Audio/MIDI Settings：
        - Audio device type 選 ASIO（沒有 ASIO 驅動可選 Windows Audio (Exclusive Mode)）
        - 只勾選吉他所在的輸入聲道
-       - Audio buffer size 設 64～128，延遲比較低
+       - Audio buffer size 設 64～256，延遲比較低；聲音斷斷續續就往上調一級
        - 取消勾選 Mute audio input（JUCE 預設的防回授保護）
   3. INPUT 列切到 LIVE INPUT。
+     視窗標題下方會顯示目前的延遲，例如「ASIO | 64 smp | 6.0 ms」
+     （綠燈 15 ms 以下、黃燈 30 ms 以下、紅燈超過 30 ms），點它可以開啟音訊設定。
+     驅動類型的延遲由低到高：ASIO、Windows Audio (Exclusive Mode)、
+     Windows Audio (Low Latency Mode)、Windows Audio。請用有線耳機，藍牙耳機延遲很大。
   4. 用耳機 / 監聽喇叭聽時開 AMP / CAB 方塊；接真的吉他音箱時關掉。
   5. 有電源哼聲時，把 EQ 區左下角 NOISE 的 Hum 設成 60 Hz（台灣）；
      嘶聲太大時把 Denoise 往右拉（30～50% 通常就夠）。

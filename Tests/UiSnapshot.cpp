@@ -2,7 +2,9 @@
 //
 // Usage: UiSnapshot <out.png> [select=<chain position 0..8>] [amp=<amp key>] [cab=<cab key>] [slot<1..8>=<model key>]
 //                              [<parameter id>=<value 0..1>] ...
+//                              [audio=<driver type>,<buffer>,<sample rate>,<input latency>,<output latency>]
 //   e.g. UiSnapshot ui.png select=2 amp=blackface_double_nrm slot6=ping_pong
+//        UiSnapshot ui.png "audio=Windows Audio,480,48000,960,1440"     (the standalone app's latency readout)
 
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
@@ -27,6 +29,19 @@ int main (int argc, char* argv[])
 
         if (name == "select")
             selected = value.getIntValue();
+        else if (name == "audio") // pretend to be the standalone app with this audio device
+        {
+            const auto parts = juce::StringArray::fromTokens (value, ",", "");
+            standalone::AudioStatus status;
+            status.available = true;
+            status.driver = parts[0];
+            status.device = "Test device";
+            status.bufferSize = parts[1].getIntValue();
+            status.sampleRate = parts[2].getDoubleValue();
+            status.inputLatency = parts[3].getIntValue();
+            status.outputLatency = parts[4].getIntValue();
+            standalone::statusForTests = [status] { return status; };
+        }
         else if (name == "amp")
             processor.setAmpModel (fx::findIn (fx::amps(), value.toStdString()));
         else if (name == "cab")

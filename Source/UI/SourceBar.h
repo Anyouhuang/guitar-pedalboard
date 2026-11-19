@@ -7,7 +7,9 @@
 namespace ui
 {
 /** Picks what feeds the board: the live guitar, the built-in demo riff or a looped audio file,
-    plus buttons that pluck open strings (to try the tuner) and strum basic chords. */
+    plus buttons that pluck open strings (to try the tuner) and strum basic chords.
+    With the live guitar selected the pluck / chord row is hidden (you have a real guitar for that)
+    and the bar is one row tall: see getPreferredHeight() and onHeightChanged. */
 class SourceBar : public juce::Component
 {
 public:
@@ -105,10 +107,19 @@ public:
         refresh();
     }
 
+    /** The height the bar wants right now: one row with the live guitar, two with the demo riff / a file. */
+    int getPreferredHeight() const noexcept { return compact ? 44 : 80; }
+
+    /** Called when getPreferredHeight() changes, so the owner can lay itself out again. */
+    std::function<void()> onHeightChanged;
+
     /** Call from the editor's timer to follow the player's state. */
     void refresh()
     {
         const auto source = player.getSource();
+        if ((source == TestSignalPlayer::live) != compact)
+            setCompact (source == TestSignalPlayer::live);
+
         liveButton.setToggleState (source == TestSignalPlayer::live, juce::dontSendNotification);
         demoButton.setToggleState (source == TestSignalPlayer::demo, juce::dontSendNotification);
         fileButton.setToggleState (source == TestSignalPlayer::file, juce::dontSendNotification);
@@ -155,8 +166,11 @@ public:
         g.setFont (boldFont (12.0f));
         g.setColour (colours::dimText);
         g.drawText ("INPUT", inputLabelArea, juce::Justification::centredLeft);
-        g.drawText ("PLUCK", pluckLabelArea, juce::Justification::centredLeft);
-        g.drawText ("CHORD", chordLabelArea, juce::Justification::centredLeft);
+        if (! compact)
+        {
+            g.drawText ("PLUCK", pluckLabelArea, juce::Justification::centredLeft);
+            g.drawText ("CHORD", chordLabelArea, juce::Justification::centredLeft);
+        }
 
         auto status = statusArea;
         g.setFont (plainFont (12.0f));
@@ -177,9 +191,10 @@ public:
     {
         auto area = getLocalBounds().reduced (14, 7);
 
-        // second row: single strings and chords
-        auto row2 = area.removeFromBottom (30);
-        area.removeFromBottom (6);
+        // second row: single strings and chords (hidden with the live guitar: the bar is then one row tall)
+        auto row2 = compact ? juce::Rectangle<int>() : area.removeFromBottom (30);
+        if (! compact)
+            area.removeFromBottom (6);
         pluckLabelArea = row2.removeFromLeft (48).toFloat();
         for (auto& b : stringButtons)
         {
@@ -209,8 +224,11 @@ public:
         }
 
         area.removeFromLeft (4);
-        transportButton.setBounds (area.removeFromLeft (60));
-        area.removeFromLeft (8);
+        if (! compact) // STOP / PLAY belongs to the demo riff and audio file
+        {
+            transportButton.setBounds (area.removeFromLeft (60));
+            area.removeFromLeft (8);
+        }
         loadButton.setBounds (area.removeFromLeft (96));
         area.removeFromLeft (14);
         statusArea = area.toFloat();
@@ -224,7 +242,28 @@ private:
         else
             player.setSource (source);
 
+        if (source == TestSignalPlayer::live)
+            player.stopChord(); // its STOP button is about to disappear
+
         refresh();
+    }
+
+    void setCompact (bool shouldBeCompact)
+    {
+        compact = shouldBeCompact;
+
+        for (auto& b : stringButtons)
+            b->setVisible (! compact);
+        for (auto& b : chordButtons)
+            b->setVisible (! compact);
+        for (auto* c : std::initializer_list<juce::Component*> { &patternBox, &tempoBox, &stopChordButton })
+            c->setVisible (! compact);
+
+        if (onHeightChanged != nullptr)
+            onHeightChanged();
+        else
+            resized();
+        repaint();
     }
 
     void chooseFile()
@@ -265,6 +304,7 @@ private:
     juce::Rectangle<float> inputLabelArea, pluckLabelArea, chordLabelArea, statusArea;
     juce::String statusText;
     float progress = -1.0f;
+    bool compact = false; // live guitar: no pluck / chord row
 };
 
 } // namespace ui

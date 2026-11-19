@@ -4,12 +4,18 @@ Windows 版的電吉他綜合效果器：獨立程式 + VST3 外掛（Windows 10
 
 | 檔案 | 說明 |
 |---|---|
-| **GuitarPedalboard-1.3.0-Setup.exe** | 安裝程式（建議）：建立開始功能表捷徑，可選擇同時安裝 VST3 外掛，可以解除安裝 |
-| **GuitarPedalboard-1.3.0-Windows-Portable.zip** | 免安裝版：解壓縮後直接執行 `Guitar Pedalboard.exe`；要用 VST3 外掛時，對 `Install-VST3.cmd` 按右鍵「以系統管理員身分執行」 |
+| **GuitarPedalboard-1.3.1-Setup.exe** | 安裝程式（建議）：建立開始功能表捷徑，可選擇同時安裝 VST3 外掛，可以解除安裝 |
+| **GuitarPedalboard-1.3.1-Windows-Portable.zip** | 免安裝版：解壓縮後直接執行 `Guitar Pedalboard.exe`；要用 VST3 外掛時，對 `Install-VST3.cmd` 按右鍵「以系統管理員身分執行」 |
 
 - 不需要另外安裝 Visual C++ 執行階段。
 - **第一次執行可能出現「Windows 已保護您的電腦」**：因為程式沒有付費的程式碼簽章，按「其他資訊」→「仍要執行」即可。
 - 接吉他：吉他接錄音介面，在 **Options → Audio/MIDI Settings** 選 ASIO（延遲最低；沒有 ASIO 驅動可以選 Windows Audio (Exclusive Mode) 或 (Low Latency Mode)）、Audio buffer size 設 64–256、只勾吉他的輸入聲道、取消勾選 Mute audio input。詳細步驟見安裝資料夾裡的 QuickStart-zh-TW.txt。
+
+## 1.3.1 的變更
+
+- **Windows 版**：修正 Denoise 拉桿。之前在拉桿上點一下不會改變數值，而是變成文字輸入狀態；現在點一下就會設到該位置，可以直接拖曳，點兩下關閉。
+- **Windows 版、網頁版**：拿掉標題列的 AMP / CAB 按鍵。AMP / CAB 方塊照舊用「點兩下方塊」或編輯區的腳踏開關來開關。
+- **Windows 版、網頁版**：選 LIVE INPUT 時，INPUT 列只留下來源按鈕，PLUCK 和 CHORD 收起來（正在循環的和弦會停止）；選 DEMO RIFF 或 AUDIO FILE 時照常顯示。
 
 ## 1.3.0 的變更：降低延遲
 

@@ -66,6 +66,8 @@
 | **CHORD** | C、D、E、F、G、A、Am、Dm、Em 九個基本和弦 |
 | **Arpeggio / Strum loop / Single** | 和弦的彈法：持續的分散和弦（八分音符）、每一拍往下刷一次、只刷一次；BPM 可以輸入 40–240 |
 
+選 **LIVE INPUT** 時，INPUT 列只留下來源按鈕，PLUCK 和 CHORD 會收起來；選 DEMO RIFF 或 AUDIO FILE 就會再出現。
+
 ## 效果清單
 
 | 類別 | 型號 |

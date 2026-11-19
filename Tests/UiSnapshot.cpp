@@ -5,9 +5,13 @@
 //                              [audio=<driver type>,<buffer>,<sample rate>,<input latency>,<output latency>]
 //   e.g. UiSnapshot ui.png select=2 amp=blackface_double_nrm slot6=ping_pong
 //        UiSnapshot ui.png "audio=Windows Audio,480,48000,960,1440"     (the standalone app's latency readout)
+//        UiSnapshot ui.png source=demo                                  (input source: live / demo)
+//
+//        UiSnapshot check       runs the UI interaction checks in UiChecks.h instead (exit code 0 = all passed)
 
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "UiChecks.h"
 
 int main (int argc, char* argv[])
 {
@@ -18,6 +22,9 @@ int main (int argc, char* argv[])
         std::cout << "usage: UiSnapshot <out.png> [select=N] [amp=key] [cab=key] [slotN=key] ...\n";
         return 2;
     }
+
+    if (juce::String (argv[1]) == "check")
+        return uichecks::run();
 
     PedalboardProcessor processor;
     int selected = 1;
@@ -42,6 +49,8 @@ int main (int argc, char* argv[])
             status.outputLatency = parts[4].getIntValue();
             standalone::statusForTests = [status] { return status; };
         }
+        else if (name == "source")
+            processor.getTestSignal().setSource (value == "demo" ? TestSignalPlayer::demo : TestSignalPlayer::live);
         else if (name == "amp")
             processor.setAmpModel (fx::findIn (fx::amps(), value.toStdString()));
         else if (name == "cab")

@@ -82,6 +82,7 @@
 - 選 DEMO RIFF / AUDIO FILE 時，程式完全不使用麥克風和介面的輸入，所以**只要有耳機或喇叭就能測試**，不會回授。
 - 進度條會顯示循環播放的位置；選擇會被記住，下次開啟會延續上次的設定。
 - 想改回彈真吉他時，記得切回 **LIVE INPUT**。
+- 選 **LIVE INPUT** 時，INPUT 列只留下來源按鈕，PLUCK 和 CHORD 那一排會收起來（正在循環的和弦也會停止）；選 DEMO RIFF 或 AUDIO FILE 就會再出現。
 
 ## EQ 使用方式
 
@@ -111,8 +112,8 @@ EQ 在視窗最下方，圖上有兩層資訊：
 
 | 檔案 | 說明 |
 |---|---|
-| `dist\GuitarPedalboard-1.3.0-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
-| `dist\GuitarPedalboard-1.3.0-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
+| `dist\GuitarPedalboard-1.3.1-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
+| `dist\GuitarPedalboard-1.3.1-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
 
 - 程式已靜態連結 C++ 執行階段，**不需要另外安裝 Visual C++ Redistributable**，Windows 10 / 11 64 位元都能直接執行。
 - 因為沒有付費的程式碼簽章憑證，第一次執行可能出現「Windows 已保護您的電腦」：按「其他資訊」→「仍要執行」。
@@ -177,7 +178,7 @@ EQ 在視窗最下方，圖上有兩層資訊：
    - **Audio buffer size** 設 64～128 samples，延遲比較低。設定好之後，視窗標題下方會顯示目前的延遲（見「降低延遲」）。
 3. 視窗上方黃色提示「Audio input is muted to avoid feedback loop」：這是 JUCE 預設的防回授保護，請到同一個設定畫面把 **Mute audio input** 取消勾選 (只要設定一次，之後會記住)。
    ⚠️ 請戴耳機或接音箱，不要用筆電內建麥克風 + 喇叭，否則會產生回授尖叫。
-4. 用耳機或監聽喇叭聽的時候請開 **AMP / CAB** 方塊；接真的吉他音箱時請關掉（或只留音箱頭、把 CAB 選成 No Cab）。
+4. 用耳機或監聽喇叭聽的時候請開 **AMP / CAB** 方塊（點兩下訊號鏈上的方塊，或按編輯區右邊的腳踏開關）；接真的吉他音箱時請關掉（或只留音箱頭、把 CAB 選成 No Cab）。
 
 ### B. VST3 外掛 (在 Reaper、Cubase、Studio One、FL Studio 等 DAW 中使用)
 
@@ -226,6 +227,7 @@ build\PedalTest_artefacts\Release\PedalTest.exe test_output
 - TAP：穩定 / 不穩的點擊、停頓後重來、突然變速、按鍵彈跳都能正確處理；Reverb pre-delay 時間精準
 - 另外會在 `test_output\reference\` 輸出參考資料（含型號清單和一段不斷換型號、開關、移動方塊的腳本），給網頁版的 `node web/test/compare.mjs` 逐樣本比對
 - `node web/test/alloc.mjs`：量測網頁版每個效果在音訊執行緒上產生多少暫時記憶體（越少，瀏覽器在小緩衝下越不容易因垃圾回收而斷音）。這是比較用的報告，不是通過 / 失敗的測試
+- `build\UiSnapshot_artefacts\Release\UiSnapshot.exe check`：不開視窗的介面操作檢查（`Tests/UiChecks.h`）：用模擬的滑鼠點 / 拖 Denoise 拉桿並確認數值和聲音真的改變、標題列沒有 AMP / CAB 按鍵、選 LIVE INPUT 時 INPUT 列只剩來源按鈕。
 - `node web/test/latency.mjs`：量測每個效果增加的延遲（每個破音型號約 0.1–0.25 ms、CAB 約 0.08 ms；整體延遲主要來自音訊介面、瀏覽器和耳機的輸入輸出緩衝）
 
 ## 程式碼結構
@@ -259,6 +261,7 @@ Source/
 └─ UI/                   訊號鏈 (ChainStrip)、編輯區 (SlotEditor)、TAP、旋鈕、腳踏開關、電平表、調音器、EQ 畫面、輸入來源列
 Tests/RenderTest.cpp     離線測試
 Tests/UiSnapshot.cpp     不開視窗、不開音效裝置，把外掛畫面存成 PNG（檢查排版用）
+Tests/UiChecks.h         介面操作檢查（UiSnapshot check）：模擬滑鼠操作，不開視窗
 Tests/AudioProbe.cpp     列出這台電腦各種 Windows 音訊驅動類型的緩衝大小與延遲
 Tests/standalone/        各類效果引擎的獨立測試
 packaging/               Windows 安裝檔 (Inno Setup) 與免安裝版打包腳本，以及上傳到 GitHub 的腳本（原始碼、Releases）

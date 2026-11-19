@@ -434,11 +434,14 @@ public:
         addAndMakeVisible (humBox);
 
         denoiseBar.setSliderStyle (juce::Slider::LinearBar);
+        // not editable: with an editable text box a bar-style slider ignores plain clicks and opens a text
+        // field over the whole bar instead, which then swallows the drags too
+        denoiseBar.setTextBoxIsEditable (false);
         denoiseBar.setColour (juce::Slider::trackColourId, juce::Colour (0xff34c3ff).withAlpha (0.45f));
         denoiseBar.setColour (juce::Slider::textBoxTextColourId, colours::text);
         denoiseBar.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::black.withAlpha (0.5f));
         denoiseBar.setColour (juce::Slider::backgroundColourId, juce::Colour (0xff1c1c20));
-        denoiseBar.setTooltip ("Hiss reduction: open while you play, turns the hiss down as the sound dies away. 0 = off; drag right for more.");
+        denoiseBar.setTooltip ("Hiss reduction: open while you play, turns the hiss down as the sound dies away. 0 = off; click or drag right for more, double-click for off.");
         denoiseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, ParamIDs::noiseAmount, denoiseBar);
         denoiseBar.textFromValueFunction = [] (double v) { return v < 0.5 ? juce::String ("Denoise: off") : "Denoise " + juce::String (juce::roundToInt (v)) + " %"; };
         denoiseBar.updateText();

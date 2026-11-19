@@ -26,6 +26,7 @@ PedalboardEditor::PedalboardEditor (PedalboardProcessor& p)
     addAndMakeVisible (*eqPanel);
 
     sourceBar = std::make_unique<ui::SourceBar> (processor.getTestSignal());
+    sourceBar->onHeightChanged = [this] { resized(); repaint(); }; // one row with the live guitar: the EQ gets the rest
     addAndMakeVisible (*sourceBar);
 
     tuner.onClick = [this]
@@ -41,12 +42,10 @@ PedalboardEditor::PedalboardEditor (PedalboardProcessor& p)
     inputAttachment  = std::make_unique<SliderAttachment> (state, inputGain, inputKnob);
     masterAttachment = std::make_unique<SliderAttachment> (state, outputGain, masterKnob);
 
-    cabButton.setTooltip ("The amp block (amp model + speaker cabinet + microphone). Keep the cabinet on for headphones / studio monitors; switch the block off when playing into a real guitar amp.");
     muteButton.setTooltip ("Silence the output, e.g. while tuning.");
-    cabAttachment  = std::make_unique<ButtonAttachment> (state, cab, cabButton);
     muteAttachment = std::make_unique<ButtonAttachment> (state, mute, muteButton);
 
-    for (auto* c : std::initializer_list<juce::Component*> { &tuner, &inputMeter, &outputMeter, &cabButton, &muteButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &tuner, &inputMeter, &outputMeter, &muteButton })
         addAndMakeVisible (c);
 
     addChildComponent (latency); // shown once the standalone app has an audio device open
@@ -118,17 +117,15 @@ void PedalboardEditor::resized()
     auto area = getLocalBounds().reduced (margin);
     headerArea = area.removeFromTop (124);
     area.removeFromTop (10);
-    sourceBar->setBounds (area.removeFromTop (80));
+    sourceBar->setBounds (area.removeFromTop (sourceBar->getPreferredHeight()));
     area.removeFromTop (12);
 
-    // header: title | input | tuner | master | buttons
+    // header: title | input | tuner | master | mute
     auto header = headerArea.reduced (18, 10);
     titleArea = header.removeFromLeft (230).toFloat().withSizeKeepingCentre (230.0f, 76.0f);
     latency.setBounds (titleArea.withTrimmedTop (56.0f).toNearestInt());
 
-    auto buttons = header.removeFromRight (104).withSizeKeepingCentre (104, 72);
-    cabButton.setBounds (buttons.removeFromTop (32));
-    muteButton.setBounds (buttons.removeFromBottom (32));
+    muteButton.setBounds (header.removeFromRight (104).withSizeKeepingCentre (104, 32));
     header.removeFromRight (16);
 
     auto layoutKnob = [] (juce::Rectangle<int> section, juce::Slider& knob, juce::Label& label, ui::LevelMeter& meter)

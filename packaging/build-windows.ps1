@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 
 $root    = Split-Path $PSScriptRoot
-$version = "1.3.0"
+$version = "1.3.1"
 $cmake   = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $iscc    = Join-Path $root "tools\InnoSetup6\ISCC.exe"
 $release = Join-Path $root "build\GuitarPedalboard_artefacts\Release"
@@ -14,6 +14,9 @@ $dist    = Join-Path $root "dist"
 
 Write-Host "== Building Release" -ForegroundColor Cyan
 & $cmake -S $root -B (Join-Path $root "build") | Out-Null
+# JUCE generates the version resource (what Windows shows under Properties > Details) once and never refreshes it:
+# remove it so this build carries the current version
+Remove-Item (Join-Path $root "build\GuitarPedalboard_artefacts\JuceLibraryCode\GuitarPedalboard_resources.rc") -ErrorAction SilentlyContinue
 & $cmake --build (Join-Path $root "build") --config Release --target GuitarPedalboard_VST3 GuitarPedalboard_Standalone --parallel -- /v:minimal
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 

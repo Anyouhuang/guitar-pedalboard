@@ -502,6 +502,7 @@ async function applySource(next) {
   if (next === "file" && !fileData) next = "demo";
   source = next;
   if (source !== "live") playing = true; // choosing the riff or a file starts it
+  else post({ type: "chordStop" }); // the chord loop's Stop button is hidden with the live guitar
   post({ type: "source", source });
   persist();
   renderSource();
@@ -625,7 +626,6 @@ function bindToggle(button, id) {
 const inMeter = makeMeter(), outMeter = makeMeter();
 $("#io-in").append(makeKnob("Input", "inGain").root, inMeter.root);
 $("#io-out").append(makeKnob("Master", "master").root, outMeter.root);
-bindToggle($("#cab"), "cab");
 bindToggle($("#mute"), "mute");
 
 const powerButton = $("#power");
@@ -956,6 +956,7 @@ function setPlaying(on) {
 }
 
 const transport = $("#transport");
+const pluckRows = document.querySelectorAll(".source .pluck"); // PLUCK and CHORD
 transport.addEventListener("click", async () => {
   if (playing && engine.ctx && engine.ctx.state === "running") { setPlaying(false); return; }
   if (!(await startAudio())) return;
@@ -966,6 +967,7 @@ function renderSource() {
   for (const chip of document.querySelectorAll(".source .chip")) chip.setAttribute("aria-checked", String(chip.dataset.source === source));
   const stopped = source !== "live" && !playing;
   transport.hidden = source === "live";
+  for (const row of pluckRows) row.hidden = source === "live"; // a real guitar is plugged in: only the source buttons
   transport.dataset.state = stopped ? "stopped" : "playing";
   transport.querySelector(".label").textContent = stopped ? "Play" : "Stop";
   const powered = powerButton.getAttribute("aria-pressed") === "true";

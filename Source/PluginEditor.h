@@ -42,7 +42,6 @@ private:
     ui::LevelMeter inputMeter, outputMeter;
     juce::Slider inputKnob, masterKnob;
     juce::Label inputLabel, masterLabel;
-    ui::LedButton cabButton { "AMP / CAB", ui::colours::ledGreen };
     ui::LedButton muteButton { "MUTE", ui::colours::ledRed };
 
     std::unique_ptr<ui::ChainStrip> chainStrip;
@@ -53,7 +52,7 @@ private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<SliderAttachment> inputAttachment, masterAttachment;
-    std::unique_ptr<ButtonAttachment> cabAttachment, muteAttachment;
+    std::unique_ptr<ButtonAttachment> muteAttachment;
 
     std::vector<float> audioScratch = std::vector<float> (8192);
     juce::TooltipWindow tooltips { this, 700 };

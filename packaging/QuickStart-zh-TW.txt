@@ -15,6 +15,7 @@ Guitar Pedalboard 電吉他效果器 - 快速上手
   CHORD 列有 C D E F G A Am Dm Em 九個基本和弦：選 Arpeggio（分散和弦）或
   Strum loop（每一拍往下刷一次）會一直循環彈奏，Single 只刷一次；BPM 欄位可輸入速度，
   循環中按別的和弦會在下一拍換過去，STOP 停止。
+  選 LIVE INPUT 時 PLUCK 和 CHORD 那一排會收起來，選 DEMO RIFF 或 AUDIO FILE 就會再出現。
 
 【接真的吉他】
   1. 吉他接到錄音介面 (Audio Interface) 的 Hi-Z / Instrument 輸入。
@@ -28,9 +29,10 @@ Guitar Pedalboard 電吉他效果器 - 快速上手
      （綠燈 15 ms 以下、黃燈 30 ms 以下、紅燈超過 30 ms），點它可以開啟音訊設定。
      驅動類型的延遲由低到高：ASIO、Windows Audio (Exclusive Mode)、
      Windows Audio (Low Latency Mode)、Windows Audio。請用有線耳機，藍牙耳機延遲很大。
-  4. 用耳機 / 監聽喇叭聽時開 AMP / CAB 方塊；接真的吉他音箱時關掉。
+  4. 用耳機 / 監聽喇叭聽時開 AMP / CAB 方塊；接真的吉他音箱時關掉
+     （點兩下訊號鏈上的 AMP 方塊，或選它之後按右邊的腳踏開關）。
   5. 有電源哼聲時，把 EQ 區左下角 NOISE 的 Hum 設成 60 Hz（台灣）；
-     嘶聲太大時把 Denoise 往右拉（30～50% 通常就夠）。
+     嘶聲太大時在 Denoise 那一條上點一下或往右拖（30～50% 通常就夠，點兩下關閉）。
   ※ 請戴耳機，不要用筆電內建麥克風 + 喇叭，否則會回授尖叫。
 
 【效果：HD500X 式訊號鏈】

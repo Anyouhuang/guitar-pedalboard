@@ -8985,7 +8985,7 @@ const CAB_MODELS = [
 return { CabFx, CAB_MODELS };
 })();
 // ---- dsp/chain.js
-const { MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, Slot, FxChain } = (() => {
+const { MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, factoryPresets, Slot, FxChain } = (() => {
 // The model list and the signal chain (Source/DSP/Models.h, FxChain.*): eight FX slots plus the amp/cab block.
 
 /** Every model, in a fixed order (append only). Same list as the plugin; compare.mjs checks it. */
@@ -9155,6 +9155,71 @@ function defaultBoard() {
            eqOn: true, eq: defaultEq(), humMode: 0, denoise: 0, slots };
 }
 const defaultParams = defaultBoard;
+
+// ---------------------------------------------------------------------------
+// The preset bank's example boards: the same list as fx::factoryPresets() in Source/DSP/FxChain.cpp.
+
+/** Sets knobs by name (`changes`: { "Knob name": value }) in a knob list made by makeSlot / makeAmp. */
+function setKnobs(specs, knobs, changes) {
+  for (const [name, value] of Object.entries(changes)) {
+    const k = specs.findIndex((spec) => spec.name === name);
+    if (k < 0) throw new Error(`factory preset: there is no knob called ${name}`);
+    knobs[k] = value;
+  }
+}
+function slotWith(key, on, changes = {}) {
+  if (MODEL_INDEX.get(key) === undefined) throw new Error(`factory preset: there is no model called ${key}`);
+  const slot = makeSlot(key, on);
+  setKnobs(modelInfo(key).knobs, slot.knobs, changes);
+  return slot;
+}
+function ampWith(ampKey, cabKey, ampChanges = {}, cabChanges = {}) {
+  if (ampIndex(ampKey) < 0 || cabIndex(cabKey) < 0) throw new Error(`factory preset: unknown amp ${ampKey} or cab ${cabKey}`);
+  const block = makeAmp(ampKey, cabKey, true);
+  setKnobs(AMPS[ampIndex(ampKey)].knobs, block.ampKnobs, ampChanges);
+  setKnobs(CABS[cabIndex(cabKey)].knobs, block.cabKnobs, cabChanges);
+  return block;
+}
+
+/** Each entry: the preset's name, its tempo and its board (slots, amp block, amp position, EQ). */
+function factoryPresets() {
+  const NOTE_QUARTER = 1, NOTE_DOTTED_EIGHTH = 2; // the delays' Note knob: ms, 1/4, 1/8., 1/8, 1/8T, 1/16
+  const board = (slots, amp, ampPosition, eq = {}) => {
+    const p = defaultBoard();
+    p.slots = slots.concat(Array.from({ length: NUM_SLOTS - slots.length }, () => makeSlot("empty", false)));
+    p.amp = amp;
+    p.ampPosition = ampPosition;
+    Object.assign(p.eq, eq);
+    return p;
+  };
+  return [
+    { name: "Clean", tempo: 120, board: board([
+        slotWith("red_comp", true, { Sustain: 45 }),
+        slotWith("chorus", false, { Speed: 0.6, Depth: 45, Mix: 40 }),
+        slotWith("analog_delay", false, { Note: NOTE_QUARTER, Feedback: 30, Mix: 22 }),
+        slotWith("spring", true, { Decay: 45, Mix: 26 }),
+      ], ampWith("blackface_double_normal", "cab_212_blackface", { Drive: 40, "Ch Vol": 56 }), 1) },
+    { name: "Crunch", tempo: 120, board: board([
+        slotWith("noise_gate", true),
+        slotWith("screamer", false, { Drive: 40, Output: 2 }),
+        slotWith("chorus", false),
+        slotWith("analog_delay", false, { Mix: 25 }),
+        slotWith("room_reverb", true, { Mix: 18 }),
+      ], ampWith("brit_j_45_normal", "cab_412_greenback", { Drive: 62, "Ch Vol": 56 }), 2) },
+    { name: "Lead", tempo: 120, board: board([
+        slotWith("noise_gate", true, { Threshold: -60 }),
+        slotWith("screamer", true, { Drive: 30, Tone: 55, Output: 3 }),
+        slotWith("analog_w_mod", true, { Note: NOTE_DOTTED_EIGHTH, Fdbk: 35, Mix: 24 }),
+        slotWith("plate", true, { Decay: 45, Mix: 20 }),
+      ], ampWith("brit_j_800", "cab_412_brit_t75", { Drive: 68, "Ch Vol": 62 }), 2) },
+    { name: "Ambient", tempo: 100, board: board([
+        slotWith("red_comp", true, { Sustain: 55 }),
+        slotWith("analog_chorus", true, { Speed: 0.5, Depth: 55, Mix: 45 }),
+        slotWith("ping_pong", true, { Note: NOTE_DOTTED_EIGHTH, Fdbk: 55, Mix: 38 }),
+        slotWith("hall", true, { Decay: 75, Mix: 42 }),
+      ], ampWith("class_a_30_tb", "cab_212_silver_bell", { Drive: 40, "Ch Vol": 52 }), 1, { lowCutHz: 90 }) },
+  ];
+}
 
 class Fade {
   constructor(fs) { this.amount = new Smoothed(0); this.amount.reset(fs, 0.03); }
@@ -9553,7 +9618,7 @@ class FxChain {
 }
 
 
-return { MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, Slot, FxChain };
+return { MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, factoryPresets, Slot, FxChain };
 })();
 // ---- dsp/tools.js
 const { PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer } = (() => {
@@ -9973,7 +10038,7 @@ class TestSignalPlayer {
 
 return { PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
 })();
-return { PI, dbToGain, gainToDb, clamp, Smoothed, f32, Biquad, OnePole, DcBlocker, DelayLine, OVERSAMPLER_COEFFS, Oversampler4x, NoiseGate, Distortion, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, NUM_SLOTS, MAX_KNOBS, CATEGORY, CATEGORY_NAMES, CATEGORY_ORDER, ENGINE, UNIT, knobSpec, knob10, percent, decibels, levelDb, millis, hertz, freq, semitones, choice, DELAY_NOTE_NAMES, DELAY_NOTE_BEATS, REVERB_NOTE_NAMES, REVERB_NOTE_BEATS, model, knobSkew, knobFromNorm, knobToNorm, knobText, HUM_MODES, HumFilter, Denoiser, DynamicsFx, DYNAMICS_MODELS, ModFx, MOD_MODELS, FilterFx, FILTER_MODELS, PitchFx, PITCH_MODELS, EqFx, EQ_MODELS, DelayFx, DELAY_MODELS, VerbFx, VERB_MODELS, WahFx, WAH_MODELS, VolumeFx, VOLUME_MODELS, AmpFx, AMP_MODELS, CabFx, CAB_MODELS, MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, Slot, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
+return { PI, dbToGain, gainToDb, clamp, Smoothed, f32, Biquad, OnePole, DcBlocker, DelayLine, OVERSAMPLER_COEFFS, Oversampler4x, NoiseGate, Distortion, CabSim, EQ_BANDS, defaultEq, Equalizer, MOD_TYPES, Modulation, Delay, Freeverb, ReverbFx, NUM_SLOTS, MAX_KNOBS, CATEGORY, CATEGORY_NAMES, CATEGORY_ORDER, ENGINE, UNIT, knobSpec, knob10, percent, decibels, levelDb, millis, hertz, freq, semitones, choice, DELAY_NOTE_NAMES, DELAY_NOTE_BEATS, REVERB_NOTE_NAMES, REVERB_NOTE_BEATS, model, knobSkew, knobFromNorm, knobToNorm, knobText, HUM_MODES, HumFilter, Denoiser, DynamicsFx, DYNAMICS_MODELS, ModFx, MOD_MODELS, FilterFx, FILTER_MODELS, PitchFx, PITCH_MODELS, EqFx, EQ_MODELS, DelayFx, DELAY_MODELS, VerbFx, VERB_MODELS, WahFx, WAH_MODELS, VolumeFx, VOLUME_MODELS, AmpFx, AMP_MODELS, CabFx, CAB_MODELS, MODELS, modelIndex, modelInfo, makeSlot, resolveTempo, AMPS, CABS, MAX_AMP_KNOBS, MAX_CAB_KNOBS, DEFAULT_CAB_KEY, ampIndex, cabIndex, defaultCabFor, makeAmp, defaultBoard, defaultParams, factoryPresets, Slot, FxChain, PitchDetector, NOTE_NAMES, frequencyToNote, SpectrumAnalyzer, TapTempo, OPEN_STRINGS, fretHz, CHORD_PATTERNS, CHORD_PATTERN_NAMES, CHORDS, makeRng, PluckedString, renderDemoRiff, TestSignalPlayer };
 })();
 
 // AudioWorklet processor: runs the whole pedalboard on the audio thread.

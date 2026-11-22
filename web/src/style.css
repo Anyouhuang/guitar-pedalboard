@@ -65,7 +65,7 @@ button { cursor: pointer; }
 }
 
 /* ---------- rack panels (header, input strip, EQ) ---------- */
-.rack, .source, .eq {
+.rack, .source, .presets, .eq {
   background: linear-gradient(var(--rack-top), var(--rack-bottom));
   border: 1px solid rgba(0, 0, 0, 0.6);
   box-shadow: inset 0 1px 0 var(--line);
@@ -501,6 +501,80 @@ button { cursor: pointer; }
 .latency-row select { font-size: 13px; max-width: 100%; }
 .latency-tip { padding: 8px 10px; border-left: 3px solid var(--amber, #f5a623); background: rgba(245, 166, 35, 0.08); border-radius: 0 6px 6px 0; }
 
+/* ---------- preset bank ---------- */
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 14px;
+}
+.preset-tiles {
+  flex: 1 1 560px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+}
+.preset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  background: #1c1c20;
+  color: var(--dim);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-align: left;
+}
+.preset:hover { background: #26262c; color: var(--text); }
+.preset .num { flex: none; font-size: 11px; color: var(--dim); }
+/* names are the player's own words: as typed, not in capitals */
+.preset .name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
+.preset .star { flex: none; display: none; color: var(--amber); }
+.preset[aria-pressed="true"] {
+  --mark: var(--led-green);
+  color: var(--text);
+  border-color: var(--mark);
+  background: color-mix(in srgb, var(--mark) 22%, #1c1c20);
+}
+.preset[aria-pressed="true"] .num { color: var(--mark); }
+.preset.modified { --mark: var(--amber); }
+.preset.modified .star { display: inline; }
+.preset.empty { border-style: dashed; border-color: rgba(143, 143, 152, 0.5); background: transparent; }
+.presets.picking .preset {
+  border-style: solid;
+  border-color: var(--amber);
+  animation: preset-pick 0.7s ease-in-out infinite alternate;
+}
+@keyframes preset-pick {
+  from { box-shadow: 0 0 0 0 rgba(255, 176, 32, 0); }
+  to { box-shadow: 0 0 0 2px rgba(255, 176, 32, 0.45); }
+}
+.preset-name {
+  min-width: 0;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--amber);
+  background: #101014;
+  color: var(--text);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 16px; /* 16px: iPhones zoom the page on a smaller text field */
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.preset-actions { display: flex; gap: 4px; }
+.btn.attention { color: var(--amber); }
+
 /* ---------- narrower screens ---------- */
 @media (max-width: 980px) {
   .rack {
@@ -518,11 +592,13 @@ button { cursor: pointer; }
   .eq-side p { margin: 0 auto 0 0; }
 }
 @media (max-width: 760px) {
+  .preset-tiles { flex-basis: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .chain-row { grid-template-columns: repeat(5, minmax(0, 1fr)); background: none; }
   .editor { grid-template-columns: minmax(0, 1fr) 84px; grid-template-areas: "side switch" "knobs knobs"; }
 }
 @media (max-width: 440px) {
   .chain-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .preset { padding: 0 6px; gap: 4px; font-size: 13px; letter-spacing: 0.02em; }
 }
 @media (max-width: 640px) {
   .dial { width: 56px; height: 56px; }
@@ -538,4 +614,5 @@ button { cursor: pointer; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+  .presets.picking .preset { animation: none; box-shadow: 0 0 0 2px rgba(255, 176, 32, 0.45); }
 }

@@ -36,6 +36,20 @@ struct FxParams
 /** The board as it first opens: Noise Gate > Screamer > cab > Chorus (off) > Analog Delay (off) > Room Reverb. */
 FxParams defaultBoard();
 
+/** One of the preset bank's example boards. */
+struct FactoryPreset
+{
+    const char* name;
+    float tempo;
+    FxParams board;
+};
+
+/** The example boards the preset bank starts with (the same list as factoryPresets() in web/src/dsp/chain.js). */
+const std::vector<FactoryPreset>& factoryPresets();
+
+/** How many model or knob names in factoryPresets() matched nothing: 0, unless one of them is misspelt. */
+int factoryPresetErrors();
+
 /** Crossfades between the dry and processed signal so switching never clicks. */
 struct Fade
 {

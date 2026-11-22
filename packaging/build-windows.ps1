@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 
 $root    = Split-Path $PSScriptRoot
-$version = "1.3.1"
+$version = "1.4.0"
 $cmake   = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $iscc    = Join-Path $root "tools\InnoSetup6\ISCC.exe"
 $release = Join-Path $root "build\GuitarPedalboard_artefacts\Release"

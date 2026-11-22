@@ -149,6 +149,64 @@ const values = {};
 for (const p of Object.values(PARAMS)) values[p.id] = p.dflt;
 DSP.defaultBoard().slots.forEach((slot, s) => loadSlot(s, slot));
 loadAmp(DSP.defaultBoard().amp);
+
+// Preset bank: eight boards that can be recalled at any time, also while playing. A preset holds the eight
+// slots, the amp block, the chain order, the EQ and the tempo. It does not hold input / master, MUTE, the
+// tuner or the noise section: those belong to the guitar and the room, not to a sound. (Same as the plugin.)
+const NUM_PRESETS = 8, PRESET_NAME_MAX = 16;
+const PRESET_VALUE_IDS = ["tempo", "eqOn", "eqLcFreq", "eqBassFreq", "eqBassGain", "eqLmFreq", "eqLmGain", "eqLmQ",
+                          "eqHmFreq", "eqHmGain", "eqHmQ", "eqTrebFreq", "eqTrebGain", "eqHcFreq"];
+/** The board as plain data (a copy): what a preset stores. */
+function readBoard() {
+  const globals = {};
+  for (const id of PRESET_VALUE_IDS) globals[id] = values[id];
+  return { slots: Array.from({ length: NUM_SLOTS }, (_, s) => readSlot(s)), amp: readAmp(), ampPosition, values: globals };
+}
+/** Puts a stored board on the pedalboard (data only, no drawing); anything unknown or missing gets its default. */
+function applyBoard(board) {
+  const slots = Array.isArray(board.slots) ? board.slots : [];
+  for (let s = 0; s < NUM_SLOTS; ++s) loadSlot(s, slots[s] && typeof slots[s] === "object" ? slots[s] : { model: "empty" });
+  if (board.amp && typeof board.amp === "object") { loadAmp(board.amp); values.cab = board.amp.on !== false; }
+  if (Number.isInteger(board.ampPosition)) ampPosition = clamp(board.ampPosition, 0, NUM_SLOTS);
+  for (const id of PRESET_VALUE_IDS) {
+    const p = PARAMS[id], v = board.values ? board.values[id] : undefined;
+    if (p.kind === "float" && Number.isFinite(v)) values[id] = clamp(v, p.min, p.max);
+    if (p.kind === "bool" && typeof v === "boolean") values[id] = v;
+  }
+}
+function sameBoard(a, b) {
+  const near = (x, y) => Math.abs(x - y) <= 1e-6 * Math.max(1, Math.abs(x), Math.abs(y));
+  const sameKnobs = (x, y) => x.length === y.length && x.every((v, i) => near(v, y[i]));
+  if (a.ampPosition !== b.ampPosition) return false;
+  for (const id of PRESET_VALUE_IDS) {
+    const x = a.values[id], y = b.values[id];
+    if (typeof x === "number" ? !near(x, y) : x !== y) return false;
+  }
+  if (a.amp.on !== b.amp.on || a.amp.amp !== b.amp.amp || a.amp.cab !== b.amp.cab
+      || !sameKnobs(a.amp.ampKnobs, b.amp.ampKnobs) || !sameKnobs(a.amp.cabKnobs, b.amp.cabKnobs)) return false;
+  return a.slots.every((slot, s) => slot.on === b.slots[s].on && slot.model === b.slots[s].model && sameKnobs(slot.knobs, b.slots[s].knobs));
+}
+/** A stored board with everything checked: it goes on the pedalboard and is read back, then the board is put back. */
+function cleanBoard(board) {
+  const live = readBoard();
+  applyBoard(board && typeof board === "object" ? board : {});
+  const clean = readBoard();
+  applyBoard(live);
+  return clean;
+}
+/** One of DSP.factoryPresets() as a preset's board. */
+function factoryBoard(f) {
+  const e = f.board.eq;
+  return cleanBoard({ slots: f.board.slots, amp: f.board.amp, ampPosition: f.board.ampPosition,
+    values: { tempo: f.tempo, eqOn: f.board.eqOn, eqLcFreq: e.lowCutHz, eqBassFreq: e.bassHz, eqBassGain: e.bassDb,
+              eqLmFreq: e.lowMidHz, eqLmGain: e.lowMidDb, eqLmQ: e.lowMidQ, eqHmFreq: e.highMidHz, eqHmGain: e.highMidDb, eqHmQ: e.highMidQ,
+              eqTrebFreq: e.trebleHz, eqTrebGain: e.trebleDb, eqHcFreq: e.highCutHz } });
+}
+const cleanPresetName = (name) => [...String(name).trim()].slice(0, PRESET_NAME_MAX).join("").trim();
+const DEFAULT_BOARD = readBoard();
+let presets = new Array(NUM_PRESETS).fill(null); // each { name, board } or null (empty)
+let currentPreset = 0;
+let presetRefreshQueued = false;
 let source = "demo";
 let playing = true; // demo riff / file transport (STOP / PLAY)
 let chordPattern = DSP.CHORD_PATTERNS.arpeggio, chordTempo = 90, loopingChord = -1;
@@ -172,8 +230,21 @@ try {
     if (Number.isInteger(saved.chordPattern) && saved.chordPattern >= 0 && saved.chordPattern <= 2) chordPattern = saved.chordPattern;
     if (Number.isFinite(saved.chordTempo)) chordTempo = clamp(Math.round(saved.chordTempo), 40, 240);
     if (saved.latencyMode === "low" || saved.latencyMode === "stable") latencyMode = saved.latencyMode;
+    if (Array.isArray(saved.presets) && saved.presets.some((p) => p && typeof p === "object")) {
+      presets = Array.from({ length: NUM_PRESETS }, (_, i) => {
+        const p = saved.presets[i];
+        return p && typeof p === "object" ? { name: cleanPresetName(p.name || "") || `Preset ${i + 1}`, board: cleanBoard(p.board) } : null;
+      });
+      currentPreset = Number.isInteger(saved.currentPreset) && presets[saved.currentPreset] ? saved.currentPreset : presets.findIndex(Boolean);
+    }
   }
 } catch { /* storage unavailable: defaults */ }
+if (!presets.some(Boolean)) {
+  // The bank as it first is: the board as it is now (so recalling an example never loses it), then the examples.
+  presets[0] = { name: sameBoard(readBoard(), DEFAULT_BOARD) ? "Default" : "My Board", board: readBoard() };
+  DSP.factoryPresets().slice(0, NUM_PRESETS - 1).forEach((f, i) => { presets[i + 1] = { name: f.name, board: factoryBoard(f) }; });
+  currentPreset = 0;
+}
 
 const listeners = {};
 const onChange = (id, fn) => { (listeners[id] ||= []).push(fn); fn(values[id]); };
@@ -186,6 +257,7 @@ function setValue(id, v) {
   notify(id);
   sendParams();
   schedulePersist();
+  queuePresetRefresh();
 }
 /** Re-runs the listeners of `id` (e.g. a synced time's text after the tempo changed). */
 function notify(id) { for (const fn of listeners[id] || []) fn(values[id]); }
@@ -197,7 +269,10 @@ function persist() {
   const globals = {};
   for (const [id, v] of Object.entries(values)) if (!/^(s\d|ampk|cabk|ampModel|cabModel)/.test(id)) globals[id] = v;
   const slots = Array.from({ length: NUM_SLOTS }, (_, s) => readSlot(s));
-  try { localStorage.setItem(STORE_KEY, JSON.stringify({ values: globals, slots, amp: readAmp(), ampPosition, source, chordPattern, chordTempo, latencyMode })); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ values: globals, slots, amp: readAmp(), ampPosition, source, chordPattern, chordTempo,
+                                                     latencyMode, presets, currentPreset }));
+  } catch { /* ignore */ }
 }
 
 function fxParams() {
@@ -689,6 +764,7 @@ function chainChanged() {
   schedulePersist();
   renderChain();
   renderEditor();
+  queuePresetRefresh();
 }
 
 function selectBlock(pos) {
@@ -1053,6 +1129,122 @@ bpmInput.addEventListener("input", () => {
 });
 bpmInput.addEventListener("change", () => { bpmInput.value = String(chordTempo); }); // snap back an out-of-range entry
 $("#chord-stop").addEventListener("click", () => post({ type: "chordStop" }));
+
+// ============================================================================
+// Preset bar. Click a preset to recall it (the current one again: back to how it was saved); click an empty
+// one to store the board there. SAVE stores the board in the current preset, SAVE AS in the one clicked next,
+// RENAME names the current one. A preset that was changed and not saved turns amber and gets a star;
+// recalling another preset drops those changes, as on a hardware unit.
+const presetSection = $(".presets"), presetBox = $("#preset-tiles");
+const presetSave = $("#preset-save"), presetSaveAs = $("#preset-save-as"), presetRename = $("#preset-rename");
+let presetPicking = false, presetPickTimer = 0, presetRenaming = -1;
+
+const presetModified = () => !!presets[currentPreset] && !sameBoard(readBoard(), presets[currentPreset].board);
+
+const presetTiles = Array.from({ length: NUM_PRESETS }, (_, i) => {
+  const button = el("button", "preset", { type: "button", "data-preset": String(i) });
+  const num = el("span", "num"), name = el("span", "name"), star = el("span", "star", { "aria-hidden": "true" });
+  num.textContent = String(i + 1);
+  star.textContent = "*";
+  button.append(num, name, star);
+  button.addEventListener("click", () => presetClicked(i));
+  presetBox.append(button);
+  return { button, name };
+});
+
+function renderPresets() {
+  const modified = presetModified();
+  presetTiles.forEach(({ button, name }, i) => {
+    const p = presets[i], current = !!p && i === currentPreset;
+    button.classList.toggle("empty", !p);
+    button.classList.toggle("modified", current && modified);
+    button.setAttribute("aria-pressed", String(current));
+    name.textContent = p ? p.name : "+";
+    button.title = presetPicking ? (p ? `把現在的設定存到這裡，取代「${p.name}」` : "把現在的設定存到這裡")
+      : !p ? "空的：點一下把現在的設定存到這一格"
+      : current && modified ? `${p.name}：有改動還沒儲存。按 SAVE 保留；點這裡回到儲存時的設定`
+      : current ? `${p.name}（目前的 Preset）`
+      : `${p.name}：點一下切換到這一組`;
+    button.setAttribute("aria-label", `Preset ${i + 1}: ${p ? p.name : "empty"}${current ? ", current" : ""}${current && modified ? ", changed, not saved" : ""}`);
+  });
+  presetSection.classList.toggle("picking", presetPicking);
+  presetSave.classList.toggle("attention", modified);
+  presetSaveAs.textContent = presetPicking ? "Cancel" : "Save as";
+}
+/** The star follows the board: called (once per burst of changes) whenever a value or the chain changes. */
+function queuePresetRefresh() {
+  if (presetRefreshQueued) return;
+  presetRefreshQueued = true;
+  setTimeout(() => { presetRefreshQueued = false; renderPresets(); }, 0);
+}
+
+function recallPreset(i) {
+  if (!presets[i]) return;
+  applyBoard(presets[i].board);
+  currentPreset = i;
+  for (const id of PRESET_VALUE_IDS) notify(id); // the EQ's knobs and switch, the tempo box
+  chainChanged(); // the whole board goes to the audio thread in one message, never half of it
+  persist();
+  renderPresets();
+}
+function storePreset(i) {
+  presets[i] = { name: presets[i] ? presets[i].name : `Preset ${i + 1}`, board: readBoard() };
+  currentPreset = i;
+  persist();
+  renderPresets();
+  setStatus(`已存到 Preset ${i + 1}「${presets[i].name}」`, 4000);
+}
+function renamePreset(i, name) {
+  const cleaned = cleanPresetName(name);
+  if (presets[i] && cleaned) { presets[i].name = cleaned; persist(); }
+  renderPresets();
+}
+function setPresetPicking(on) {
+  presetPicking = on;
+  clearTimeout(presetPickTimer);
+  // forgotten after ten seconds: a later click must recall a preset again, not overwrite one
+  if (on) presetPickTimer = setTimeout(() => setPresetPicking(false), 10000);
+  renderPresets();
+}
+function presetClicked(i) {
+  if (presetPicking || !presets[i]) { storePreset(i); setPresetPicking(false); }
+  else recallPreset(i);
+}
+function startPresetRename() {
+  const i = currentPreset, preset = presets[i];
+  if (!preset || presetRenaming >= 0) return;
+  setPresetPicking(false);
+  presetRenaming = i;
+  const { button } = presetTiles[i];
+  const input = el("input", "preset-name", { type: "text", maxlength: String(PRESET_NAME_MAX), "aria-label": "Preset name",
+                                             enterkeyhint: "done", autocomplete: "off", spellcheck: "false" });
+  input.value = preset.name;
+  let done = false;
+  const finish = (keep) => {
+    if (done) return;
+    done = true;
+    presetRenaming = -1;
+    const name = input.value;
+    input.remove();
+    button.hidden = false;
+    if (keep) renamePreset(i, name); else renderPresets();
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return; // Enter that picks a character in a Chinese / Japanese input method
+    if (e.key === "Enter") finish(true);
+    else if (e.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+  button.hidden = true;
+  button.after(input);
+  input.focus();
+  input.select();
+}
+presetSave.addEventListener("click", () => { if (presets[currentPreset]) { setPresetPicking(false); storePreset(currentPreset); } else setPresetPicking(true); });
+presetSaveAs.addEventListener("click", () => setPresetPicking(!presetPicking));
+presetRename.addEventListener("click", startPresetRename);
+renderPresets();
 
 // ============================================================================
 // EQ panel

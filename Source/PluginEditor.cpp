@@ -3,7 +3,7 @@
 namespace
 {
 constexpr int editorWidth  = 1000;
-constexpr int editorHeight = 872;
+constexpr int editorHeight = 926;
 constexpr int margin       = 16;
 } // namespace
 
@@ -28,6 +28,9 @@ PedalboardEditor::PedalboardEditor (PedalboardProcessor& p)
     sourceBar = std::make_unique<ui::SourceBar> (processor.getTestSignal());
     sourceBar->onHeightChanged = [this] { resized(); repaint(); }; // one row with the live guitar: the EQ gets the rest
     addAndMakeVisible (*sourceBar);
+
+    presetBar = std::make_unique<ui::PresetBar> (processor);
+    addAndMakeVisible (*presetBar);
 
     tuner.onClick = [this]
     {
@@ -118,6 +121,8 @@ void PedalboardEditor::resized()
     headerArea = area.removeFromTop (124);
     area.removeFromTop (10);
     sourceBar->setBounds (area.removeFromTop (sourceBar->getPreferredHeight()));
+    area.removeFromTop (10);
+    presetBar->setBounds (area.removeFromTop (44));
     area.removeFromTop (12);
 
     // header: title | input | tuner | master | mute
@@ -170,6 +175,7 @@ void PedalboardEditor::timerCallback()
 
     eqPanel->update (rate);
     sourceBar->refresh();
+    presetBar->refresh();
     chainStrip->tick();
     slotEditor->tick();
 

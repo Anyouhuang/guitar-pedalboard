@@ -4,6 +4,7 @@
 #include "UI/EqPanel.h"
 #include "UI/LatencyReadout.h"
 #include "UI/PedalLookAndFeel.h"
+#include "UI/PresetBar.h"
 #include "UI/ChainStrip.h"
 #include "UI/SlotEditor.h"
 #include "UI/SourceBar.h"
@@ -48,6 +49,7 @@ private:
     std::unique_ptr<ui::SlotEditor> slotEditor;
     std::unique_ptr<ui::EqPanel> eqPanel;
     std::unique_ptr<ui::SourceBar> sourceBar;
+    std::unique_ptr<ui::PresetBar> presetBar;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;

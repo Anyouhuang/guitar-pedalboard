@@ -50,6 +50,25 @@
 
 兩者都不會增加延遲。**調音器**：點一下就能開 / 關（關掉後不做音高偵測、省 CPU；調音器本來就不會增加延遲）。
 
+## Preset：隨時切換設定好的效果器組合
+
+INPUT 列下面的 **PRESET** 列有 8 組，跟 HD500X 的 Preset 一樣：把整塊板子存成一組，之後點一下就整組換過去，彈奏中也可以切換（30 ms 淡入淡出，不會爆音）。
+
+| 操作 | 作用 |
+|---|---|
+| **點一組** | 整塊板子換成那一組；目前用的那一組會亮綠色 |
+| **SAVE** | 把現在的設定存進目前這一組 |
+| **SAVE AS** | 存到另一組：按下後 8 格會閃黃框，再點要存進去的那一格（原本的名字會保留）；再按一次（CANCEL）或等 10 秒就取消 |
+| **點空的格子（+）** | 直接把現在的設定存進那一格，名字是 Preset N |
+| **RENAME** | 幫目前這一組改名字（最多 16 個字，可以用中文）；Enter 確定、Esc 取消 |
+| **再點一次目前這一組** | 回到儲存時的設定（放棄還沒存的改動） |
+
+- **一組包含**：8 個效果格（哪個效果、旋鈕、開關）、AMP / CAB、排列順序、EQ、TAP 速度。
+- **不包含**：INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise、輸入來源。這些跟吉他和環境有關，換音色時不會跟著變。
+- **改過但還沒存**：那一組會變成黃色並出現 `*`，SAVE 也會變黃。這時切到別組，改動不會保留（跟 HD500X 一樣）。
+- **一開始的內容**：第 1 組是你原本的設定（從舊版升級時叫 My Board，全新安裝叫 Default），第 2–5 組是範例 Clean、Crunch、Lead、Ambient，第 6–8 組是空的。範例可以直接改掉重存。
+- **存在哪裡**：獨立程式存在程式設定裡（正常關閉時寫入）；VST3 外掛跟著 DAW 的專案存；網頁版存在瀏覽器裡。三邊各存各的，不會同步。
+
 ## TAP 拍速
 
 訊號鏈右邊的 **TAP** 是全域速度（跟 HD500X 的 TAP 鍵一樣）：
@@ -112,8 +131,8 @@ EQ 在視窗最下方，圖上有兩層資訊：
 
 | 檔案 | 說明 |
 |---|---|
-| `dist\GuitarPedalboard-1.3.1-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
-| `dist\GuitarPedalboard-1.3.1-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
+| `dist\GuitarPedalboard-1.4.0-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
+| `dist\GuitarPedalboard-1.4.0-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
 
 - 程式已靜態連結 C++ 執行階段，**不需要另外安裝 Visual C++ Redistributable**，Windows 10 / 11 64 位元都能直接執行。
 - 因為沒有付費的程式碼簽章憑證，第一次執行可能出現「Windows 已保護您的電腦」：按「其他資訊」→「仍要執行」。
@@ -225,9 +244,10 @@ build\PedalTest_artefacts\Release\PedalTest.exe test_output
 - 頻譜分析器對已知頻率的正弦波能顯示在正確位置和音量
 - 測試訊號：撥弦的音準誤差 < 0.25 cent；DEMO RIFF 循環無接縫雜音；不同取樣率的音檔播放音高正確
 - TAP：穩定 / 不穩的點擊、停頓後重來、突然變速、按鍵彈跳都能正確處理；Reverb pre-delay 時間精準
+- Preset 的四組範例：用到的型號和旋鈕名稱都存在、彼此音量差在 6 dB 內、互相切換時不會爆音；網頁版的範例必須和 C++ 的完全相同
 - 另外會在 `test_output\reference\` 輸出參考資料（含型號清單和一段不斷換型號、開關、移動方塊的腳本），給網頁版的 `node web/test/compare.mjs` 逐樣本比對
 - `node web/test/alloc.mjs`：量測網頁版每個效果在音訊執行緒上產生多少暫時記憶體（越少，瀏覽器在小緩衝下越不容易因垃圾回收而斷音）。這是比較用的報告，不是通過 / 失敗的測試
-- `build\UiSnapshot_artefacts\Release\UiSnapshot.exe check`：不開視窗的介面操作檢查（`Tests/UiChecks.h`）：用模擬的滑鼠點 / 拖 Denoise 拉桿並確認數值和聲音真的改變、標題列沒有 AMP / CAB 按鍵、選 LIVE INPUT 時 INPUT 列只剩來源按鈕。
+- `build\UiSnapshot_artefacts\Release\UiSnapshot.exe check`：不開視窗的介面操作檢查（`Tests/UiChecks.h`）：Preset 的切換 / SAVE / SAVE AS / RENAME、存檔後重開、從沒有 Preset 的舊版狀態升級、播放中連續切換；用模擬的滑鼠點 / 拖 Denoise 拉桿並確認數值和聲音真的改變、標題列沒有 AMP / CAB 按鍵、選 LIVE INPUT 時 INPUT 列只剩來源按鈕。
 - `node web/test/latency.mjs`：量測每個效果增加的延遲（每個破音型號約 0.1–0.25 ms、CAB 約 0.08 ms；整體延遲主要來自音訊介面、瀏覽器和耳機的輸入輸出緩衝）
 
 ## 程式碼結構
@@ -258,7 +278,7 @@ Source/
 │  ├─ TapTempo.h         TAP 拍速計算與音符長度表
 │  └─ DspUtils.h         濾波器、延遲線等基本元件
 ├─ KnobText.h           旋鈕數值的文字格式
-└─ UI/                   訊號鏈 (ChainStrip)、編輯區 (SlotEditor)、TAP、旋鈕、腳踏開關、電平表、調音器、EQ 畫面、輸入來源列
+└─ UI/                   訊號鏈 (ChainStrip)、編輯區 (SlotEditor)、Preset 列 (PresetBar)、TAP、旋鈕、腳踏開關、電平表、調音器、EQ 畫面、輸入來源列
 Tests/RenderTest.cpp     離線測試
 Tests/UiSnapshot.cpp     不開視窗、不開音效裝置，把外掛畫面存成 PNG（檢查排版用）
 Tests/UiChecks.h         介面操作檢查（UiSnapshot check）：模擬滑鼠操作，不開視窗

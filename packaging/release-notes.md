@@ -4,12 +4,21 @@ Windows 版的電吉他綜合效果器：獨立程式 + VST3 外掛（Windows 10
 
 | 檔案 | 說明 |
 |---|---|
-| **GuitarPedalboard-1.3.1-Setup.exe** | 安裝程式（建議）：建立開始功能表捷徑，可選擇同時安裝 VST3 外掛，可以解除安裝 |
-| **GuitarPedalboard-1.3.1-Windows-Portable.zip** | 免安裝版：解壓縮後直接執行 `Guitar Pedalboard.exe`；要用 VST3 外掛時，對 `Install-VST3.cmd` 按右鍵「以系統管理員身分執行」 |
+| **GuitarPedalboard-1.4.0-Setup.exe** | 安裝程式（建議）：建立開始功能表捷徑，可選擇同時安裝 VST3 外掛，可以解除安裝 |
+| **GuitarPedalboard-1.4.0-Windows-Portable.zip** | 免安裝版：解壓縮後直接執行 `Guitar Pedalboard.exe`；要用 VST3 外掛時，對 `Install-VST3.cmd` 按右鍵「以系統管理員身分執行」 |
 
 - 不需要另外安裝 Visual C++ 執行階段。
 - **第一次執行可能出現「Windows 已保護您的電腦」**：因為程式沒有付費的程式碼簽章，按「其他資訊」→「仍要執行」即可。
 - 接吉他：吉他接錄音介面，在 **Options → Audio/MIDI Settings** 選 ASIO（延遲最低；沒有 ASIO 驅動可以選 Windows Audio (Exclusive Mode) 或 (Low Latency Mode)）、Audio buffer size 設 64–256、只勾吉他的輸入聲道、取消勾選 Mute audio input。詳細步驟見安裝資料夾裡的 QuickStart-zh-TW.txt。
+
+## 1.4.0 的變更：Preset
+
+- **新增 PRESET 列（Windows 版、網頁版）**：8 組可以隨時切換的效果器組合。點一下就把整塊板子換成那一組，彈奏中也可以切換，不會爆音。
+- `SAVE` 存進目前這一組；`SAVE AS` 再點另一格存到別組；點空的格子（+）直接存進去；`RENAME` 改名字（可以用中文）。
+- 一組包含 8 個效果格、AMP / CAB、排列順序、EQ 和 TAP 速度。INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise 不會跟著變。
+- 改過但還沒存的那一組會變成黃色並出現 `*`；這時切到別組，改動不會保留。
+- 升級後，你原本的設定會放在第 1 組（My Board），第 2–5 組是範例 Clean、Crunch、Lead、Ambient，第 6–8 組是空的。
+- Windows 版的視窗比之前高 54 像素（1000 x 926）。
 
 ## 1.3.1 的變更
 

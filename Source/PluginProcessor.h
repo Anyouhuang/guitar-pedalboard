@@ -78,6 +78,29 @@ public:
 
     juce::RangedAudioParameter& parameter (const juce::String& id) const { return *apvts.getParameter (id); }
 
+    //==============================================================================
+    // Preset bank (message thread): eight boards that can be recalled at any time, also while playing.
+    // A preset holds the eight slots, the amp block, the chain order, the EQ and the tempo. It does not hold
+    // the input / master levels, MUTE, the tuner or the noise section: those belong to the guitar and the
+    // room, not to a sound. The bank is saved with the rest of the state.
+    static constexpr int numPresets = 8;
+    static constexpr int maxPresetNameLength = 16;
+
+    int getCurrentPreset() const noexcept { return currentPreset; }
+    bool isPresetEmpty (int index) const;
+    juce::String getPresetName (int index) const;
+
+    /** True when the board no longer matches the current preset: something was changed and not saved. */
+    bool isPresetModified() const;
+
+    /** Recalls a preset: the whole board changes in one go. Empty presets are ignored. */
+    void loadPreset (int index);
+
+    /** Stores the board in a preset (it keeps its name, a new one is called "Preset N") and makes it the current one. */
+    void savePreset (int index);
+
+    void renamePreset (int index, const juce::String& name);
+
 private:
     // Declared before apvts: the knob parameters' text functions read the slot models through these.
     std::array<std::atomic<float>*, fx::numSlots> slotOnValues {}, slotModelValues {};
@@ -98,11 +121,22 @@ private:
     fx::FxParams readParameters() const;
     static void setParameter (juce::RangedAudioParameter&, float plainValue);
 
+    /** The bank as it first is: the board as it is now (so recalling an example never loses it), then the examples. */
+    void resetPresetBank();
+    void storeBoard (juce::ValueTree preset, const juce::String& name) const;
+    void storeFactoryPreset (juce::ValueTree preset, const fx::FactoryPreset&) const;
+    bool boardIsDefault() const;
+
     fx::FxChain chain;
     fx::AudioTap tunerTap, analyzerTap;
     TestSignalPlayer testSignal;
 
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
+
+    std::vector<juce::RangedAudioParameter*> presetParameters; // what a preset holds
+    juce::ValueTree presetBank { "PRESETS" };                  // numPresets children, each a list of parameter id -> value
+    int currentPreset = 0;
+    std::atomic<bool> holdParameters { false }; // set while a preset is being recalled: the audio thread keeps the old board
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PedalboardProcessor)
 };

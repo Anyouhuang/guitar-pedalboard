@@ -44,6 +44,21 @@ const { sampleRate: fs, blockSize } = manifest;
   check(mismatches === 0 && lists.every(([wanted, have]) => wanted.length === have.length), "model lists match the plugin");
 }
 
+// the preset bank's example boards must be the plugin's: same names, tempos and every setting
+{
+  const near = (a, b) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
+  const same = (want, got) =>
+    typeof want === "number" ? typeof got === "number" && near(want, got)
+    : Array.isArray(want) ? Array.isArray(got) && want.length === got.length && want.every((w, i) => same(w, got[i]))
+    : want && typeof want === "object" ? !!got && typeof got === "object" && Object.keys(want).every((k) => same(want[k], got[k]))
+    : want === got;
+  const mine = dsp.factoryPresets(), theirs = manifest.presets || [];
+  const different = theirs.filter((want, i) => !(mine[i] && mine[i].name === want.name && near(mine[i].tempo, want.tempo) && same(want.board, mine[i].board)));
+  for (const p of different) console.log(`  factory preset ${p.name} differs`);
+  console.log(`  factory presets: ${theirs.map((p) => p.name).join(", ")} in the plugin; ${mine.map((p) => p.name).join(", ")} here; ${different.length} different`);
+  check(theirs.length > 0 && theirs.length === mine.length && different.length === 0, "factory presets match the plugin");
+}
+
 for (const c of manifest.cases) {
   const expected = readF32(join(refDir, `${c.name}.f32`));
   const n = expected.length / 2; // some cases only keep their first seconds

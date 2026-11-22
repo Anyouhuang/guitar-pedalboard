@@ -74,6 +74,16 @@ PedalboardProcessor::PedalboardProcessor()
         cabKnobValues[(size_t) k] = apvts.getRawParameterValue (ParamIDs::cabKnob (k));
 
     chain.setAnalyzerTap (&analyzerTap);
+
+    // everything except these few belongs to a preset
+    const juce::StringArray notInPresets { ParamIDs::inputGain, ParamIDs::outputGain, ParamIDs::mute,
+                                           ParamIDs::tunerOn, ParamIDs::noiseHum, ParamIDs::noiseAmount };
+    for (auto* p : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (! notInPresets.contains (ranged->getParameterID()))
+                presetParameters.push_back (ranged);
+
+    resetPresetBank();
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout PedalboardProcessor::createLayout()
@@ -456,7 +466,9 @@ void PedalboardProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     if (apvts.getRawParameterValue (ParamIDs::tunerOn)->load() > 0.5f)
         tunerTap.push (input, numSamples);
 
-    chain.setParameters (readParameters());
+    if (! holdParameters.load()) // a preset being recalled arrives whole, never half of it
+        chain.setParameters (readParameters());
+
     chain.process (input,
                    buffer.getWritePointer (0),
                    numOut > 1 ? buffer.getWritePointer (1) : nullptr,
@@ -467,6 +479,155 @@ void PedalboardProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     storeMax (inputPeak, chain.getInputPeak());
     storeMax (outputPeak, chain.getOutputPeak());
+}
+
+//==============================================================================
+namespace
+{
+const juce::Identifier presetType { "PRESET" }, presetName { "name" }, presetFilled { "filled" }, presetCurrent { "current" };
+}
+
+bool PedalboardProcessor::isPresetEmpty (int index) const
+{
+    return ! (bool) presetBank.getChild (index).getProperty (presetFilled, false);
+}
+
+juce::String PedalboardProcessor::getPresetName (int index) const
+{
+    return isPresetEmpty (index) ? juce::String() : presetBank.getChild (index).getProperty (presetName).toString();
+}
+
+bool PedalboardProcessor::isPresetModified() const
+{
+    if (isPresetEmpty (currentPreset))
+        return false;
+
+    const auto preset = presetBank.getChild (currentPreset);
+    for (auto* p : presetParameters)
+        if (preset.hasProperty (p->getParameterID())
+            && std::abs (p->convertTo0to1 ((float) preset.getProperty (p->getParameterID())) - p->getValue()) > 1.0e-4f)
+            return true;
+
+    return false;
+}
+
+void PedalboardProcessor::loadPreset (int index)
+{
+    if (isPresetEmpty (index))
+        return;
+
+    const auto preset = presetBank.getChild (index);
+    holdParameters = true;
+    for (auto* p : presetParameters)
+        if (preset.hasProperty (p->getParameterID()))
+            setParameter (*p, (float) preset.getProperty (p->getParameterID()));
+    holdParameters = false;
+
+    currentPreset = index;
+    updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true)); // which preset is current is saved too
+}
+
+void PedalboardProcessor::storeBoard (juce::ValueTree preset, const juce::String& name) const
+{
+    for (auto* p : presetParameters)
+        preset.setProperty (p->getParameterID(), p->convertFrom0to1 (p->getValue()), nullptr);
+
+    preset.setProperty (presetName, name, nullptr);
+    preset.setProperty (presetFilled, true, nullptr);
+}
+
+void PedalboardProcessor::savePreset (int index)
+{
+    auto preset = presetBank.getChild (index);
+    if (! preset.isValid())
+        return;
+
+    const auto name = getPresetName (index);
+    storeBoard (preset, name.isNotEmpty() ? name : "Preset " + juce::String (index + 1));
+    currentPreset = index;
+    updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true)); // a DAW then knows its project has changed
+}
+
+void PedalboardProcessor::renamePreset (int index, const juce::String& name)
+{
+    const auto trimmed = name.trim().substring (0, maxPresetNameLength).trim();
+    if (! isPresetEmpty (index) && trimmed.isNotEmpty())
+    {
+        presetBank.getChild (index).setProperty (presetName, trimmed, nullptr);
+        updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
+    }
+}
+
+void PedalboardProcessor::storeFactoryPreset (juce::ValueTree preset, const fx::FactoryPreset& factory) const
+{
+    // the same conversion as the parameters' own defaults in createLayout(): knobs are stored as travel
+    const auto& board = factory.board;
+    const auto set = [&preset] (const juce::String& id, float value) { preset.setProperty (id, value, nullptr); };
+    const auto travels = [&set] (const std::vector<fx::KnobSpec>& specs, const float* values, int count, auto idOf)
+    {
+        for (int k = 0; k < count; ++k)
+            set (idOf (k), k < (int) specs.size() ? specs[(size_t) k].toNorm (values[k]) : 0.5f);
+    };
+
+    for (int s = 0; s < fx::numSlots; ++s)
+    {
+        const auto& slot = board.slots[(size_t) s];
+        set (ParamIDs::slotOn (s), slot.on ? 1.0f : 0.0f);
+        set (ParamIDs::slotModel (s), (float) slot.model);
+        travels (fx::modelInfo (slot.model).knobs, slot.knobs.data(), fx::maxKnobs, [s] (int k) { return ParamIDs::slotKnob (s, k); });
+    }
+
+    static const std::vector<fx::KnobSpec> none;
+    set (ParamIDs::cab, board.amp.on ? 1.0f : 0.0f);
+    set (ParamIDs::ampModel, (float) (board.amp.amp + 1));
+    set (ParamIDs::cabModel, (float) (board.amp.cab + 1));
+    travels (board.amp.amp >= 0 ? fx::amps()[(size_t) board.amp.amp].knobs : none, board.amp.ampKnobs.data(), fx::maxAmpKnobs,
+             [] (int k) { return ParamIDs::ampKnob (k); });
+    travels (board.amp.cab >= 0 ? fx::cabs()[(size_t) board.amp.cab].knobs : none, board.amp.cabKnobs.data(), fx::maxCabKnobs,
+             [] (int k) { return ParamIDs::cabKnob (k); });
+    set (ParamIDs::ampPosition, (float) board.ampPosition);
+
+    set (ParamIDs::eqOn, board.eqOn ? 1.0f : 0.0f);
+    set (ParamIDs::eqLowCut, board.eq.lowCutHz);
+    set (ParamIDs::eqBassFreq, board.eq.bassHz);
+    set (ParamIDs::eqBassGain, board.eq.bassDb);
+    set (ParamIDs::eqLoMidFreq, board.eq.lowMidHz);
+    set (ParamIDs::eqLoMidGain, board.eq.lowMidDb);
+    set (ParamIDs::eqLoMidQ, board.eq.lowMidQ);
+    set (ParamIDs::eqHiMidFreq, board.eq.highMidHz);
+    set (ParamIDs::eqHiMidGain, board.eq.highMidDb);
+    set (ParamIDs::eqHiMidQ, board.eq.highMidQ);
+    set (ParamIDs::eqTrebFreq, board.eq.trebleHz);
+    set (ParamIDs::eqTrebGain, board.eq.trebleDb);
+    set (ParamIDs::eqHighCut, board.eq.highCutHz);
+    set (ParamIDs::tempo, factory.tempo);
+
+    preset.setProperty (presetName, juce::String (factory.name), nullptr);
+    preset.setProperty (presetFilled, true, nullptr);
+}
+
+bool PedalboardProcessor::boardIsDefault() const
+{
+    for (auto* p : presetParameters)
+        if (std::abs (p->getValue() - p->getDefaultValue()) > 1.0e-4f)
+            return false;
+
+    return true;
+}
+
+void PedalboardProcessor::resetPresetBank()
+{
+    presetBank = juce::ValueTree ("PRESETS");
+    for (int i = 0; i < numPresets; ++i)
+        presetBank.appendChild (juce::ValueTree (presetType), nullptr);
+
+    storeBoard (presetBank.getChild (0), boardIsDefault() ? "Default" : "My Board");
+
+    const auto& examples = fx::factoryPresets();
+    for (int i = 0; i < (int) examples.size() && i + 1 < numPresets; ++i)
+        storeFactoryPreset (presetBank.getChild (i + 1), examples[(size_t) i]);
+
+    currentPreset = 0;
 }
 
 //==============================================================================
@@ -484,6 +645,10 @@ void PedalboardProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("chordPattern", testSignal.getChordPattern(), nullptr);
     state.setProperty ("chordTempo", testSignal.getChordTempo(), nullptr);
 
+    auto bank = presetBank.createCopy();
+    bank.setProperty (presetCurrent, currentPreset, nullptr);
+    state.appendChild (bank, nullptr);
+
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -494,9 +659,24 @@ void PedalboardProcessor::setStateInformation (const void* data, int sizeInBytes
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
+    auto tree = juce::ValueTree::fromXml (*xml);
+    const auto bank = tree.getChildWithName (presetBank.getType());
+    tree.removeChild (bank, nullptr); // the bank is kept apart from the parameters
+
     // States from 1.x (fixed pedal row) have none of the slot parameters: keep the default board then.
     if (xml->getIntAttribute ("chainVersion", 1) >= 2)
-        apvts.replaceState (juce::ValueTree::fromXml (*xml));
+        apvts.replaceState (tree);
+
+    if (bank.getNumChildren() == numPresets)
+    {
+        presetBank = bank.createCopy();
+        presetBank.removeProperty (presetCurrent, nullptr);
+        currentPreset = juce::jlimit (0, numPresets - 1, (int) bank.getProperty (presetCurrent, 0));
+    }
+    else
+    {
+        resetPresetBank(); // a state from before the preset bank: its board becomes the first preset
+    }
 
     testSignal.setChordPattern (xml->getIntAttribute ("chordPattern", TestSignalPlayer::arpeggio));
     testSignal.setChordTempo ((float) xml->getDoubleAttribute ("chordTempo", 90.0));

@@ -116,6 +116,255 @@ inline float hissLevelDb (PedalboardProcessor& processor, double seconds)
     return juce::Decibels::gainToDecibels ((float) std::sqrt (sum / std::max (1, counted)), -160.0f);
 }
 
+/** The preset bank, through its bar in the editor: recall, save, save as, rename, and what is kept in the state. */
+inline void runPresetChecks()
+{
+    std::cout << "Preset bank\n";
+
+    PedalboardProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    auto* pedalboard = dynamic_cast<PedalboardEditor*> (editor.get());
+    auto* bank = pedalboard != nullptr ? findChild<ui::PresetBar> (*editor, [] (ui::PresetBar&) { return true; }) : nullptr;
+    check (bank != nullptr, "found the preset bar");
+    if (bank == nullptr)
+        return;
+
+    const auto settle = [&] { for (int i = 0; i < 7; ++i) pedalboard->refresh(); }; // the bar compares the board every 6th refresh
+    const auto tile = [&] (int number)
+    {
+        return findChild<juce::Button> (*bank, [number] (juce::Button& b) { return b.getName() == "Preset " + juce::String (number); });
+    };
+    const auto button = [&] (const juce::String& name)
+    {
+        return findChild<juce::TextButton> (*bank, [&name] (juce::TextButton& b) { return b.getName() == name; });
+    };
+    const auto click = [&] (juce::Button* b) { if (b != nullptr) b->onClick(); settle(); };
+    const auto value = [&] (const juce::String& id) { return processor.apvts.getRawParameterValue (id)->load(); };
+    const auto setNorm = [&] (const juce::String& id, float normalised) { processor.parameter (id).setValueNotifyingHost (normalised); settle(); };
+    const auto names = [&] (PedalboardProcessor& p)
+    {
+        juce::StringArray list;
+        for (int i = 0; i < PedalboardProcessor::numPresets; ++i)
+            list.add (p.isPresetEmpty (i) ? juce::String ("-") : p.getPresetName (i));
+        return list.joinIntoString (", ");
+    };
+    const auto ampKey = [] (PedalboardProcessor& p) { return p.getAmpModel() >= 0 ? juce::String (fx::amps()[(size_t) p.getAmpModel()].key) : juce::String(); };
+    const auto slotKey = [] (PedalboardProcessor& p, int s) { return juce::String (fx::modelInfo (p.getSlotModel (s)).key); };
+    const auto knob1 = ParamIDs::slotKnob (0, 0);
+    settle();
+
+    // ---- what a new bank holds
+    check (names (processor) == "Default, Clean, Crunch, Lead, Ambient, -, -, -", "a new bank: " + names (processor));
+    check (processor.getCurrentPreset() == 0 && ! processor.isPresetModified(), "preset 1 is the board as it opens, and it is the current one");
+    check (tile (1) != nullptr && tile (8) != nullptr && tile (1)->getButtonText() == "Default" && tile (8)->getButtonText() == "+",
+           "eight tiles: named ones, and \"+\" on the empty ones");
+    check (bank->getHeight() == 44 && bank->getY() > 0, "the bar is one row (" + juce::String (bank->getHeight()) + " px)");
+
+    // ---- recalling: the whole board changes, the guitar / room settings do not
+    setNorm (ParamIDs::inputGain, 0.7f);
+    setNorm (ParamIDs::outputGain, 0.3f);
+    setNorm (ParamIDs::mute, 1.0f);
+    setNorm (ParamIDs::noiseAmount, 0.4f);
+    setNorm (ParamIDs::noiseHum, 1.0f);
+    setNorm (ParamIDs::tunerOn, 0.0f);
+    const float in = value (ParamIDs::inputGain), out = value (ParamIDs::outputGain), denoise = value (ParamIDs::noiseAmount),
+                hum = value (ParamIDs::noiseHum);
+    check (! processor.isPresetModified(), "input, master, MUTE, tuner and noise settings do not count as changes to a preset");
+
+    click (tile (3));
+    check (processor.getCurrentPreset() == 2 && ampKey (processor) == "brit_j_45_normal" && slotKey (processor, 0) == "noise_gate"
+               && slotKey (processor, 1) == "screamer" && ! processor.isSlotOn (1) && processor.getAmpPosition() == 2,
+           "clicking Crunch recalls it: amp " + ampKey (processor) + ", slot 2 " + slotKey (processor, 1));
+    check (! processor.isPresetModified(), "a preset that was just recalled is not marked as changed");
+
+    click (tile (5));
+    check (processor.getCurrentPreset() == 4 && ampKey (processor) == "class_a_30_tb" && slotKey (processor, 2) == "ping_pong"
+               && std::abs (processor.getTempo() - 100.0f) < 0.01f && std::abs (value (ParamIDs::eqLowCut) - 90.0f) < 0.5f,
+           "clicking Ambient recalls its amp, effects, tempo (" + juce::String (processor.getTempo(), 0) + ") and EQ (low cut "
+               + juce::String (value (ParamIDs::eqLowCut), 0) + " Hz)");
+    check (value (ParamIDs::inputGain) == in && value (ParamIDs::outputGain) == out && value (ParamIDs::mute) > 0.5f
+               && value (ParamIDs::noiseAmount) == denoise && value (ParamIDs::noiseHum) == hum && value (ParamIDs::tunerOn) < 0.5f,
+           "recalling presets left input, master, MUTE, tuner and noise settings alone");
+
+    // ---- changing something marks the preset; SAVE keeps it; without SAVE it is dropped
+    setNorm (knob1, 0.9f);
+    check (processor.isPresetModified() && tile (5)->getTooltip().contains ("not saved"), "turning a knob marks the current preset as changed");
+    click (button ("SAVE"));
+    check (! processor.isPresetModified() && processor.getCurrentPreset() == 4, "SAVE stores the board in the current preset");
+
+    setNorm (knob1, 0.2f);
+    click (tile (2));
+    click (tile (5));
+    check (std::abs (value (knob1) - 0.9f) < 1.0e-4f, "a change that was not saved is gone after recalling another preset and coming back (knob at "
+                                                           + juce::String (value (knob1), 2) + ", saved 0.90)");
+
+    setNorm (knob1, 0.3f);
+    click (tile (5));
+    check (std::abs (value (knob1) - 0.9f) < 1.0e-4f && ! processor.isPresetModified(), "clicking the current preset goes back to its saved settings");
+
+    // ---- an empty preset: clicking it stores the board there
+    click (tile (6));
+    check (processor.getCurrentPreset() == 5 && processor.getPresetName (5) == "Preset 6" && ! processor.isPresetModified()
+               && ampKey (processor) == "class_a_30_tb" && tile (6)->getButtonText() == "Preset 6",
+           "clicking an empty preset stores the board there: " + names (processor));
+
+    // ---- SAVE AS: the next preset clicked is overwritten instead of recalled
+    click (tile (2)); // Clean
+    click (button ("SAVE AS"));
+    check (button ("SAVE AS")->getButtonText() == "CANCEL", "SAVE AS waits for a preset to be picked");
+    click (tile (3));
+    check (processor.getCurrentPreset() == 2 && processor.getPresetName (2) == "Crunch" && ampKey (processor) == "blackface_double_normal"
+               && button ("SAVE AS")->getButtonText() == "SAVE AS" && ! processor.isPresetModified(),
+           "SAVE AS, then Crunch: Crunch now holds the Clean board and keeps its name");
+    click (tile (4));
+    click (tile (3));
+    check (ampKey (processor) == "blackface_double_normal", "and that is what Crunch recalls from now on");
+
+    click (button ("SAVE AS"));
+    click (button ("SAVE AS")); // CANCEL
+    click (tile (4));
+    check (processor.getCurrentPreset() == 3 && ampKey (processor) == "brit_j_800", "after CANCEL a click recalls again (Lead: " + ampKey (processor) + ")");
+
+    // ---- RENAME
+    auto* nameEditor = findChild<juce::TextEditor> (*bank, [] (juce::TextEditor&) { return true; });
+    check (nameEditor != nullptr && ! nameEditor->isVisible(), "the name field is hidden until RENAME");
+    if (nameEditor != nullptr)
+    {
+        const auto solo = juce::String::fromUTF8 ("Solo 獨奏");
+        click (button ("RENAME"));
+        check (nameEditor->isVisible() && nameEditor->getText() == "Lead" && nameEditor->getBounds() == tile (4)->getBounds(),
+               "RENAME opens a name field on the current preset");
+        nameEditor->setText (solo, false);
+        nameEditor->onReturnKey();
+        settle();
+        check (processor.getPresetName (3) == solo && tile (4)->getButtonText() == solo && ! nameEditor->isVisible(),
+               "Enter keeps the new name, also in Chinese (" + juce::String (processor.getPresetName (3).length()) + " characters)");
+
+        click (button ("RENAME"));
+        nameEditor->setText ("Something else", false);
+        nameEditor->onEscapeKey();
+        settle();
+        check (processor.getPresetName (3) == solo && ! nameEditor->isVisible(), "Esc leaves the name as it was");
+
+        processor.renamePreset (3, "   ");
+        processor.renamePreset (7, "Nothing here");
+        check (processor.getPresetName (3) == solo && processor.isPresetEmpty (7), "a blank name is refused, an empty preset cannot be named");
+        processor.renamePreset (1, "A name that is far too long for a tile");
+        check (processor.getPresetName (1).length() == PedalboardProcessor::maxPresetNameLength,
+               "names are cut to " + juce::String (PedalboardProcessor::maxPresetNameLength) + " characters: \"" + processor.getPresetName (1) + "\"");
+        check (! processor.isPresetModified(), "renaming is not a change to the sound");
+    }
+
+    // ---- the bank is part of the saved state
+    juce::MemoryBlock saved;
+    processor.getStateInformation (saved);
+    {
+        PedalboardProcessor reopened;
+        reopened.setStateInformation (saved.getData(), (int) saved.getSize());
+        check (names (reopened) == names (processor) && reopened.getCurrentPreset() == processor.getCurrentPreset(),
+               "saving and reopening keeps the bank: " + names (reopened));
+        check (! reopened.isPresetModified() && ampKey (reopened) == ampKey (processor), "and the board, still matching its preset");
+
+        bool sameContents = true;
+        for (int i = 0; i < PedalboardProcessor::numPresets; ++i)
+        {
+            if (processor.isPresetEmpty (i))
+                continue;
+            processor.loadPreset (i);
+            reopened.loadPreset (i);
+            for (auto* p : reopened.getParameters())
+                sameContents = sameContents && std::abs (p->getValue() - processor.getParameters()[p->getParameterIndex()]->getValue()) < 1.0e-5f;
+        }
+        check (sameContents, "every preset recalls the same board after reopening");
+
+        juce::MemoryBlock again;
+        reopened.getStateInformation (again);
+        const auto xml = juce::AudioProcessor::getXmlFromBinary (again.getData(), (int) again.getSize());
+        int banks = 0;
+        if (xml != nullptr)
+            for (auto* child : xml->getChildWithTagNameIterator ("PRESETS"))
+                banks += child != nullptr ? 1 : 0;
+        check (banks == 1, "the state holds the bank once, however often it is saved and reopened (" + juce::String (banks) + ")");
+    }
+
+    // ---- a state from before the preset bank: its board must not be lost
+    {
+        const auto strip = [] (const juce::MemoryBlock& state)
+        {
+            juce::MemoryBlock old;
+            if (auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize()))
+            {
+                xml->deleteAllChildElementsWithTagName ("PRESETS");
+                juce::AudioProcessor::copyXmlToBinary (*xml, old);
+            }
+            return old;
+        };
+
+        PedalboardProcessor tweaked;
+        tweaked.setAmpModel (fx::findIn (fx::amps(), "treadplate"));
+        tweaked.setSlotModel (5, fx::findModel ("plate"));
+        juce::MemoryBlock state;
+        tweaked.getStateInformation (state);
+        const auto old = strip (state);
+
+        PedalboardProcessor upgraded;
+        upgraded.setStateInformation (old.getData(), (int) old.getSize());
+        check (names (upgraded) == "My Board, Clean, Crunch, Lead, Ambient, -, -, -" && upgraded.getCurrentPreset() == 0,
+               "an older state: its board becomes preset 1 (" + names (upgraded) + ")");
+        check (ampKey (upgraded) == "treadplate" && ! upgraded.isPresetModified(), "the older board is on the board, unchanged");
+        upgraded.loadPreset (1);
+        upgraded.loadPreset (0);
+        check (ampKey (upgraded) == "treadplate" && slotKey (upgraded, 5) == "plate" && ! upgraded.isPresetModified(),
+               "and it comes back after trying an example");
+
+        PedalboardProcessor untouched;
+        juce::MemoryBlock plain;
+        untouched.getStateInformation (plain);
+        const auto oldPlain = strip (plain);
+        PedalboardProcessor upgradedPlain;
+        upgradedPlain.setStateInformation (oldPlain.getData(), (int) oldPlain.getSize());
+        check (upgradedPlain.getPresetName (0) == "Default", "an older state with the default board: preset 1 is called Default");
+    }
+
+    // ---- recalling while the audio runs
+    {
+        const double rate = 48000.0;
+        const int block = 128;
+        processor.setPlayConfigDetails (1, 2, rate, block);
+        processor.prepareToPlay (rate, block);
+        processor.parameter (ParamIDs::mute).setValueNotifyingHost (0.0f);
+        processor.getTestSignal().setSource (TestSignalPlayer::live);
+
+        juce::AudioBuffer<float> buffer (2, block);
+        juce::MidiBuffer midi;
+        bool finite = true;
+        double energy = 0.0;
+        float peak = 0.0f;
+        for (int b = 0; b < 1500; ++b) // 4 seconds
+        {
+            if (b % 60 == 30)
+                processor.loadPreset ((b / 60) % 5);
+
+            for (int i = 0; i < block; ++i)
+                buffer.setSample (0, i, 0.25f * (float) std::sin (2.0 * 3.14159265358979 * 196.0 * (double) (b * block + i) / rate));
+            buffer.clear (1, 0, block);
+            processor.processBlock (buffer, midi);
+
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < block; ++i)
+                {
+                    const float s = buffer.getSample (ch, i);
+                    finite = finite && std::isfinite (s);
+                    peak = std::max (peak, std::abs (s));
+                    energy += (double) s * s;
+                }
+        }
+        processor.releaseResources();
+        check (finite && energy > 1.0 && peak < 1.99f, "recalling a preset every 160 ms while a note plays: sound all the way, peak "
+                                                          + juce::String (juce::Decibels::gainToDecibels (peak), 1) + " dBFS");
+    }
+}
+
 inline int run()
 {
     PedalboardProcessor processor;
@@ -227,6 +476,12 @@ inline int run()
     check (signal.getSource() == TestSignalPlayer::live && signal.getLoopingChord() < 0, "choosing LIVE INPUT stops a chord loop");
     processor.releaseResources();
     check (! pluckAndChordShown() && bar2->getHeight() == 44, "and the bar is one row again");
+
+    check (findChild<ui::PresetBar> (*editor, [] (ui::PresetBar&) { return true; }) != nullptr
+               && findChild<ui::PresetBar> (*editor, [] (ui::PresetBar&) { return true; })->getY() > bar2->getBottom(),
+           "the preset bar sits under the input bar");
+
+    runPresetChecks();
 
     std::cout << (failures == 0 ? "ALL UI CHECKS PASSED" : "UI CHECKS FAILED: " + juce::String (failures)) << "\n";
     return failures == 0 ? 0 : 1;

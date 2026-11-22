@@ -167,6 +167,15 @@ fx::FxParams defaultBoardAt120()
     return p;
 }
 
+/** One of the preset bank's example boards the way the plugin plays it: synced times follow the preset's tempo. */
+fx::FxParams presetBoard (const fx::FactoryPreset& preset)
+{
+    auto p = preset.board;
+    for (auto& slot : p.slots)
+        fx::resolveTempo (slot, preset.tempo);
+    return p;
+}
+
 /** A clearly audible EQ: more bass and treble, scooped mids, low and high cuts engaged. */
 fx::EqSettings smileEq()
 {
@@ -1031,6 +1040,20 @@ int main (int argc, char* argv[])
                        juce::String ("two models are called ") + (*list)[i].name);
         }
 
+    // The preset bank's example boards: every model and knob they name must exist, and their names must differ.
+    {
+        const auto& presets = fx::factoryPresets();
+        check (fx::factoryPresetErrors() == 0, "a factory preset names a model or knob that does not exist");
+        check (presets.size() >= 4 && presets.size() <= 7, "factory presets: one bank slot is kept for the user's own board, and at least one empty");
+        for (size_t i = 0; i < presets.size(); ++i)
+        {
+            check (juce::String (presets[i].name).isNotEmpty() && presets[i].tempo >= 30.0f && presets[i].tempo <= 300.0f,
+                   juce::String ("factory preset ") + presets[i].name + " needs a name and a tempo");
+            for (size_t j = 0; j < i; ++j)
+                check (juce::String (presets[j].name) != presets[i].name, juce::String ("two factory presets are called ") + presets[i].name);
+        }
+    }
+
     // A case either has fixed parameters, an automation (C++ only), or a schedule of parameter
     // changes (exported, so the web version can replay the same switching sequence).
     struct Scheduled { int atSample; fx::FxParams params; };
@@ -1177,6 +1200,26 @@ int main (int argc, char* argv[])
         cases.push_back (c);
     }
 
+    // the preset bank's example boards, and a session that recalls one after the other while playing
+    for (const auto& preset : fx::factoryPresets())
+        add (juce::String ("preset_") + juce::String (preset.name).toLowerCase(), [&preset] (auto& p) { p = presetBoard (preset); });
+
+    {
+        Case c { "preset_switching", {}, {}, {} };
+        const auto& presets = fx::factoryPresets();
+        c.params = presetBoard (presets.front());
+        for (int step = 1; step * 0.6 < 7.0; ++step)
+            c.schedule.push_back ({ (int) (step * 0.6 * testRate), presetBoard (presets[(size_t) step % presets.size()]) });
+
+        c.automation = [schedule = c.schedule] (fx::FxParams& p, double t)
+        {
+            for (const auto& s : schedule)
+                if (t * testRate >= s.atSample)
+                    p = s.params;
+        };
+        cases.push_back (c);
+    }
+
     std::cout << "== Effect renders (" << outDir.getFullPathName() << ") ==\n";
     std::cout << "  name                 peak dBFS   rms dBFS\n";
 
@@ -1189,6 +1232,7 @@ int main (int argc, char* argv[])
 
     float cleanRms = 1.0f;
     std::vector<std::pair<juce::String, float>> driveLevels, ampLevels;
+    std::vector<std::pair<juce::String, float>> presetLevels;
     for (auto& c : cases)
     {
         auto r = render (riff, c.params, c.automation);
@@ -1233,6 +1277,8 @@ int main (int argc, char* argv[])
             driveLevels.push_back ({ c.name, vsClean });
         if (c.name.startsWith ("amp_"))
             ampLevels.push_back ({ c.name, vsClean });
+        if (c.name.startsWith ("preset_") && c.schedule.empty())
+            presetLevels.push_back ({ c.name, vsClean });
 
         std::cout << "  " << c.name.paddedRight (' ', 20) << " "
                   << juce::String (fx::gainToDb (r.peak), 1).paddedLeft (' ', 9) << "  "
@@ -1280,6 +1326,22 @@ int main (int argc, char* argv[])
         }
     }
 
+    // Recalling another preset should not jump in volume: the example boards stay within a few dB of each other,
+    // clean ones a little quieter and the lead a little louder.
+    {
+        float lo = 1000.0f, hi = -1000.0f;
+        std::cout << "\n== Factory preset levels ==\n";
+        for (const auto& [name, level] : presetLevels)
+        {
+            std::cout << "  " << name.paddedRight (' ', 20) << juce::String (level, 1).paddedLeft (' ', 6) << " dB vs clean" << std::endl;
+            lo = std::min (lo, level);
+            hi = std::max (hi, level);
+        }
+        check (presetLevels.size() == fx::factoryPresets().size(), "every factory preset was rendered");
+        check (hi - lo < 6.0f, "the factory presets should be within 6 dB of each other");
+        check (lo > 0.0f && hi < 10.0f, "the factory presets should be a little louder than the clean guitar");
+    }
+
     // Loudness across the Drive knob (informational, and checked: turning Drive should not jump the volume)
     {
         std::cout << "\n== Distortion loudness vs Drive (dB vs clean, gate > model > cab) ==\n"
@@ -1314,6 +1376,17 @@ int main (int argc, char* argv[])
         manifest->setProperty ("models", modelsToVar (fx::models()));
         manifest->setProperty ("amps", modelsToVar (fx::amps()));
         manifest->setProperty ("cabs", modelsToVar (fx::cabs()));
+
+        juce::Array<juce::var> presetList;
+        for (const auto& preset : fx::factoryPresets())
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("name", juce::String (preset.name));
+            o->setProperty ("tempo", preset.tempo);
+            o->setProperty ("board", paramsToVar (preset.board));
+            presetList.add (juce::var (o));
+        }
+        manifest->setProperty ("presets", presetList);
 
         // stage 0 (1x <-> 2x) and stage 1 (2x <-> 4x), exactly as juce::dsp::Oversampling(1, 2, polyphaseIIR, maxQuality)
         auto* os = new juce::DynamicObject();
@@ -1430,6 +1503,18 @@ int main (int argc, char* argv[])
         before.ampPosition = 0;
         after.ampPosition = 1;
         report ("amp block moved", before, after);
+
+        // recalling another preset: every slot, the amp block and the EQ change in the same block
+        {
+            const auto& presets = fx::factoryPresets();
+            for (size_t i = 0; i < presets.size(); ++i)
+            {
+                const auto& a = presets[i];
+                const auto& b = presets[(i + 1) % presets.size()];
+                report (juce::String ("preset ") + a.name + " <-> " + b.name, presetBoard (a), presetBoard (b));
+            }
+            report ("default board <-> preset", defaultBoardAt120(), presetBoard (presets.front()));
+        }
     }
 
     // Each distortion slot adds its oversampling delay

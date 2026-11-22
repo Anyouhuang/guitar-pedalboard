@@ -16,6 +16,116 @@ FxParams defaultBoard()
 }
 
 //==============================================================================
+// The preset bank's example boards. Knobs are set by name; anything not named keeps its default.
+namespace
+{
+using KnobChanges = std::initializer_list<std::pair<const char*, float>>;
+int presetErrors = 0;
+
+void setKnobs (const std::vector<KnobSpec>& specs, float* knobs, KnobChanges changes)
+{
+    for (const auto& [name, value] : changes)
+    {
+        bool found = false;
+        for (size_t k = 0; k < specs.size(); ++k)
+            if (std::string_view (specs[k].name) == name)
+            {
+                knobs[k] = value;
+                found = true;
+            }
+
+        if (! found)
+            ++presetErrors;
+    }
+}
+
+SlotParams slotWith (std::string_view key, bool on, KnobChanges changes = {})
+{
+    auto slot = makeSlot (key, on);
+    if (key != modelInfo (slot.model).key) // an unknown key gives the empty model
+        ++presetErrors;
+
+    setKnobs (modelInfo (slot.model).knobs, slot.knobs.data(), changes);
+    return slot;
+}
+
+AmpParams ampWith (std::string_view ampKey, std::string_view cabKey, KnobChanges ampChanges = {}, KnobChanges cabChanges = {})
+{
+    auto block = makeAmp (ampKey, cabKey, true);
+    if (block.amp < 0 || block.cab < 0)
+    {
+        ++presetErrors;
+        return block;
+    }
+
+    setKnobs (amps()[(size_t) block.amp].knobs, block.ampKnobs.data(), ampChanges);
+    setKnobs (cabs()[(size_t) block.cab].knobs, block.cabKnobs.data(), cabChanges);
+    return block;
+}
+
+FxParams boardWith (std::initializer_list<SlotParams> slots, const AmpParams& amp, int ampPosition)
+{
+    FxParams p; // every slot empty, the EQ on and flat
+    size_t s = 0;
+    for (const auto& slot : slots)
+        p.slots[s++] = slot;
+
+    p.amp = amp;
+    p.ampPosition = ampPosition;
+    return p;
+}
+} // namespace
+
+const std::vector<FactoryPreset>& factoryPresets()
+{
+    static const std::vector<FactoryPreset> list = []
+    {
+        constexpr float quarter = 1.0f, dottedEighth = 2.0f; // the delays' Note knob: ms, 1/4, 1/8., 1/8, 1/8T, 1/16
+        std::vector<FactoryPreset> presets;
+
+        presets.push_back ({ "Clean", 120.0f, boardWith ({
+            slotWith ("red_comp", true, { { "Sustain", 45.0f } }),
+            slotWith ("chorus", false, { { "Speed", 0.6f }, { "Depth", 45.0f }, { "Mix", 40.0f } }),
+            slotWith ("analog_delay", false, { { "Note", quarter }, { "Feedback", 30.0f }, { "Mix", 22.0f } }),
+            slotWith ("spring", true, { { "Decay", 45.0f }, { "Mix", 26.0f } }),
+        }, ampWith ("blackface_double_normal", "cab_212_blackface", { { "Drive", 40.0f }, { "Ch Vol", 56.0f } }), 1) });
+
+        presets.push_back ({ "Crunch", 120.0f, boardWith ({
+            slotWith ("noise_gate", true),
+            slotWith ("screamer", false, { { "Drive", 40.0f }, { "Output", 2.0f } }),
+            slotWith ("chorus", false),
+            slotWith ("analog_delay", false, { { "Mix", 25.0f } }),
+            slotWith ("room_reverb", true, { { "Mix", 18.0f } }),
+        }, ampWith ("brit_j_45_normal", "cab_412_greenback", { { "Drive", 62.0f }, { "Ch Vol", 56.0f } }), 2) });
+
+        presets.push_back ({ "Lead", 120.0f, boardWith ({
+            slotWith ("noise_gate", true, { { "Threshold", -60.0f } }),
+            slotWith ("screamer", true, { { "Drive", 30.0f }, { "Tone", 55.0f }, { "Output", 3.0f } }),
+            slotWith ("analog_w_mod", true, { { "Note", dottedEighth }, { "Fdbk", 35.0f }, { "Mix", 24.0f } }),
+            slotWith ("plate", true, { { "Decay", 45.0f }, { "Mix", 20.0f } }),
+        }, ampWith ("brit_j_800", "cab_412_brit_t75", { { "Drive", 68.0f }, { "Ch Vol", 62.0f } }), 2) });
+
+        auto ambient = boardWith ({
+            slotWith ("red_comp", true, { { "Sustain", 55.0f } }),
+            slotWith ("analog_chorus", true, { { "Speed", 0.5f }, { "Depth", 55.0f }, { "Mix", 45.0f } }),
+            slotWith ("ping_pong", true, { { "Note", dottedEighth }, { "Fdbk", 55.0f }, { "Mix", 38.0f } }),
+            slotWith ("hall", true, { { "Decay", 75.0f }, { "Mix", 42.0f } }),
+        }, ampWith ("class_a_30_tb", "cab_212_silver_bell", { { "Drive", 40.0f }, { "Ch Vol", 52.0f } }), 1);
+        ambient.eq.lowCutHz = 90.0f;
+        presets.push_back ({ "Ambient", 100.0f, ambient });
+
+        return presets;
+    }();
+    return list;
+}
+
+int factoryPresetErrors()
+{
+    factoryPresets();
+    return presetErrors;
+}
+
+//==============================================================================
 Slot::Kind Slot::kindOf (Engine e) noexcept
 {
     switch (e)

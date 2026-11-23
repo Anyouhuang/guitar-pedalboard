@@ -433,6 +433,7 @@ button { cursor: pointer; }
 .ed-knobs .knob.synced .dial { pointer-events: none; }
 .knob.choice { align-content: center; gap: 8px; }
 .knob.choice select { width: 100%; }
+.ed-knobs .knob.choice { width: 104px; } /* room for names like "Standard" or "Enhanced" beside the arrow */
 .ed-hint { margin: 0; font-size: 14px; color: rgba(255, 255, 255, 0.62); text-align: center; }
 .tap {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;

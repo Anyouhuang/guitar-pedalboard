@@ -13,6 +13,7 @@ import { DelayFx, DELAY_MODELS } from "./delayfx.js";
 import { VerbFx, VERB_MODELS } from "./verb.js";
 import { WahFx, WAH_MODELS } from "./wah.js";
 import { VolumeFx, VOLUME_MODELS } from "./volume.js";
+import { AcousticFx, ACOUSTIC_MODELS } from "./acoustic.js";
 import { AmpFx, AMP_MODELS } from "./amp.js";
 import { CabFx, CAB_MODELS } from "./cab.js";
 
@@ -71,6 +72,9 @@ export const MODELS = (() => {
   m.push(...VERB_MODELS);
   m.push(...WAH_MODELS);
   m.push(...VOLUME_MODELS);
+
+  // added after the HD500X's own list (the order above is saved, so new models go here, at the end)
+  m.push(...ACOUSTIC_MODELS);
   return m;
 })();
 const MODEL_INDEX = new Map(MODELS.map((m, i) => [m.key, i]));
@@ -209,7 +213,8 @@ function ampWith(ampKey, cabKey, ampChanges = {}, cabChanges = {}) {
   return block;
 }
 
-/** Each entry: the preset's name, its tempo and its board (slots, amp block, amp position, EQ). */
+/** Each entry: the preset's name and its board (slots, amp block, amp position, EQ). No tempo: TAP is one
+    setting for the whole unit. Only ever append: a bank remembers how many examples it has been offered. */
 export function factoryPresets() {
   const NOTE_QUARTER = 1, NOTE_DOTTED_EIGHTH = 2; // the delays' Note knob: ms, 1/4, 1/8., 1/8, 1/8T, 1/16
   const board = (slots, amp, ampPosition, eq = {}) => {
@@ -221,31 +226,39 @@ export function factoryPresets() {
     return p;
   };
   return [
-    { name: "Clean", tempo: 120, board: board([
+    { name: "Clean", board: board([
         slotWith("red_comp", true, { Sustain: 45 }),
         slotWith("chorus", false, { Speed: 0.6, Depth: 45, Mix: 40 }),
         slotWith("analog_delay", false, { Note: NOTE_QUARTER, Feedback: 30, Mix: 22 }),
         slotWith("spring", true, { Decay: 45, Mix: 26 }),
       ], ampWith("blackface_double_normal", "cab_212_blackface", { Drive: 40, "Ch Vol": 56 }), 1) },
-    { name: "Crunch", tempo: 120, board: board([
+    { name: "Crunch", board: board([
         slotWith("noise_gate", true),
         slotWith("screamer", false, { Drive: 40, Output: 2 }),
         slotWith("chorus", false),
         slotWith("analog_delay", false, { Mix: 25 }),
         slotWith("room_reverb", true, { Mix: 18 }),
       ], ampWith("brit_j_45_normal", "cab_412_greenback", { Drive: 62, "Ch Vol": 56 }), 2) },
-    { name: "Lead", tempo: 120, board: board([
+    { name: "Lead", board: board([
         slotWith("noise_gate", true, { Threshold: -60 }),
         slotWith("screamer", true, { Drive: 30, Tone: 55, Output: 3 }),
         slotWith("analog_w_mod", true, { Note: NOTE_DOTTED_EIGHTH, Fdbk: 35, Mix: 24 }),
         slotWith("plate", true, { Decay: 45, Mix: 20 }),
       ], ampWith("brit_j_800", "cab_412_brit_t75", { Drive: 68, "Ch Vol": 62 }), 2) },
-    { name: "Ambient", tempo: 100, board: board([
+    { name: "Ambient", board: board([
         slotWith("red_comp", true, { Sustain: 55 }),
         slotWith("analog_chorus", true, { Speed: 0.5, Depth: 55, Mix: 45 }),
         slotWith("ping_pong", true, { Note: NOTE_DOTTED_EIGHTH, Fdbk: 55, Mix: 38 }),
         slotWith("hall", true, { Decay: 75, Mix: 42 }),
       ], ampWith("class_a_30_tb", "cab_212_silver_bell", { Drive: 40, "Ch Vol": 52 }), 1, { lowCutHz: 90 }) },
+    // An acoustic guitar from the electric one. The amp block is empty and off: a guitar speaker would take
+    // away the top end the simulator has just put back.
+    { name: "Acoustic", board: board([
+        slotWith("acoustic_sim", true),
+        slotWith("red_comp", true, { Sustain: 35, Level: 7 }),
+        slotWith("analog_chorus", false, { Speed: 0.4, Depth: 40, Mix: 35 }),
+        slotWith("hall", true, { Decay: 45, Mix: 24 }),
+      ], makeAmp("", "", false), 4) },
   ];
 }
 
@@ -277,8 +290,8 @@ export class Slot {
     // the fx/ engines, by ENGINE number. Unlike the C++ (which owns them all up front, so the audio thread never
     // allocates), each one is created the first time its slot needs it: a phone need not hold 8 of everything.
     this.maxBlock = maxBlock;
-    this.refs = new Array(ENGINE.cabFx + 1).fill(null);
-    this.makers = new Array(ENGINE.cabFx + 1).fill(null);
+    this.refs = new Array(ENGINE.acousticFx + 1).fill(null);
+    this.makers = new Array(ENGINE.acousticFx + 1).fill(null);
     this.makers[ENGINE.dynamicsFx] = () => new DynamicsFx();
     this.makers[ENGINE.modFx] = () => new ModFx();
     this.makers[ENGINE.filterFx] = () => new FilterFx();
@@ -288,6 +301,7 @@ export class Slot {
     this.makers[ENGINE.reverbFx] = () => new VerbFx();
     this.makers[ENGINE.wahFx] = () => new WahFx();
     this.makers[ENGINE.volumeFx] = () => new VolumeFx();
+    this.makers[ENGINE.acousticFx] = () => new AcousticFx();
 
     this.fade = new Fade(sampleRate);
     this.send = new Smoothed(0); this.send.reset(sampleRate, 0.03);

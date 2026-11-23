@@ -80,9 +80,9 @@ public:
 
     //==============================================================================
     // Preset bank (message thread): eight boards that can be recalled at any time, also while playing.
-    // A preset holds the eight slots, the amp block, the chain order, the EQ and the tempo. It does not hold
-    // the input / master levels, MUTE, the tuner or the noise section: those belong to the guitar and the
-    // room, not to a sound. The bank is saved with the rest of the state.
+    // A preset holds the eight slots, the amp block, the chain order and the EQ. It does not hold the input /
+    // master levels, MUTE, the tuner or the noise section (those belong to the guitar and the room, not to a
+    // sound), nor the TAP tempo, which is one setting for the whole unit. The bank is saved with the state.
     static constexpr int numPresets = 8;
     static constexpr int maxPresetNameLength = 16;
 
@@ -125,6 +125,9 @@ private:
     void resetPresetBank();
     void storeBoard (juce::ValueTree preset, const juce::String& name) const;
     void storeFactoryPreset (juce::ValueTree preset, const fx::FactoryPreset&) const;
+
+    /** Puts the examples this bank has not been offered yet (`alreadyOffered` of them it has) into empty presets. */
+    void offerNewExamples (int alreadyOffered);
     bool boardIsDefault() const;
 
     fx::FxChain chain;

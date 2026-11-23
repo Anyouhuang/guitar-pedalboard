@@ -42,9 +42,9 @@ Guitar Pedalboard 電吉他效果器 - 快速上手
   - 雙擊方塊，或踩右邊的腳踏開關：開 / 關
   - 用滑鼠拖曳方塊，或按 < MOVE / MOVE >：換位置（例如把 AMP 放到破音前面）
   - 空的格子：選一個效果類型就會放進去；CLEAR 清空
-  - 效果格可放 POD HD500X 的各類效果，共 118 種：
+  - 效果格可放 POD HD500X 的各類效果，加上另外做的 Acoustic Sim，共 119 種：
       Dynamics 9、Distortion 15、Modulation 26、Filter / Synth 16、Pitch 3、
-      Preamp + EQ 6、Delay 20、Reverb 13、Wah 8、Volume / Pan 2
+      Preamp + EQ 7（含 Acoustic Sim）、Delay 20、Reverb 13、Wah 8、Volume / Pan 2
   - AMP / CAB 方塊：50 種音箱頭、22 種音箱、14 種麥克風。
     選音箱頭時會自動換成它通常搭配的音箱，之後可以自己換。
   - 名稱照 HD500X 的清單，聲音是依原型機器自己做的近似模型，
@@ -63,11 +63,22 @@ Guitar Pedalboard 電吉他效果器 - 快速上手
   - SAVE AS：存到另一組。按下後再點要存進去的那一格；再按一次或等 10 秒就取消
   - 點空的格子（+）：直接把現在的設定存進去
   - RENAME：幫目前這一組改名字（最多 16 個字，可以用中文），Enter 確定、Esc 取消
-  - 一組包含 8 個效果格、AMP / CAB、排列順序、EQ 和 TAP 速度；
+  - 一組包含 8 個效果格、AMP / CAB、排列順序和 EQ；
     INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise 不會跟著變
+  - TAP 速度是整台通用的：切換 Preset 時速度不變
   - 改過但還沒存的那一組會變黃色並出現 * 號，這時切到別組，改動不會保留
-  - 第 1 組是你原本的設定，第 2～5 組是範例（Clean、Crunch、Lead、Ambient），可以改掉重存
+  - 第 1 組是你原本的設定，第 2～6 組是範例（Clean、Crunch、Lead、Ambient、Acoustic），可以改掉重存
   - Preset 在正常關閉程式時存檔；在 DAW 裡則跟著專案存
+
+【木吉他的聲音：Acoustic Sim】
+  把電吉他變成接近木吉他的聲音。最快的方法：點 PRESET 列的 Acoustic。
+  自己加的話：空的格子「效果類型」選 Preamp+EQ，型號選 Acoustic Sim。
+  - Type：Standard（一般木吉他）、Jumbo（琴身大、低頻多）、
+          Enhanced（撥弦更亮更突出）、Piezo（像木吉他直接插線）
+  - Body：琴身共鳴的份量；Top：弦的亮度；Level：音量
+  - 請把 AMP / CAB 方塊關掉：吉他音箱會把高頻濾掉，就不像木吉他了
+  - 通常用琴頸拾音器、音色旋鈕全開會比較像；後面接一點 Hall 殘響更好
+  - 這是近似的模擬，不會和真的木吉他完全一樣
 
 【在 DAW 裡使用 (VST3)】
   安裝版：安裝時勾選 VST3 plugin 即可。

@@ -76,7 +76,7 @@ PedalboardProcessor::PedalboardProcessor()
     chain.setAnalyzerTap (&analyzerTap);
 
     // everything except these few belongs to a preset
-    const juce::StringArray notInPresets { ParamIDs::inputGain, ParamIDs::outputGain, ParamIDs::mute,
+    const juce::StringArray notInPresets { ParamIDs::inputGain, ParamIDs::outputGain, ParamIDs::mute, ParamIDs::tempo,
                                            ParamIDs::tunerOn, ParamIDs::noiseHum, ParamIDs::noiseAmount };
     for (auto* p : getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
@@ -484,7 +484,10 @@ void PedalboardProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 //==============================================================================
 namespace
 {
-const juce::Identifier presetType { "PRESET" }, presetName { "name" }, presetFilled { "filled" }, presetCurrent { "current" };
+const juce::Identifier presetType { "PRESET" }, presetName { "name" }, presetFilled { "filled" }, presetCurrent { "current" },
+                       presetExamples { "examples" }; // how many of fx::factoryPresets() the bank has been offered
+
+constexpr int examplesBeforeCounting = 4; // a bank saved by 1.4.0 (which did not count them) had these four
 }
 
 bool PedalboardProcessor::isPresetEmpty (int index) const
@@ -529,6 +532,7 @@ void PedalboardProcessor::loadPreset (int index)
 
 void PedalboardProcessor::storeBoard (juce::ValueTree preset, const juce::String& name) const
 {
+    preset.removeAllProperties (nullptr); // (also what an older version stored and this one no longer does, like the tempo)
     for (auto* p : presetParameters)
         preset.setProperty (p->getParameterID(), p->convertFrom0to1 (p->getValue()), nullptr);
 
@@ -600,7 +604,6 @@ void PedalboardProcessor::storeFactoryPreset (juce::ValueTree preset, const fx::
     set (ParamIDs::eqTrebFreq, board.eq.trebleHz);
     set (ParamIDs::eqTrebGain, board.eq.trebleDb);
     set (ParamIDs::eqHighCut, board.eq.highCutHz);
-    set (ParamIDs::tempo, factory.tempo);
 
     preset.setProperty (presetName, juce::String (factory.name), nullptr);
     preset.setProperty (presetFilled, true, nullptr);
@@ -623,11 +626,22 @@ void PedalboardProcessor::resetPresetBank()
 
     storeBoard (presetBank.getChild (0), boardIsDefault() ? "Default" : "My Board");
 
-    const auto& examples = fx::factoryPresets();
-    for (int i = 0; i < (int) examples.size() && i + 1 < numPresets; ++i)
-        storeFactoryPreset (presetBank.getChild (i + 1), examples[(size_t) i]);
-
+    offerNewExamples (0);
     currentPreset = 0;
+}
+
+void PedalboardProcessor::offerNewExamples (int alreadyOffered)
+{
+    const auto& examples = fx::factoryPresets();
+    for (int e = std::max (0, alreadyOffered); e < (int) examples.size(); ++e)
+        for (int i = 0; i < numPresets; ++i)
+            if (isPresetEmpty (i))
+            {
+                storeFactoryPreset (presetBank.getChild (i), examples[(size_t) e]);
+                break;
+            }
+
+    presetBank.setProperty (presetExamples, (int) examples.size(), nullptr); // (offered: a full bank is left as it is)
 }
 
 //==============================================================================
@@ -672,6 +686,7 @@ void PedalboardProcessor::setStateInformation (const void* data, int sizeInBytes
         presetBank = bank.createCopy();
         presetBank.removeProperty (presetCurrent, nullptr);
         currentPreset = juce::jlimit (0, numPresets - 1, (int) bank.getProperty (presetCurrent, 0));
+        offerNewExamples ((int) bank.getProperty (presetExamples, examplesBeforeCounting)); // examples added since it was saved
     }
     else
     {

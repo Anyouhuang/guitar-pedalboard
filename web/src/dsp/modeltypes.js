@@ -11,7 +11,8 @@ export const CATEGORY_NAMES = ["Empty", "Dynamics", "Distortion", "Modulation", 
 export const CATEGORY_ORDER = [0, 1, 2, 3, 6, 7, 8, 4, 5, 10, 9];
 export const ENGINE = { none: 0, gate: 1, distortion: 2, modulation: 3, delay: 4, reverb: 5,
                         dynamicsFx: 6, modFx: 7, filterFx: 8, pitchFx: 9, eqFx: 10, delayFx: 11, reverbFx: 12, wahFx: 13, volumeFx: 14,
-                        ampFx: 15, cabFx: 16 };
+                        ampFx: 15, cabFx: 16,
+                        acousticFx: 17 }; // added after the others: the numbering is saved, so it stays last
 export const UNIT = { knob: 0, percent: 1, db: 2, ms: 3, hz: 4, choice: 5, semitones: 6, freq: 7 };
 
 // Knob constructors, same names and arguments as the C++ ones

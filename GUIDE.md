@@ -14,7 +14,7 @@
 - DELAY / REVERB 關掉後尾音會自然消失 (trails)；破音以 4 倍超取樣處理，減少數位雜音。
 - 旋鈕：上下拖曳調整，**雙擊回到預設值**，也可以直接點數字輸入。
 
-### 效果型號（8 個效果格可放的 118 種 + AMP / CAB 方塊）
+### 效果型號（8 個效果格可放的 119 種 + AMP / CAB 方塊）
 
 | 類別 | 型號 |
 |---|---|
@@ -23,7 +23,7 @@
 | Modulation (26) | Chorus、Flanger、Classic Phaser、Tremolo（本專案原有的 4 種）、Pattern Tremolo、Panner、Bias Tremolo、Opto Tremolo、Script Phase、Panned Phaser、Barberpole Phaser、Dual Phaser、U-Vibe、Phaser、Pitch Vibrato、Dimension、Analog Chorus、Tri Chorus、Analog Flanger、Jet Flanger、AC Flanger、80A Flanger、Frequency Shifter、Ring Modulator、Rotary Drum、Rotary Drm/Hrn |
 | Filter / Synth (16) | Voice Box、V-Tron、Q Filter、Seeker、Obi Wah、Tron Up、Tron Down、Throbber、Slow Filter、Spin Cycle、Comet Trails、Octisynth、Synth O Matic、Attack Synth、Synth String、Growler |
 | Pitch (3) | Bass Octaver、Pitch Glide、Smart Harmony |
-| Preamp + EQ (6) | Graphic EQ、Parametric EQ、Studio EQ、4 Band Shift EQ、Mid Focus EQ、Vintage Pre |
+| Preamp + EQ (7) | Graphic EQ、Parametric EQ、Studio EQ、4 Band Shift EQ、Mid Focus EQ、Vintage Pre、**Acoustic Sim**（木吉他模擬，本專案另外加的，不在 HD500X 清單裡；見下方） |
 | Delay (20) | Analog Delay（原有）、Ping Pong、Dynamic Dly、Stereo Delay、Digital Delay、Dig Dly W/Mod、Reverse、Lo Res Delay、Tube Echo、Tube Echo Dry、Tape Echo、Tape Echo Dry、Sweep Echo、Sweep Echo Dry、Echo Platter、Echo Platter Dry、Analog W/Mod、Analog Echo、Auto-Volume Echo、Multi-Head |
 | Reverb (13) | Room Reverb（原有）、Plate、Room、Chamber、Hall、Echo、Tile、Cave、Ducking、Octo、Spring、'63 Spring、Particle Verb |
 | Wah (8) | Fassel、Conductor、Throaty、Colorful、Vetta Wah、Chrome、Chrome Custom、Weeper |
@@ -63,11 +63,28 @@ INPUT 列下面的 **PRESET** 列有 8 組，跟 HD500X 的 Preset 一樣：把�
 | **RENAME** | 幫目前這一組改名字（最多 16 個字，可以用中文）；Enter 確定、Esc 取消 |
 | **再點一次目前這一組** | 回到儲存時的設定（放棄還沒存的改動） |
 
-- **一組包含**：8 個效果格（哪個效果、旋鈕、開關）、AMP / CAB、排列順序、EQ、TAP 速度。
-- **不包含**：INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise、輸入來源。這些跟吉他和環境有關，換音色時不會跟著變。
+- **一組包含**：8 個效果格（哪個效果、旋鈕、開關）、AMP / CAB、排列順序、EQ。
+- **不包含**：INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise、輸入來源（這些跟吉他和環境有關），以及 **TAP 速度**。TAP 是整台通用的：切換 Preset 時速度不變，改速度也不算改動 Preset。
 - **改過但還沒存**：那一組會變成黃色並出現 `*`，SAVE 也會變黃。這時切到別組，改動不會保留（跟 HD500X 一樣）。
-- **一開始的內容**：第 1 組是你原本的設定（從舊版升級時叫 My Board，全新安裝叫 Default），第 2–5 組是範例 Clean、Crunch、Lead、Ambient，第 6–8 組是空的。範例可以直接改掉重存。
+- **一開始的內容**：第 1 組是你原本的設定（從舊版升級時叫 My Board，全新安裝叫 Default），第 2–6 組是範例 Clean、Crunch、Lead、Ambient、Acoustic，第 7–8 組是空的。從 1.4.0 升級時，新的 Acoustic 範例會放進第一個空的格子（沒有空格就不放，不會蓋掉你的）。範例可以直接改掉重存。
 - **存在哪裡**：獨立程式存在程式設定裡（正常關閉時寫入）；VST3 外掛跟著 DAW 的專案存；網頁版存在瀏覽器裡。三邊各存各的，不會同步。
+
+## Acoustic Sim：木吉他模擬
+
+把電吉他變成接近鋼弦木吉他的聲音，做法類似 BOSS AC-2 / AC-3 這類踏板。在「效果類型」選 **Preamp+EQ**，型號選 **Acoustic Sim**；或直接點 Preset 的 **Acoustic** 範例。
+
+| 旋鈕 | 作用 |
+|---|---|
+| **Type** | **Standard**：一般的 Dreadnought 木吉他，最平衡；**Jumbo**：琴身大，低頻多、高頻圓；**Enhanced**：撥弦更亮、更突出，合奏時用；**Piezo**：像下弦枕拾音器直接插線的聲音，琴身薄、亮而硬 |
+| **Body** | 琴身共鳴的份量（約 100 / 200 / 400 Hz 三個共鳴）。0 % = 沒有琴身，往右越厚 |
+| **Top** | 弦的亮度（7 kHz 以上）。0 % = 不提亮，往右越亮；雜訊也會跟著變大 |
+| **Level** | 輸出音量 |
+
+它做了四件事：挖掉電吉他拾音器過多的中頻（約 1.2 kHz）、補回拾音器沒有的高頻、加上空心琴身的共鳴、讓每個音開頭那一下撥弦聲更亮（之後幾百分之一秒內退掉）。
+
+- **請把 AMP / CAB 方塊關掉**（Acoustic 範例已經關好）：吉他音箱的喇叭會把剛補回來的高頻又濾掉。
+- 通常用琴頸拾音器（neck）、音色旋鈕全開會比較像；後面接一點 Hall 或 Room 殘響更好。
+- 這是自己做的近似：實心電吉他的延音比木吉他長、撥弦的反應也不同，只靠效果不會完全一樣。
 
 ## TAP 拍速
 
@@ -131,8 +148,8 @@ EQ 在視窗最下方，圖上有兩層資訊：
 
 | 檔案 | 說明 |
 |---|---|
-| `dist\GuitarPedalboard-1.4.0-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
-| `dist\GuitarPedalboard-1.4.0-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
+| `dist\GuitarPedalboard-1.5.0-Setup.exe` | 安裝程式：開始功能表捷徑、可選桌面捷徑、可選安裝 VST3、有解除安裝 |
+| `dist\GuitarPedalboard-1.5.0-Windows-Portable.zip` | 免安裝：解壓縮後直接執行 `Guitar Pedalboard.exe`；`Install-VST3.cmd` 可另外安裝外掛 |
 
 - 程式已靜態連結 C++ 執行階段，**不需要另外安裝 Visual C++ Redistributable**，Windows 10 / 11 64 位元都能直接執行。
 - 因為沒有付費的程式碼簽章憑證，第一次執行可能出現「Windows 已保護您的電腦」：按「其他資訊」→「仍要執行」。
@@ -244,7 +261,7 @@ build\PedalTest_artefacts\Release\PedalTest.exe test_output
 - 頻譜分析器對已知頻率的正弦波能顯示在正確位置和音量
 - 測試訊號：撥弦的音準誤差 < 0.25 cent；DEMO RIFF 循環無接縫雜音；不同取樣率的音檔播放音高正確
 - TAP：穩定 / 不穩的點擊、停頓後重來、突然變速、按鍵彈跳都能正確處理；Reverb pre-delay 時間精準
-- Preset 的四組範例：用到的型號和旋鈕名稱都存在、彼此音量差在 6 dB 內、互相切換時不會爆音；網頁版的範例必須和 C++ 的完全相同
+- Preset 的五組範例：用到的型號和旋鈕名稱都存在、彼此音量差在 6 dB 內、互相切換時不會爆音；網頁版的範例必須和 C++ 的完全相同
 - 另外會在 `test_output\reference\` 輸出參考資料（含型號清單和一段不斷換型號、開關、移動方塊的腳本），給網頁版的 `node web/test/compare.mjs` 逐樣本比對
 - `node web/test/alloc.mjs`：量測網頁版每個效果在音訊執行緒上產生多少暫時記憶體（越少，瀏覽器在小緩衝下越不容易因垃圾回收而斷音）。這是比較用的報告，不是通過 / 失敗的測試
 - `build\UiSnapshot_artefacts\Release\UiSnapshot.exe check`：不開視窗的介面操作檢查（`Tests/UiChecks.h`）：Preset 的切換 / SAVE / SAVE AS / RENAME、存檔後重開、從沒有 Preset 的舊版狀態升級、播放中連續切換；用模擬的滑鼠點 / 拖 Denoise 拉桿並確認數值和聲音真的改變、標題列沒有 AMP / CAB 按鍵、選 LIVE INPUT 時 INPUT 列只剩來源按鈕。
@@ -263,7 +280,7 @@ Source/
 │  ├─ ModelTypes.h       型號資料的格式：類別、旋鈕（範圍、單位、預設值）、TAP 同步
 │  ├─ Models.h           型號清單（效果格、音箱頭、音箱），以及每個音箱頭通常搭配的音箱
 │  ├─ FxChain.*          訊號鏈：8 個 Slot + AMP / CAB 方塊 + 輸出 EQ + 雜訊處理；換型號 / 開關時的淡入淡出、Delay / Reverb 的 trails
-│  ├─ fx/                HD500X 各類效果的引擎（不依賴 JUCE，每個檔案一類）：Dynamics、Mod、Filter、Pitch、Eq、DelayFx、Verb、Wah、Volume、Amp、Cab
+│  ├─ fx/                HD500X 各類效果的引擎（不依賴 JUCE，每個檔案一類）：Dynamics、Mod、Filter、Pitch、Eq、DelayFx、Verb、Wah、Volume、Amp、Cab；Acoustic（木吉他模擬，另外加的）
 │  ├─ NoiseReduction.h   Hum 濾除（50 / 60 Hz 與泛音）與 Denoise（嘶聲抑制）
 │  ├─ NoiseGate.h        噪音閘 (含遲滯與 hold，不會斷斷續續)
 │  ├─ Distortion.h       HD500X 的 15 種破音型號 (4x oversampling)

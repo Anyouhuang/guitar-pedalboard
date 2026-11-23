@@ -2,7 +2,7 @@
 ; Compile with packaging\build-windows.ps1 (or: ISCC.exe packaging\GuitarPedalboard.iss)
 
 #define AppName    "Guitar Pedalboard"
-#define AppVersion "1.4.0"
+#define AppVersion "1.5.0"
 #define BuildDir   "..\build\GuitarPedalboard_artefacts\Release"
 
 [Setup]

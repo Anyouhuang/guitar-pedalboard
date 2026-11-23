@@ -83,14 +83,14 @@ const std::vector<FactoryPreset>& factoryPresets()
         constexpr float quarter = 1.0f, dottedEighth = 2.0f; // the delays' Note knob: ms, 1/4, 1/8., 1/8, 1/8T, 1/16
         std::vector<FactoryPreset> presets;
 
-        presets.push_back ({ "Clean", 120.0f, boardWith ({
+        presets.push_back ({ "Clean", boardWith ({
             slotWith ("red_comp", true, { { "Sustain", 45.0f } }),
             slotWith ("chorus", false, { { "Speed", 0.6f }, { "Depth", 45.0f }, { "Mix", 40.0f } }),
             slotWith ("analog_delay", false, { { "Note", quarter }, { "Feedback", 30.0f }, { "Mix", 22.0f } }),
             slotWith ("spring", true, { { "Decay", 45.0f }, { "Mix", 26.0f } }),
         }, ampWith ("blackface_double_normal", "cab_212_blackface", { { "Drive", 40.0f }, { "Ch Vol", 56.0f } }), 1) });
 
-        presets.push_back ({ "Crunch", 120.0f, boardWith ({
+        presets.push_back ({ "Crunch", boardWith ({
             slotWith ("noise_gate", true),
             slotWith ("screamer", false, { { "Drive", 40.0f }, { "Output", 2.0f } }),
             slotWith ("chorus", false),
@@ -98,7 +98,7 @@ const std::vector<FactoryPreset>& factoryPresets()
             slotWith ("room_reverb", true, { { "Mix", 18.0f } }),
         }, ampWith ("brit_j_45_normal", "cab_412_greenback", { { "Drive", 62.0f }, { "Ch Vol", 56.0f } }), 2) });
 
-        presets.push_back ({ "Lead", 120.0f, boardWith ({
+        presets.push_back ({ "Lead", boardWith ({
             slotWith ("noise_gate", true, { { "Threshold", -60.0f } }),
             slotWith ("screamer", true, { { "Drive", 30.0f }, { "Tone", 55.0f }, { "Output", 3.0f } }),
             slotWith ("analog_w_mod", true, { { "Note", dottedEighth }, { "Fdbk", 35.0f }, { "Mix", 24.0f } }),
@@ -112,7 +112,16 @@ const std::vector<FactoryPreset>& factoryPresets()
             slotWith ("hall", true, { { "Decay", 75.0f }, { "Mix", 42.0f } }),
         }, ampWith ("class_a_30_tb", "cab_212_silver_bell", { { "Drive", 40.0f }, { "Ch Vol", 52.0f } }), 1);
         ambient.eq.lowCutHz = 90.0f;
-        presets.push_back ({ "Ambient", 100.0f, ambient });
+        presets.push_back ({ "Ambient", ambient });
+
+        // An acoustic guitar from the electric one. The amp block is empty and off: a guitar speaker would take
+        // away the top end the simulator has just put back.
+        presets.push_back ({ "Acoustic", boardWith ({
+            slotWith ("acoustic_sim", true),
+            slotWith ("red_comp", true, { { "Sustain", 35.0f }, { "Level", 7.0f } }),
+            slotWith ("analog_chorus", false, { { "Speed", 0.4f }, { "Depth", 40.0f }, { "Mix", 35.0f } }),
+            slotWith ("hall", true, { { "Decay", 45.0f }, { "Mix", 24.0f } }),
+        }, makeAmp ("", "", false), 4) });
 
         return presets;
     }();
@@ -161,6 +170,8 @@ void Slot::prepare (double sampleRate, int maxBlockSize)
     wahFx.prepare (sampleRate, maxBlockSize); refs[(size_t) Engine::wahFx] = EngineRef::to (wahFx);
     volumeFx.prepare (sampleRate, maxBlockSize);
     refs[(size_t) Engine::volumeFx] = EngineRef::to (volumeFx);
+    acousticFx.prepare (sampleRate, maxBlockSize);
+    refs[(size_t) Engine::acousticFx] = EngineRef::to (acousticFx);
 
     fade.prepare (sampleRate);
     send.reset (sampleRate, 0.03);

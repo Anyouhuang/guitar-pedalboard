@@ -13,6 +13,7 @@
 
 #include "fx/Amp.h"
 #include "fx/Cab.h"
+#include "fx/Acoustic.h"
 
 namespace fx
 {
@@ -89,6 +90,9 @@ inline const std::vector<ModelInfo>& models()
         append (verbModels());
         append (wahModels());
         append (volumeModels());
+
+        // ---- added after the HD500X's own list (the order above is saved, so new models go here, at the end)
+        append (acousticModels());
         return m;
     }();
     return list;

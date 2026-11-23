@@ -167,12 +167,12 @@ fx::FxParams defaultBoardAt120()
     return p;
 }
 
-/** One of the preset bank's example boards the way the plugin plays it: synced times follow the preset's tempo. */
+/** One of the preset bank's example boards the way the plugin plays it at 120 BPM (the tempo is not part of a preset). */
 fx::FxParams presetBoard (const fx::FactoryPreset& preset)
 {
     auto p = preset.board;
     for (auto& slot : p.slots)
-        fx::resolveTempo (slot, preset.tempo);
+        fx::resolveTempo (slot, 120.0);
     return p;
 }
 
@@ -1047,8 +1047,7 @@ int main (int argc, char* argv[])
         check (presets.size() >= 4 && presets.size() <= 7, "factory presets: one bank slot is kept for the user's own board, and at least one empty");
         for (size_t i = 0; i < presets.size(); ++i)
         {
-            check (juce::String (presets[i].name).isNotEmpty() && presets[i].tempo >= 30.0f && presets[i].tempo <= 300.0f,
-                   juce::String ("factory preset ") + presets[i].name + " needs a name and a tempo");
+            check (juce::String (presets[i].name).isNotEmpty(), "every factory preset needs a name");
             for (size_t j = 0; j < i; ++j)
                 check (juce::String (presets[j].name) != presets[i].name, juce::String ("two factory presets are called ") + presets[i].name);
         }
@@ -1382,7 +1381,6 @@ int main (int argc, char* argv[])
         {
             auto* o = new juce::DynamicObject();
             o->setProperty ("name", juce::String (preset.name));
-            o->setProperty ("tempo", preset.tempo);
             o->setProperty ("board", paramsToVar (preset.board));
             presetList.add (juce::var (o));
         }

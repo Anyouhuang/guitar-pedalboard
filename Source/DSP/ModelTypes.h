@@ -20,6 +20,7 @@ enum class Category { none = 0, dynamics, distortion, modulation, delay, reverb,
 enum class Engine   { none = 0, gate, distortion, modulation, delay, reverb, // the first engines (NoiseGate.h ... ReverbFx.h)
                       dynamicsFx, modFx, filterFx, pitchFx, eqFx, delayFx, reverbFx, wahFx, volumeFx, // Source/DSP/fx/*.h
                       ampFx, cabFx,
+                      acousticFx, // fx/Acoustic.h (added after the others: the numbering is saved, so it stays last)
                       numEngines };
 enum class Unit     { knob, percent, db, ms, hz, choice, semitones, freq };
 

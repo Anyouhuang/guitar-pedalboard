@@ -13,6 +13,7 @@ export * from "./dsp/delayfx.js";
 export * from "./dsp/verb.js";
 export * from "./dsp/wah.js";
 export * from "./dsp/volume.js";
+export * from "./dsp/acoustic.js";
 export * from "./dsp/amp.js";
 export * from "./dsp/cab.js";
 export * from "./dsp/chain.js";

@@ -154,7 +154,7 @@ inline void runPresetChecks()
     settle();
 
     // ---- what a new bank holds
-    check (names (processor) == "Default, Clean, Crunch, Lead, Ambient, -, -, -", "a new bank: " + names (processor));
+    check (names (processor) == "Default, Clean, Crunch, Lead, Ambient, Acoustic, -, -", "a new bank: " + names (processor));
     check (processor.getCurrentPreset() == 0 && ! processor.isPresetModified(), "preset 1 is the board as it opens, and it is the current one");
     check (tile (1) != nullptr && tile (8) != nullptr && tile (1)->getButtonText() == "Default" && tile (8)->getButtonText() == "+",
            "eight tiles: named ones, and \"+\" on the empty ones");
@@ -167,9 +167,10 @@ inline void runPresetChecks()
     setNorm (ParamIDs::noiseAmount, 0.4f);
     setNorm (ParamIDs::noiseHum, 1.0f);
     setNorm (ParamIDs::tunerOn, 0.0f);
+    setNorm (ParamIDs::tempo, processor.parameter (ParamIDs::tempo).convertTo0to1 (96.0f));
     const float in = value (ParamIDs::inputGain), out = value (ParamIDs::outputGain), denoise = value (ParamIDs::noiseAmount),
                 hum = value (ParamIDs::noiseHum);
-    check (! processor.isPresetModified(), "input, master, MUTE, tuner and noise settings do not count as changes to a preset");
+    check (! processor.isPresetModified(), "input, master, MUTE, tuner, noise settings and the TAP tempo do not count as changes to a preset");
 
     click (tile (3));
     check (processor.getCurrentPreset() == 2 && ampKey (processor) == "brit_j_45_normal" && slotKey (processor, 0) == "noise_gate"
@@ -179,12 +180,18 @@ inline void runPresetChecks()
 
     click (tile (5));
     check (processor.getCurrentPreset() == 4 && ampKey (processor) == "class_a_30_tb" && slotKey (processor, 2) == "ping_pong"
-               && std::abs (processor.getTempo() - 100.0f) < 0.01f && std::abs (value (ParamIDs::eqLowCut) - 90.0f) < 0.5f,
-           "clicking Ambient recalls its amp, effects, tempo (" + juce::String (processor.getTempo(), 0) + ") and EQ (low cut "
-               + juce::String (value (ParamIDs::eqLowCut), 0) + " Hz)");
+               && std::abs (value (ParamIDs::eqLowCut) - 90.0f) < 0.5f,
+           "clicking Ambient recalls its amp, effects and EQ (low cut " + juce::String (value (ParamIDs::eqLowCut), 0) + " Hz)");
     check (value (ParamIDs::inputGain) == in && value (ParamIDs::outputGain) == out && value (ParamIDs::mute) > 0.5f
                && value (ParamIDs::noiseAmount) == denoise && value (ParamIDs::noiseHum) == hum && value (ParamIDs::tunerOn) < 0.5f,
            "recalling presets left input, master, MUTE, tuner and noise settings alone");
+    check (std::abs (processor.getTempo() - 96.0f) < 0.05f, "and the TAP tempo: still " + juce::String (processor.getTempo(), 0) + " BPM after two recalls");
+
+    click (tile (6));
+    check (processor.getCurrentPreset() == 5 && slotKey (processor, 0) == "acoustic_sim" && processor.isSlotOn (0)
+               && processor.getAmpModel() < 0 && processor.getCabModel() < 0 && value (ParamIDs::cab) < 0.5f && ! processor.isPresetModified(),
+           "clicking Acoustic: the acoustic simulator first, the amp block empty and off");
+    click (tile (5));
 
     // ---- changing something marks the preset; SAVE keeps it; without SAVE it is dropped
     setNorm (knob1, 0.9f);
@@ -203,9 +210,9 @@ inline void runPresetChecks()
     check (std::abs (value (knob1) - 0.9f) < 1.0e-4f && ! processor.isPresetModified(), "clicking the current preset goes back to its saved settings");
 
     // ---- an empty preset: clicking it stores the board there
-    click (tile (6));
-    check (processor.getCurrentPreset() == 5 && processor.getPresetName (5) == "Preset 6" && ! processor.isPresetModified()
-               && ampKey (processor) == "class_a_30_tb" && tile (6)->getButtonText() == "Preset 6",
+    click (tile (7));
+    check (processor.getCurrentPreset() == 6 && processor.getPresetName (6) == "Preset 7" && ! processor.isPresetModified()
+               && ampKey (processor) == "class_a_30_tb" && tile (7)->getButtonText() == "Preset 7",
            "clicking an empty preset stores the board there: " + names (processor));
 
     // ---- SAVE AS: the next preset clicked is overwritten instead of recalled
@@ -309,7 +316,7 @@ inline void runPresetChecks()
 
         PedalboardProcessor upgraded;
         upgraded.setStateInformation (old.getData(), (int) old.getSize());
-        check (names (upgraded) == "My Board, Clean, Crunch, Lead, Ambient, -, -, -" && upgraded.getCurrentPreset() == 0,
+        check (names (upgraded) == "My Board, Clean, Crunch, Lead, Ambient, Acoustic, -, -" && upgraded.getCurrentPreset() == 0,
                "an older state: its board becomes preset 1 (" + names (upgraded) + ")");
         check (ampKey (upgraded) == "treadplate" && ! upgraded.isPresetModified(), "the older board is on the board, unchanged");
         upgraded.loadPreset (1);
@@ -324,6 +331,67 @@ inline void runPresetChecks()
         PedalboardProcessor upgradedPlain;
         upgradedPlain.setStateInformation (oldPlain.getData(), (int) oldPlain.getSize());
         check (upgradedPlain.getPresetName (0) == "Default", "an older state with the default board: preset 1 is called Default");
+    }
+
+    // ---- a bank saved by 1.4.0: each preset stored a tempo, and the bank did not count the examples it had
+    {
+        const auto as140 = [] (const juce::MemoryBlock& state, bool full)
+        {
+            juce::MemoryBlock old;
+            if (auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), (int) state.getSize()))
+            {
+                if (auto* bank = xml->getChildByName ("PRESETS"))
+                {
+                    bank->removeAttribute ("examples");
+                    int index = 0;
+                    for (auto* preset : bank->getChildIterator())
+                    {
+                        if (index == 5 && ! full)
+                            preset->removeAllAttributes(); // 1.4.0 had four examples: this one was still empty
+                        else if (preset->hasAttribute ("filled"))
+                            preset->setAttribute ("tempo", 100.0 + index);
+                        ++index;
+                    }
+                }
+                juce::AudioProcessor::copyXmlToBinary (*xml, old);
+            }
+            return old;
+        };
+
+        PedalboardProcessor source;
+        source.savePreset (6); // the user's own, in 7
+        juce::MemoryBlock state;
+        source.getStateInformation (state);
+
+        const auto old = as140 (state, false);
+        PedalboardProcessor upgraded;
+        upgraded.setStateInformation (old.getData(), (int) old.getSize());
+        check (names (upgraded) == "Default, Clean, Crunch, Lead, Ambient, Acoustic, Preset 7, -",
+               "a bank from 1.4.0 gets the new Acoustic example in its first empty preset: " + names (upgraded));
+        check (upgraded.getCurrentPreset() == 6 && ! upgraded.isPresetModified(), "its current preset is still the current one, unchanged");
+
+        upgraded.parameter (ParamIDs::tempo).setValueNotifyingHost (upgraded.parameter (ParamIDs::tempo).convertTo0to1 (140.0f));
+        const float tempoBefore = upgraded.getTempo();
+        upgraded.loadPreset (4);
+        upgraded.loadPreset (2);
+        check (std::abs (upgraded.getTempo() - tempoBefore) < 0.01f && ! upgraded.isPresetModified(),
+               "the tempo its presets had stored is ignored: " + juce::String (upgraded.getTempo(), 0) + " BPM before and after recalling two");
+
+        juce::MemoryBlock again;
+        upgraded.getStateInformation (again);
+        PedalboardProcessor reopened;
+        reopened.setStateInformation (again.getData(), (int) again.getSize());
+        check (names (reopened) == names (upgraded), "saved and reopened, nothing is added a second time: " + names (reopened));
+
+        // every preset in use: nothing is replaced
+        source.savePreset (7);
+        juce::MemoryBlock fullState;
+        source.getStateInformation (fullState);
+        const auto oldFull = as140 (fullState, true);
+        PedalboardProcessor upgradedFull;
+        upgradedFull.setStateInformation (oldFull.getData(), (int) oldFull.getSize());
+        check (names (upgradedFull) == "Default, Clean, Crunch, Lead, Ambient, Acoustic, Preset 7, Preset 8",
+               "a full bank is left exactly as it was: " + names (upgradedFull));
     }
 
     // ---- recalling while the audio runs
@@ -482,6 +550,32 @@ inline int run()
            "the preset bar sits under the input bar");
 
     runPresetChecks();
+
+    std::cout << "Acoustic simulator\n";
+    {
+        PedalboardProcessor acoustic;
+        const int model = fx::findModel ("acoustic_sim");
+        check (model == fx::numModels() - 1, "it is the last model of the list (older saved boards keep their models)");
+        acoustic.setSlotModel (5, model);
+        std::unique_ptr<juce::AudioProcessorEditor> acousticEditor (acoustic.createEditor());
+        if (auto* board = dynamic_cast<PedalboardEditor*> (acousticEditor.get()))
+        {
+            board->selectBlock (6); // slot 6 sits behind the amp block
+            board->refresh();
+        }
+        const auto listed = [&] (const juce::String& text)
+        {
+            return findChild<juce::ComboBox> (*acousticEditor, [&text] (juce::ComboBox& box)
+            {
+                for (int i = 0; i < box.getNumItems(); ++i)
+                    if (box.getItemText (i) == text)
+                        return true;
+                return false;
+            }) != nullptr;
+        };
+        check (acoustic.isSlotOn (5) && listed ("Acoustic Sim"), "a slot holds it, and the model list offers Acoustic Sim");
+        check (listed ("Jumbo") && listed ("Piezo"), "its Type is a list: Standard, Jumbo, Enhanced, Piezo");
+    }
 
     std::cout << (failures == 0 ? "ALL UI CHECKS PASSED" : "UI CHECKS FAILED: " + juce::String (failures)) << "\n";
     return failures == 0 ? 0 : 1;

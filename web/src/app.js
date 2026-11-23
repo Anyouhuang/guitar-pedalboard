@@ -151,11 +151,13 @@ DSP.defaultBoard().slots.forEach((slot, s) => loadSlot(s, slot));
 loadAmp(DSP.defaultBoard().amp);
 
 // Preset bank: eight boards that can be recalled at any time, also while playing. A preset holds the eight
-// slots, the amp block, the chain order, the EQ and the tempo. It does not hold input / master, MUTE, the
-// tuner or the noise section: those belong to the guitar and the room, not to a sound. (Same as the plugin.)
+// slots, the amp block, the chain order and the EQ. It does not hold input / master, MUTE, the tuner or the
+// noise section (those belong to the guitar and the room, not to a sound), nor the TAP tempo, which is one
+// setting for the whole unit. (Same as the plugin.)
 const NUM_PRESETS = 8, PRESET_NAME_MAX = 16;
-const PRESET_VALUE_IDS = ["tempo", "eqOn", "eqLcFreq", "eqBassFreq", "eqBassGain", "eqLmFreq", "eqLmGain", "eqLmQ",
+const PRESET_VALUE_IDS = ["eqOn", "eqLcFreq", "eqBassFreq", "eqBassGain", "eqLmFreq", "eqLmGain", "eqLmQ",
                           "eqHmFreq", "eqHmGain", "eqHmQ", "eqTrebFreq", "eqTrebGain", "eqHcFreq"];
+const EXAMPLES_BEFORE_COUNTING = 4; // a bank saved by 1.4.0 (which did not count them) had these four
 /** The board as plain data (a copy): what a preset stores. */
 function readBoard() {
   const globals = {};
@@ -198,7 +200,7 @@ function cleanBoard(board) {
 function factoryBoard(f) {
   const e = f.board.eq;
   return cleanBoard({ slots: f.board.slots, amp: f.board.amp, ampPosition: f.board.ampPosition,
-    values: { tempo: f.tempo, eqOn: f.board.eqOn, eqLcFreq: e.lowCutHz, eqBassFreq: e.bassHz, eqBassGain: e.bassDb,
+    values: { eqOn: f.board.eqOn, eqLcFreq: e.lowCutHz, eqBassFreq: e.bassHz, eqBassGain: e.bassDb,
               eqLmFreq: e.lowMidHz, eqLmGain: e.lowMidDb, eqLmQ: e.lowMidQ, eqHmFreq: e.highMidHz, eqHmGain: e.highMidDb, eqHmQ: e.highMidQ,
               eqTrebFreq: e.trebleHz, eqTrebGain: e.trebleDb, eqHcFreq: e.highCutHz } });
 }
@@ -206,6 +208,16 @@ const cleanPresetName = (name) => [...String(name).trim()].slice(0, PRESET_NAME_
 const DEFAULT_BOARD = readBoard();
 let presets = new Array(NUM_PRESETS).fill(null); // each { name, board } or null (empty)
 let currentPreset = 0;
+let presetExamples = 0; // how many of DSP.factoryPresets() the bank has been offered
+/** Puts the examples the bank has not been offered yet into empty presets (a full bank is left as it is). */
+function offerNewExamples() {
+  const examples = DSP.factoryPresets();
+  for (let e = presetExamples; e < examples.length; ++e) {
+    const free = presets.indexOf(null);
+    if (free >= 0) presets[free] = { name: examples[e].name, board: factoryBoard(examples[e]) };
+  }
+  presetExamples = examples.length;
+}
 let presetRefreshQueued = false;
 let source = "demo";
 let playing = true; // demo riff / file transport (STOP / PLAY)
@@ -236,15 +248,17 @@ try {
         return p && typeof p === "object" ? { name: cleanPresetName(p.name || "") || `Preset ${i + 1}`, board: cleanBoard(p.board) } : null;
       });
       currentPreset = Number.isInteger(saved.currentPreset) && presets[saved.currentPreset] ? saved.currentPreset : presets.findIndex(Boolean);
+      presetExamples = Number.isInteger(saved.presetExamples) && saved.presetExamples >= 0 ? saved.presetExamples : EXAMPLES_BEFORE_COUNTING;
     }
   }
 } catch { /* storage unavailable: defaults */ }
 if (!presets.some(Boolean)) {
   // The bank as it first is: the board as it is now (so recalling an example never loses it), then the examples.
   presets[0] = { name: sameBoard(readBoard(), DEFAULT_BOARD) ? "Default" : "My Board", board: readBoard() };
-  DSP.factoryPresets().slice(0, NUM_PRESETS - 1).forEach((f, i) => { presets[i + 1] = { name: f.name, board: factoryBoard(f) }; });
   currentPreset = 0;
+  presetExamples = 0;
 }
+offerNewExamples(); // all of them for a new bank; for a saved one, those added since
 
 const listeners = {};
 const onChange = (id, fn) => { (listeners[id] ||= []).push(fn); fn(values[id]); };
@@ -271,7 +285,7 @@ function persist() {
   const slots = Array.from({ length: NUM_SLOTS }, (_, s) => readSlot(s));
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({ values: globals, slots, amp: readAmp(), ampPosition, source, chordPattern, chordTempo,
-                                                     latencyMode, presets, currentPreset }));
+                                                     latencyMode, presets, currentPreset, presetExamples }));
   } catch { /* ignore */ }
 }
 
@@ -1182,7 +1196,7 @@ function recallPreset(i) {
   if (!presets[i]) return;
   applyBoard(presets[i].board);
   currentPreset = i;
-  for (const id of PRESET_VALUE_IDS) notify(id); // the EQ's knobs and switch, the tempo box
+  for (const id of PRESET_VALUE_IDS) notify(id); // the EQ's knobs and switch
   chainChanged(); // the whole board goes to the audio thread in one message, never half of it
   persist();
   renderPresets();

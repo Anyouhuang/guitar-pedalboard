@@ -36,15 +36,15 @@ struct FxParams
 /** The board as it first opens: Noise Gate > Screamer > cab > Chorus (off) > Analog Delay (off) > Room Reverb. */
 FxParams defaultBoard();
 
-/** One of the preset bank's example boards. */
+/** One of the preset bank's example boards. (No tempo: TAP is one setting for the whole unit, not part of a preset.) */
 struct FactoryPreset
 {
     const char* name;
-    float tempo;
     FxParams board;
 };
 
-/** The example boards the preset bank starts with (the same list as factoryPresets() in web/src/dsp/chain.js). */
+/** The example boards the preset bank starts with (the same list as factoryPresets() in web/src/dsp/chain.js).
+    Only ever append: a bank remembers how many of them it has been offered, and gets the newer ones later. */
 const std::vector<FactoryPreset>& factoryPresets();
 
 /** How many model or knob names in factoryPresets() matched nothing: 0, unless one of them is misspelt. */
@@ -159,6 +159,7 @@ private:
     VerbFx verbFx;
     WahFx wahFx;
     VolumeFx volumeFx;
+    AcousticFx acousticFx;
     std::array<EngineRef, (size_t) Engine::numEngines> refs {};
 
     double fs = 48000.0;

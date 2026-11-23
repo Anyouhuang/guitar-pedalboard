@@ -117,6 +117,14 @@
 
   <footer class="notes">
     <p class="engine-info" id="engine-info">音訊狀態：尚未啟動（按 POWER）</p>
+    <p class="latency-row device-row">
+      <label for="input-device">輸入裝置</label>
+      <select id="input-device" title="吉他接在哪個輸入（錄音介面的輸入）。選 LIVE INPUT 時使用；正在使用時會馬上換過去。"><option value="">系統預設</option></select>
+      <label for="output-device">輸出裝置</label>
+      <select id="output-device" title="聲音從哪個裝置出來（耳機孔、錄音介面）。播放中會馬上換過去。"><option value="">系統預設</option></select>
+      <button class="btn" id="device-scan" type="button" title="請瀏覽器列出這台電腦的音訊裝置。瀏覽器會先問你是否允許使用麥克風：不會錄音，問完就關閉。" hidden>列出裝置</button>
+    </p>
+    <p class="device-note" id="device-note" hidden></p>
     <p class="latency-row">
       <label for="latency-mode">延遲模式</label>
       <select id="latency-mode" title="低延遲：向瀏覽器要最小的緩衝（預設）。穩定：如果聲音斷斷續續，改用這個，延遲會多幾毫秒。">
@@ -126,7 +134,7 @@
     </p>
     <p class="latency-tip" id="latency-tip" hidden><strong>延遲偏高：</strong>請用有線耳機（藍牙耳機會多 100 ms 以上），並把系統的輸出裝置設成錄音介面或耳機孔。瀏覽器只能用 Windows 的共用模式，延遲有下限；要更低的延遲請用 <a href="https://github.com/Anyouhuang/guitar-pedalboard/releases/latest" target="_blank" rel="noopener">Windows 版</a>並在音訊設定選 ASIO 或 Windows Audio (Exclusive Mode)。</p>
     <p><strong>沒有吉他：</strong>選 DEMO RIFF 聽內建樂句，或 LOAD FILE 載入自己的音檔（吉他 DI 乾聲最適合）；按 PLUCK 撥空弦試調音器，按 CHORD 刷基本和弦（會自動停止樂句）。選 LIVE INPUT 時 PLUCK 和 CHORD 會收起來。</p>
-    <p><strong>接吉他：</strong>吉他接 USB 錄音介面，選 LIVE INPUT 並允許使用麥克風；請戴耳機避免回授。延遲取決於瀏覽器和裝置，頁面最下方的「音訊狀態」會顯示目前的數值。嵌在其他網站裡的頁面（例如 claude.ai）不能使用麥克風，請開 <a href="https://anyouhuang.github.io/guitar-pedalboard/" target="_blank" rel="noopener">anyouhuang.github.io/guitar-pedalboard</a>。</p>
+    <p><strong>接吉他：</strong>吉他接 USB 錄音介面，選 LIVE INPUT 並允許使用麥克風；請戴耳機避免回授。頁面下方的「輸入裝置」可以選吉他接在哪個輸入，「輸出裝置」可以選聲音從哪裡出來（輸出裝置要 Chrome 或 Edge 才能選）；選擇會記住，裝置拔掉時會自動改回系統預設。延遲取決於瀏覽器和裝置，頁面最下方的「音訊狀態」會顯示目前的數值。嵌在其他網站裡的頁面（例如 claude.ai）不能使用麥克風，請開 <a href="https://anyouhuang.github.io/guitar-pedalboard/" target="_blank" rel="noopener">anyouhuang.github.io/guitar-pedalboard</a>。</p>
     <p><strong>訊號鏈：</strong>仿 POD HD500X：8 個效果格加一個 AMP / CAB 方塊，由左到右依序處理。點方塊在下方編輯，雙擊開關（AMP / CAB 方塊也一樣：直接接真的吉他音箱時把它關掉）；用滑鼠拖曳或按 MOVE 換位置；空的格子選「效果類型」就能放效果。效果格有 HD500X 各類效果，加上另外做的 Acoustic Sim，共 119 種（Dynamics、Distortion、Modulation、Filter / Synth、Pitch、Preamp + EQ、Delay、Reverb、Wah、Volume / Pan）；AMP / CAB 方塊有 50 種音箱頭、22 種音箱、14 種麥克風，選音箱頭時會自動換成它通常搭配的音箱。名稱照 HD500X 清單，聲音是依原型機器自己做的近似模型，不是 Line 6 的原始演算法。沒有 Vocoder、Looper、FX Loop 和表情踏板（Wah / Volume 的 Position 是一般旋鈕）。</p>
     <p><strong>Preset：</strong>INPUT 下面那一排有 8 組，點一下就把整塊板子換成那一組，彈奏中也可以切換。一組包含 8 個效果格、AMP / CAB、排列順序和 EQ；INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise 不會跟著變，TAP 速度也是整台通用的，切換時不變。調好之後按 SAVE 存進目前這一組；SAVE AS 再點另一格可以存到別組；點空的格子（+）會把現在的設定存進去；RENAME 改名字。改過但還沒存的那一組會變成黃色並出現 * 號，這時切到別組，改動不會保留。第 1 組是你原本的設定，第 2–6 組是範例（Clean、Crunch、Lead、Ambient、Acoustic）。Preset 存在這個瀏覽器裡，換瀏覽器或清除網站資料就會不見。</p>
     <p><strong>木吉他的聲音：</strong>點 Preset 的 Acoustic，或在空的格子選「Preamp+EQ」→「Acoustic Sim」。Type 有 Standard（一般木吉他）、Jumbo（琴身大、低頻多）、Enhanced（撥弦更亮更突出）、Piezo（像木吉他直接插線）；Body 是琴身共鳴的份量，Top 是弦的亮度。請把 AMP / CAB 方塊關掉（吉他音箱會把高頻濾掉），通常用琴頸拾音器會比較像。這是近似的模擬，不會和真的木吉他完全一樣。</p>

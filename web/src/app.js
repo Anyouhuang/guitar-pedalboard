@@ -225,6 +225,8 @@ let chordPattern = DSP.CHORD_PATTERNS.arpeggio, chordTempo = 90, loopingChord = 
 // "low": the smallest buffers the browser offers (the default). "stable": the browser's own choice, for a
 // device that crackles with the small ones.
 let latencyMode = "low";
+// Which devices to use: the browser's own ids for them (per site), "" = whatever the system's default is.
+let inputDeviceId = "", outputDeviceId = "";
 try {
   const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
   if (saved && saved.values) {
@@ -242,6 +244,8 @@ try {
     if (Number.isInteger(saved.chordPattern) && saved.chordPattern >= 0 && saved.chordPattern <= 2) chordPattern = saved.chordPattern;
     if (Number.isFinite(saved.chordTempo)) chordTempo = clamp(Math.round(saved.chordTempo), 40, 240);
     if (saved.latencyMode === "low" || saved.latencyMode === "stable") latencyMode = saved.latencyMode;
+    if (typeof saved.inputDeviceId === "string") inputDeviceId = saved.inputDeviceId;
+    if (typeof saved.outputDeviceId === "string") outputDeviceId = saved.outputDeviceId;
     if (Array.isArray(saved.presets) && saved.presets.some((p) => p && typeof p === "object")) {
       presets = Array.from({ length: NUM_PRESETS }, (_, i) => {
         const p = saved.presets[i];
@@ -285,7 +289,7 @@ function persist() {
   const slots = Array.from({ length: NUM_SLOTS }, (_, s) => readSlot(s));
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({ values: globals, slots, amp: readAmp(), ampPosition, source, chordPattern, chordTempo,
-                                                     latencyMode, presets, currentPreset, presetExamples }));
+                                                     latencyMode, presets, currentPreset, presetExamples, inputDeviceId, outputDeviceId }));
   } catch { /* ignore */ }
 }
 
@@ -489,6 +493,11 @@ async function startAudio() {
       node = createScriptProcessorEngine(ctx, init);
       engine.kind = "相容模式";
     }
+    if (outputDeviceId && canPickOutput()) {
+      // the chosen output; if it has gone (unplugged), the system's default and say so
+      try { await ctx.setSinkId(outputDeviceId); }
+      catch { outputDeviceId = ""; persist(); setStatus("找不到之前選的輸出裝置，改用系統預設的裝置。", 9000); }
+    }
     node.connect(useMediaElementOutput ? engine.streamOut : ctx.destination);
     engine.ctx = ctx;
     engine.node = node;
@@ -556,14 +565,24 @@ async function enableMic() {
   // iPhone: recording needs the "play-and-record" audio session (plain "playback" can't capture)
   try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch { /* not supported */ }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      // no voice processing, and ask for the smallest input buffer the device allows
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, voiceIsolation: false, channelCount: 1, latency: 0 },
-    });
+    // no voice processing, and ask for the smallest input buffer the device allows
+    const wanted = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, voiceIsolation: false, channelCount: 1, latency: 0 };
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: inputDeviceId ? { ...wanted, deviceId: { exact: inputDeviceId } } : wanted });
+    } catch (err) {
+      // the chosen input has gone (unplugged): the system's default one, and say so
+      if (!inputDeviceId || !err || (err.name !== "OverconstrainedError" && err.name !== "NotFoundError")) throw err;
+      inputDeviceId = "";
+      persist();
+      stream = await navigator.mediaDevices.getUserMedia({ audio: wanted });
+      setStatus("找不到之前選的輸入裝置，改用系統預設的裝置。", 9000);
+    }
     const track = stream.getAudioTracks()[0];
     const src = engine.ctx.createMediaStreamSource(stream);
     src.connect(engine.node);
     engine.mic = { stream, src, track };
+    refreshDevices(); // with the permission just given, the browser now tells the devices' names
     // some browsers keep their voice processing on unless told again; it colours the guitar and adds delay
     const processed = () => {
       const st = track.getSettings ? track.getSettings() : {};
@@ -1649,6 +1668,107 @@ latencySelect.value = latencyMode;
 latencySelect.addEventListener("change", () => setLatencyMode(latencySelect.value === "stable" ? "stable" : "low"));
 
 // ============================================================================
+// Audio devices: which input the guitar comes in on, which output the sound goes to.
+// A browser only tells a page its devices (and their names) once the page may use the microphone, so until
+// then there is just "system default" and a button that asks for that permission. The output can be chosen
+// where the browser lets a page do so (Chrome / Edge; in others it follows the system's setting).
+const inputSelect = $("#input-device"), outputSelect = $("#output-device"), deviceScan = $("#device-scan"), deviceNote = $("#device-note");
+const deviceList = { inputs: [], outputs: [], defaultInput: "", defaultOutput: "", named: false };
+
+function canPickOutput() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  return !!Ctx && typeof Ctx.prototype.setSinkId === "function" && !useMediaElementOutput;
+}
+
+async function refreshDevices() {
+  let all = [];
+  try { if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) all = await navigator.mediaDevices.enumerateDevices(); } catch { /* none */ }
+  // "default" / "communications" are the system's own choices under another name, not devices of their own
+  const real = (kind) => all.filter((d) => d.kind === kind && d.deviceId && d.deviceId !== "default" && d.deviceId !== "communications");
+  const defaultName = (kind) => { const d = all.find((x) => x.kind === kind && x.deviceId === "default"); return d ? d.label.replace(/^[^-–]{1,12}[-–]\s*/, "") : ""; };
+  deviceList.inputs = real("audioinput");
+  deviceList.outputs = real("audiooutput");
+  deviceList.defaultInput = defaultName("audioinput");
+  deviceList.defaultOutput = defaultName("audiooutput");
+  deviceList.named = all.some((d) => d.label);
+  renderDevices();
+}
+
+function renderDevices() {
+  const fill = (select, list, chosen, defaultName) => {
+    const options = [new Option(defaultName ? `系統預設（${defaultName}）` : "系統預設", "")];
+    list.forEach((d, i) => options.push(new Option(d.label || `裝置 ${i + 1}`, d.deviceId)));
+    // a device chosen earlier that is not plugged in now stays in the list, so the choice is not lost silently
+    if (chosen && !list.some((d) => d.deviceId === chosen)) options.push(new Option("之前選的裝置（現在沒有連接）", chosen));
+    select.replaceChildren(...options);
+    select.value = chosen;
+  };
+  fill(inputSelect, deviceList.inputs, inputDeviceId, deviceList.defaultInput);
+  fill(outputSelect, deviceList.outputs, outputDeviceId, deviceList.defaultOutput);
+  outputSelect.disabled = !canPickOutput();
+
+  const embedded = window.top !== window.self;
+  deviceScan.hidden = deviceList.named || embedded;
+  const notes = [];
+  if (!deviceList.named) {
+    notes.push(embedded
+      ? `這個頁面被嵌在其他網站裡（例如 claude.ai），瀏覽器不會告訴它有哪些裝置。要選裝置請開 ${SELF_HOSTED_URL}`
+      : "瀏覽器要先得到麥克風權限，才會列出裝置的名稱：按「列出裝置」並選擇允許（或直接選 LIVE INPUT）。");
+  }
+  if (!canPickOutput()) notes.push("這個瀏覽器不讓網頁選擇輸出裝置（Chrome、Edge 可以）：聲音會從系統目前的輸出裝置出來，請在系統的音效設定切換。");
+  deviceNote.textContent = notes.join(" ");
+  deviceNote.hidden = notes.length === 0;
+}
+
+/** Takes the guitar from another input. While the input is open it is swapped right away. */
+async function setInputDevice(id) {
+  if (id === inputDeviceId) return;
+  inputDeviceId = id;
+  persist();
+  const open = engine.mic;
+  if (open) {
+    engine.mic = null;
+    open.src.disconnect();
+    open.stream.getTracks().forEach((t) => t.stop());
+    if (!(await enableMic()) && source === "live") await applySource("demo"); // (enableMic has said why)
+  }
+  renderDevices();
+  renderEngineInfo(performance.now(), true);
+}
+
+/** Sends the sound to another output. A running engine moves over without stopping. */
+async function setOutputDevice(id) {
+  if (id === outputDeviceId || !canPickOutput()) { renderDevices(); return; }
+  const previous = outputDeviceId;
+  outputDeviceId = id;
+  if (engine.ctx) {
+    try { await engine.ctx.setSinkId(id); }
+    catch { outputDeviceId = previous; setStatus("無法切換到這個輸出裝置，維持原本的裝置。", 9000); }
+  }
+  persist();
+  renderDevices();
+  renderEngineInfo(performance.now(), true);
+}
+
+inputSelect.addEventListener("change", () => setInputDevice(inputSelect.value));
+outputSelect.addEventListener("change", () => setOutputDevice(outputSelect.value));
+deviceScan.addEventListener("click", async () => {
+  // asking for the microphone is what makes the browser name the devices; nothing is recorded, it is closed at once
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+  } catch (err) {
+    const denied = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
+    setStatus(denied ? "麥克風權限被拒絕，所以瀏覽器不會列出裝置。請點網址列左邊的鎖頭／設定圖示，把「麥克風」改成「允許」後再按一次。"
+                     : "找不到音訊輸入裝置。請接上錄音介面後再試。", 15000);
+  }
+  refreshDevices();
+});
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", refreshDevices);
+renderDevices();
+refreshDevices();
+
+// ============================================================================
 // Frame loop: meters every frame, analysis + canvases ~30 fps
 let lastHeavy = 0;
 function frame(t) {
@@ -1671,4 +1791,10 @@ setInterval(() => renderEngineInfo(performance.now()), 500);
 document.fonts && document.fonts.ready.then(() => { drawTuner(); drawEq(); });
 
 // debugging handle for local testing only
-if (location.hostname === "localhost") window.__pedalboard = { engine, values, levels, fxParams, tunerState, analyzer, frame: () => frame(performance.now() + 1000) };
+if (location.hostname === "localhost") {
+  window.__pedalboard = { engine, values, levels, fxParams, tunerState, analyzer, frame: () => frame(performance.now() + 1000),
+    persist, storeKey: STORE_KEY,
+    get source() { return source; },
+    get inputDeviceId() { return inputDeviceId; }, set inputDeviceId(id) { inputDeviceId = id; },
+    get outputDeviceId() { return outputDeviceId; }, set outputDeviceId(id) { outputDeviceId = id; } };
+}

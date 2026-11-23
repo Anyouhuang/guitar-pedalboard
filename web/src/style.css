@@ -500,6 +500,9 @@ button { cursor: pointer; }
 .latency-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .latency-row label { color: var(--text); font-weight: 600; }
 .latency-row select { font-size: 13px; max-width: 100%; }
+.device-row select { flex: 1 1 180px; min-width: 0; max-width: 320px; text-transform: none; } /* device names as the system writes them */
+.device-row .btn { min-height: 28px; font-size: 13px; }
+.device-note { font-size: 12px; }
 .latency-tip { padding: 8px 10px; border-left: 3px solid var(--amber, #f5a623); background: rgba(245, 166, 35, 0.08); border-radius: 0 6px 6px 0; }
 
 /* ---------- preset bank ---------- */

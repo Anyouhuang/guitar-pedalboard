@@ -185,6 +185,7 @@ EQ 在視窗最下方，圖上有兩層資訊：
 
 **網頁版**
 
+- 頁面下方有 **輸入裝置** 和 **輸出裝置** 兩個選單（網頁版）：輸入裝置用 `getUserMedia` 的 `deviceId` 指定，輸出裝置用 `AudioContext.setSinkId`（Chrome / Edge 才有，其他瀏覽器會停用這個選單並說明）。瀏覽器在網頁取得麥克風權限之前不會給裝置名稱，所以那時只有「系統預設」和一顆「列出裝置」按鈕。播放中切換會馬上換過去，選擇存在瀏覽器裡，裝置拔掉時改回系統預設。Windows 版的裝置在 Options → Audio/MIDI Settings 選（點標題下方的延遲顯示也會開）。
 - 頁面最下方的 **延遲模式** 預設是「低延遲」：向瀏覽器要求裝置最小的輸出緩衝（`latencyHint: 0`），並把每次處理的區塊從 128 縮小到 64 個取樣（Chrome / Edge 153 以上的 `renderSizeHint`）。聲音斷斷續續時改成「穩定」。
 - 效果有多大取決於音效裝置的驅動：支援小緩衝的裝置，Chrome / Edge 在 Windows 上的輸出緩衝可以從 10 ms 降到約 3 ms；不支援的裝置不會有差別。實際數字請看「音訊狀態」。
 - 瀏覽器在 Windows 上只能用共用模式，不能用 ASIO 或獨佔模式，所以延遲有下限，通常比 Windows 版高出許多。
@@ -265,6 +266,7 @@ build\PedalTest_artefacts\Release\PedalTest.exe test_output
 - 另外會在 `test_output\reference\` 輸出參考資料（含型號清單和一段不斷換型號、開關、移動方塊的腳本），給網頁版的 `node web/test/compare.mjs` 逐樣本比對
 - `node web/test/alloc.mjs`：量測網頁版每個效果在音訊執行緒上產生多少暫時記憶體（越少，瀏覽器在小緩衝下越不容易因垃圾回收而斷音）。這是比較用的報告，不是通過 / 失敗的測試
 - `build\UiSnapshot_artefacts\Release\UiSnapshot.exe check`：不開視窗的介面操作檢查（`Tests/UiChecks.h`）：Preset 的切換 / SAVE / SAVE AS / RENAME、存檔後重開、從沒有 Preset 的舊版狀態升級、播放中連續切換；用模擬的滑鼠點 / 拖 Denoise 拉桿並確認數值和聲音真的改變、標題列沒有 AMP / CAB 按鍵、選 LIVE INPUT 時 INPUT 列只剩來源按鈕。
+- `node web/test/devices.mjs`：在真正的瀏覽器裡（無畫面、靜音的 Edge 或 Chrome，用瀏覽器內建的假音訊裝置，不碰電腦上真的裝置、不會跳出權限視窗）檢查輸入 / 輸出裝置選單：列出裝置、選了之後 LIVE INPUT 用的是那個輸入、播放中切換輸入和輸出、重新整理後還記得、存起來的裝置不見時改回系統預設。找不到瀏覽器時會跳過。
 - `node web/test/latency.mjs`：量測每個效果增加的延遲（每個破音型號約 0.1–0.25 ms、CAB 約 0.08 ms；整體延遲主要來自音訊介面、瀏覽器和耳機的輸入輸出緩衝）
 
 ## 程式碼結構
@@ -307,6 +309,7 @@ web/src/                 網頁版原始碼：dsp/（C++ DSP 的 JavaScript 移�
 web/github/              GitHub 儲存庫首頁的 README 與截圖（deploy-github.ps1 會一起上傳）
 web/test/compare.mjs     網頁版 vs C++ 的比對測試
 web/test/latency.mjs     每個效果增加的延遲
+web/test/devices.mjs     輸入 / 輸出裝置選單的瀏覽器測試（假音訊裝置）
 ```
 
 想新增型號：在對應的 `DSP/fx/*.h` 引擎裡加一個變化型和它的型號資料（名稱、原型、旋鈕），網頁版在 `web/src/dsp/` 同名的檔案做同樣的修改；介面會自動長出來，`compare.mjs` 會檢查兩邊的型號清單和聲音是否一致。型號順序會存在設定裡，所以只能往後加。新的一類效果請照 `docs/engine-contract.md` 的介面寫。

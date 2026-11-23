@@ -10,13 +10,14 @@
 ## 特色
 
 - **HD500X 式訊號鏈**：8 個效果格 + 1 個 AMP / CAB 方塊，順序可以自由拖曳調整。
-- **118 種效果**：Dynamics、Distortion、Modulation、Filter / Synth、Pitch、Preamp + EQ、Delay、Reverb、Wah、Volume / Pan。
+- **119 種效果**：Dynamics、Distortion、Modulation、Filter / Synth、Pitch、Preamp + EQ、Delay、Reverb、Wah、Volume / Pan。
+- **木吉他模擬（Acoustic Sim）**：把電吉他變成接近木吉他的聲音，有 Standard、Jumbo、Enhanced、Piezo 四種。
 - **AMP / CAB**：50 種音箱頭、22 種音箱、14 種麥克風；選音箱頭時會自動換成它通常搭配的音箱。
 - **調音器**：常駐在畫面上方，點一下可以開 / 關。
 - **6 段 EQ** 加即時頻譜，可以直接在圖上拖曳調整。
 - **雜訊處理**：Hum 濾掉電源哼聲（50 / 60 Hz），Denoise 在不彈的時候壓低嘶聲。
 - **TAP 拍速**：延遲時間可以跟著拍子走。
-- **8 組 Preset**：把整塊板子存成一組，點一下就整組切換，彈奏中也可以換；附 Clean、Crunch、Lead、Ambient 四組範例。
+- **8 組 Preset**：把整塊板子存成一組，點一下就整組切換，彈奏中也可以換；附 Clean、Crunch、Lead、Ambient、Acoustic 五組範例。
 - **沒有吉他也能玩**：內建吉他樂句、載入自己的音檔、撥空弦、刷和弦。
 - **設定會自動記住**：下次打開會回到上次的狀態。
 
@@ -59,10 +60,20 @@
 
 ### Preset
 
-- 一組包含 8 個效果格、AMP / CAB、排列順序、EQ 和 TAP 速度；INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise 不會跟著變。
+- 一組包含 8 個效果格、AMP / CAB、排列順序和 EQ；INPUT / MASTER 音量、MUTE、調音器、Hum / Denoise 不會跟著變。
+- TAP 速度是整台通用的：切換 Preset 時速度不變。
 - 改過但還沒存的那一組會變成黃色並出現 `*`；這時切到別組，改動不會保留。再點一次目前這一組可以回到儲存時的設定。
-- 第 1 組是你原本的設定，第 2–5 組是範例，第 6–8 組是空的。
+- 第 1 組是你原本的設定，第 2–6 組是範例，第 7–8 組是空的。
 - 網頁版的 Preset 存在瀏覽器裡（換瀏覽器或清除網站資料就會不見）；Windows 版存在程式設定或 DAW 專案裡。兩邊不會同步。
+
+### 木吉他的聲音（Acoustic Sim）
+
+最快的方法是點 Preset 的 **Acoustic**。自己加的話：空的格子「效果類型」選 Preamp+EQ，型號選 Acoustic Sim。
+
+- **Type**：Standard（一般木吉他）、Jumbo（琴身大、低頻多）、Enhanced（撥弦更亮更突出）、Piezo（像木吉他直接插線）。
+- **Body** 是琴身共鳴的份量，**Top** 是弦的亮度。
+- 請把 AMP / CAB 方塊關掉：吉他音箱會把高頻濾掉，就不像木吉他了。通常用琴頸拾音器、音色旋鈕全開會比較像。
+- 這是近似的模擬，不會和真的木吉他完全一樣。
 
 ### 沒有吉他時的測試聲音
 
@@ -86,7 +97,7 @@
 | Modulation (26) | Chorus、Flanger、Classic Phaser、Tremolo、Pattern Tremolo、Panner、Bias Tremolo、Opto Tremolo、Script Phase、Panned Phaser、Barberpole Phaser、Dual Phaser、U-Vibe、Phaser、Pitch Vibrato、Dimension、Analog Chorus、Tri Chorus、Analog Flanger、Jet Flanger、AC Flanger、80A Flanger、Frequency Shifter、Ring Modulator、Rotary Drum、Rotary Drm/Hrn |
 | Filter / Synth (16) | Voice Box、V-Tron、Q Filter、Seeker、Obi Wah、Tron Up、Tron Down、Throbber、Slow Filter、Spin Cycle、Comet Trails、Octisynth、Synth O Matic、Attack Synth、Synth String、Growler |
 | Pitch (3) | Bass Octaver、Pitch Glide、Smart Harmony |
-| Preamp + EQ (6) | Graphic EQ、Parametric EQ、Studio EQ、4 Band Shift EQ、Mid Focus EQ、Vintage Pre |
+| Preamp + EQ (7) | Graphic EQ、Parametric EQ、Studio EQ、4 Band Shift EQ、Mid Focus EQ、Vintage Pre、Acoustic Sim（木吉他模擬，另外加的，不在 HD500X 清單裡） |
 | Delay (20) | Analog Delay、Ping Pong、Dynamic Dly、Stereo Delay、Digital Delay、Dig Dly W/Mod、Reverse、Lo Res Delay、Tube Echo、Tube Echo Dry、Tape Echo、Tape Echo Dry、Sweep Echo、Sweep Echo Dry、Echo Platter、Echo Platter Dry、Analog W/Mod、Analog Echo、Auto-Volume Echo、Multi-Head |
 | Reverb (13) | Room Reverb、Plate、Room、Chamber、Hall、Echo、Tile、Cave、Ducking、Octo、Spring、'63 Spring、Particle Verb |
 | Wah (8) | Fassel、Conductor、Throaty、Colorful、Vetta Wah、Chrome、Chrome Custom、Weeper |
